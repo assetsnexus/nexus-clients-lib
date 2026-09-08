@@ -1,0 +1,25 @@
+{
+  "name": "anx-npm-modules",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Nexus partner SDK packages (@nexus/*)",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "publish:gitlab": "bash scripts/publish-gitlab.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

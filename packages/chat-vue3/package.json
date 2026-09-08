@@ -1,0 +1,44 @@
+{
+  "name": "@nexus/chat-vue3",
+  "version": "0.1.0",
+  "description": "Vue 3 reference UI for @nexus/chat-core",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "vite build && node ./scripts/write-dts.mjs",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "dompurify": "^3.3.2",
+    "marked": "^15.0.0"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0",
+    "@nexus/chat-core": "*"
+  },
+  "devDependencies": {
+    "@nexus/chat-core": "file:../chat-core",
+    "@types/dompurify": "^3.0.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vue": "^3.5.12",
+    "vue-tsc": "^2.1.10"
+  }
+}

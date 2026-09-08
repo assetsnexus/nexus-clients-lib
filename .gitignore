@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs (publish from CI after `npm run build`)
+dist/
+**/dist/
+*.tgz
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+**/.vite/
+.vitest/
+test-results/
+
+# Logs & env
+*.log
+npm-debug.log*
+.env
+.env.*
+!.env.example
+
+# CI-generated npm auth (never commit)
+.ci-npmrc
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~

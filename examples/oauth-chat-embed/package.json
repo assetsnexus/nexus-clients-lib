@@ -1,0 +1,12 @@
+{
+  "name": "oauth-chat-embed-example",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@nexus/chat-core": "file:../../packages/chat-core",
+    "@nexus/chat-vue3": "file:../../packages/chat-vue3",
+    "@nexus/commands-client": "file:../../packages/commands-client",
+    "vue": "^3.5.12"
+  }
+}

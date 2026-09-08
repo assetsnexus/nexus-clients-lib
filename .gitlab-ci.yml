@@ -1,0 +1,49 @@
+stages:
+  - test
+  - publish
+
+variables:
+  NODE_VERSION: "22"
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - packages/*/node_modules/
+
+# One GitLab project for the whole workspace. Do not split packages/* into
+# separate git repos — npm workspaces + GitLab Package Registry is the
+# standard way to share @nexus/* with portal, app, and other pipelines.
+
+unit:
+  stage: test
+  image: node:${NODE_VERSION}
+  interruptible: true
+  script:
+    - npm ci
+    - npm run build
+    - npm test
+    - npm run typecheck
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Publish @nexus/* to this project's Package Registry.
+# Other GitLab projects (portal, …) install with:
+#   @nexus:registry=${CI_API_V4_URL}/projects/<this-project-id>/packages/npm/
+# or the instance endpoint if this project lives under group `nexus`:
+#   @nexus:registry=${CI_API_V4_URL}/packages/npm/
+publish:
+  stage: publish
+  image: node:${NODE_VERSION}
+  script:
+    - npm ci
+    - npm run build
+    - bash scripts/publish-gitlab.sh
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  needs:
+    - job: unit
+      artifacts: false

@@ -1,0 +1,42 @@
+{
+  "name": "@nexus/webhooks",
+  "version": "0.1.0",
+  "description": "Nexus webhook HMAC verification and typed event handlers",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.9.0"
+  },
+  "peerDependencies": {
+    "express": ">=4",
+    "@nestjs/common": ">=10"
+  },
+  "peerDependenciesMeta": {
+    "express": { "optional": true },
+    "@nestjs/common": { "optional": true }
+  }
+}
