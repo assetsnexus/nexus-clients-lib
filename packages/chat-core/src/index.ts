@@ -71,7 +71,7 @@ export type {
   IoDescriptor,
 };
 export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED } from './types.js';
-export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus } from './state.js';
+export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus } from './state.js';
 export {
   inferSupportsReasoning,
   modelSupportsToolCalling,

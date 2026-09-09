@@ -1,4 +1,4 @@
-import type { ChatToolRun, ChatToolRunStatus } from '../state.js';
+import type { ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus } from '../state.js';
 
 export type ToolStreamEvent = { type: string; data?: unknown };
 
@@ -107,6 +107,23 @@ function formatError(error: unknown): string | null {
   }
 }
 
+const SUB_AGENT_FINAL_SET = new Set<string>([
+  'completed',
+  'error',
+  'timeout',
+  'cancelled',
+  'interrupted',
+]);
+
+function resolveSubAgentFinalStatus(
+  raw: unknown,
+  evType: string,
+): SubAgentFinalStatus {
+  const s = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (SUB_AGENT_FINAL_SET.has(s)) return s as SubAgentFinalStatus;
+  return evType.endsWith('error') ? 'error' : 'completed';
+}
+
 /** Merge raw stream tool events into callId-keyed runs. */
 export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] {
   const byId = new Map<string, ChatToolRun>();
@@ -159,13 +176,26 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
     }
 
     if (ev.type === 'sub_agent_progress' || ev.type === 'sub_agent_token') {
-      const d = (ev.data || {}) as ToolCallPayload & { text?: string };
+      const d = (ev.data || {}) as ToolCallPayload & {
+        text?: string;
+        tokensUsed?: number;
+        currentTool?: string;
+      };
       const callId = String(d.callId || d.id || d.parentCallId || '').trim();
       if (!callId) continue;
       const existing = byId.get(callId);
       if (existing) {
         existing.status = 'running';
         existing.kind = 'sub_agent';
+        if (ev.type === 'sub_agent_token' && d.text) {
+          existing.subAgentText = (existing.subAgentText || '') + d.text;
+        }
+        if (typeof d.tokensUsed === 'number') {
+          existing.subAgentTokensUsed = d.tokensUsed;
+        }
+        if (typeof d.currentTool === 'string') {
+          existing.subAgentCurrentTool = d.currentTool;
+        }
       } else {
         byId.set(callId, {
           id: callId,
@@ -175,21 +205,30 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
           args: {},
           kind: 'sub_agent',
           parentCallId: d.parentCallId || null,
+          subAgentText: ev.type === 'sub_agent_token' && d.text ? d.text : undefined,
+          subAgentTokensUsed: typeof d.tokensUsed === 'number' ? d.tokensUsed : undefined,
+          subAgentCurrentTool: typeof d.currentTool === 'string' ? d.currentTool : undefined,
         });
       }
       continue;
     }
 
     if (ev.type === 'sub_agent_done' || ev.type === 'sub_agent_error') {
-      const d = (ev.data || {}) as ToolResultPayload;
+      const d = (ev.data || {}) as ToolResultPayload & {
+        summary?: unknown;
+        finalStatus?: string;
+      };
       const callId = String(d.callId || d.id || '').trim();
       if (!callId) continue;
       const existing = byId.get(callId);
       const status: ChatToolRunStatus = ev.type.endsWith('error') ? 'error' : 'success';
+      const finalStatus = resolveSubAgentFinalStatus(d.finalStatus || d.status, ev.type);
       if (existing) {
         existing.status = status;
         existing.error = formatError(d.error) || existing.error;
         existing.kind = 'sub_agent';
+        existing.subAgentSummary = d.summary ?? d.result;
+        existing.subAgentFinalStatus = finalStatus;
       } else {
         byId.set(callId, {
           id: callId,
@@ -199,6 +238,8 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
           args: {},
           error: formatError(d.error),
           kind: 'sub_agent',
+          subAgentSummary: d.summary ?? d.result,
+          subAgentFinalStatus: finalStatus,
         });
       }
     }

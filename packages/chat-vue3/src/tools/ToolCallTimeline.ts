@@ -134,6 +134,7 @@ export const ToolCallTimeline = {
                   : 'completed',
               parentCallId: run.id,
               canViewToolDetails: this.canViewToolDetails,
+              run,
             },
           }),
           run.status !== 'running'

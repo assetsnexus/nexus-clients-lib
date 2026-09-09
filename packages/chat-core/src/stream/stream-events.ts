@@ -36,12 +36,18 @@ export function applyStreamEventToTurns(
   const turn = { ...turns[idx] };
   const next = [...turns];
 
-  if (ev.type === 'token' || ev.type === 'sub_agent_token') {
+  if (ev.type === 'token') {
     const text =
       ev.data && typeof ev.data === 'object' && 'text' in (ev.data as object)
         ? String((ev.data as { text?: unknown }).text ?? '')
         : '';
     turn.text = (turn.text || '') + text;
+  } else if (ev.type === 'sub_agent_token') {
+    // WP23 fix: route sub_agent_token into rawToolStream keyed by parentCallId,
+    // NOT into the parent assistant bubble text.
+    const raw = [...(turn.rawToolStream || []), { type: ev.type, data: ev.data } as ToolStreamEvent];
+    turn.rawToolStream = raw;
+    turn.toolEvents = mergeToolStreamEvents(raw);
   } else if (isToolish(ev.type)) {
     const raw = [...(turn.rawToolStream || []), { type: ev.type, data: ev.data } as ToolStreamEvent];
     turn.rawToolStream = raw;

@@ -61,6 +61,53 @@ describe('stream-events', () => {
     expect(turns[0].compaction?.afterTokens).toBe(40);
   });
 
+  it('WP23: sub_agent_token routes to rawToolStream, not parent text', () => {
+    let turns: ChatTurn[] = [
+      { id: 'a1', role: 'assistant', text: 'Before', toolEvents: [], rawToolStream: [] },
+    ];
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'sub_agent_token',
+      data: { text: 'sub text', parentCallId: 'sa1' },
+    });
+    // Text must NOT be appended to parent bubble
+    expect(turns[0].text).toBe('Before');
+    // Must be routed to rawToolStream
+    expect(turns[0].rawToolStream).toHaveLength(1);
+    expect(turns[0].rawToolStream![0].type).toBe('sub_agent_token');
+    // Must create a tool event for the sub-agent
+    expect(turns[0].toolEvents).toHaveLength(1);
+    expect(turns[0].toolEvents![0].kind).toBe('sub_agent');
+    expect(turns[0].toolEvents![0].subAgentText).toBe('sub text');
+  });
+
+  it('WP23: sub_agent_done captures finalStatus and summary', () => {
+    let turns: ChatTurn[] = [
+      { id: 'a1', role: 'assistant', text: '', toolEvents: [], rawToolStream: [] },
+    ];
+    // Start with a tool_call for run_sub_agent
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'tool_call',
+      data: { callId: 'sa1', name: 'run_sub_agent', arguments: '{"mission":"research"}' },
+    });
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'sub_agent_token',
+      data: { text: 'answer', parentCallId: 'sa1', tokensUsed: 42 },
+    });
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'sub_agent_done',
+      data: { callId: 'sa1', summary: { result: 'found' }, finalStatus: 'completed' },
+    });
+    const run = turns[0].toolEvents!.find((e) => e.id === 'sa1');
+    expect(run).toBeDefined();
+    expect(run!.subAgentText).toBe('answer');
+    expect(run!.subAgentTokensUsed).toBe(42);
+    expect(run!.subAgentFinalStatus).toBe('completed');
+    expect(run!.subAgentSummary).toEqual({ result: 'found' });
+    expect(run!.status).toBe('success');
+    // Text must still NOT be in parent bubble
+    expect(turns[0].text).toBe('');
+  });
+
   it('skips [Error] text for billing stream codes', () => {
     let turns: ChatTurn[] = [{ id: 'a1', role: 'assistant', text: '' }];
     turns = applyStreamEventToTurns(turns, 'a1', {

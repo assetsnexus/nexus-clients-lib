@@ -18,6 +18,14 @@ export type ChatToolRunStatus =
   | 'reverted'
   | 'paused';
 
+/** WP23: sub-agent completion status chip values. */
+export type SubAgentFinalStatus =
+  | 'completed'
+  | 'error'
+  | 'timeout'
+  | 'cancelled'
+  | 'interrupted';
+
 export type ChatToolRun = {
   id: string;
   tool: string;
@@ -31,6 +39,16 @@ export type ChatToolRun = {
   approvalId?: string | null;
   parentCallId?: string | null;
   kind?: 'tool' | 'sub_agent' | 'compaction' | 'mention';
+  /** WP23: accumulated sub-agent streamed text (not appended to parent bubble). */
+  subAgentText?: string;
+  /** WP23: sub-agent token count from progress events. */
+  subAgentTokensUsed?: number;
+  /** WP23: sub-agent current tool from last progress event. */
+  subAgentCurrentTool?: string;
+  /** WP23: structured summary from sub_agent_done. */
+  subAgentSummary?: unknown;
+  /** WP23: sub-agent final status. */
+  subAgentFinalStatus?: SubAgentFinalStatus;
 };
 
 export type ChatDeliveryStatus = 'sending' | 'sent' | 'failed';
