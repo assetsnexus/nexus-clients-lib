@@ -1,0 +1,41 @@
+{
+  "name": "@nexus/media-generation-vue2",
+  "version": "0.1.0",
+  "description": "Vue 2.7 media generation dialog + VRM preview for @nexus/media-generation-core",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "vite build && node ./scripts/write-dts.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.4.2",
+    "three": "^0.170.0"
+  },
+  "peerDependencies": {
+    "vue": "^2.7.0",
+    "@nexus/media-generation-core": "*"
+  },
+  "devDependencies": {
+    "@nexus/media-generation-core": "file:../media-generation-core",
+    "@vitejs/plugin-vue2": "^2.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vue": "^2.7.16",
+    "vue-template-compiler": "^2.7.16"
+  }
+}

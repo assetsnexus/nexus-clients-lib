@@ -74,6 +74,12 @@ export function applyStreamEventToTurns(
         typeof data.maxContextTokens === 'number' ? data.maxContextTokens : undefined,
       costCents: typeof data.costCents === 'number' ? data.costCents : undefined,
       creditsCents: typeof data.creditsCents === 'number' ? data.creditsCents : undefined,
+      displayCostMinor:
+        typeof data.displayCostMinor === 'number' ? data.displayCostMinor : undefined,
+      displayCurrency:
+        typeof data.displayCurrency === 'string' && data.displayCurrency.trim()
+          ? data.displayCurrency.trim().toUpperCase()
+          : undefined,
       contextSnapshot: data.contextSnapshot,
     };
   } else if (ev.type === 'conversation') {

@@ -21,7 +21,12 @@
     >
       <div class="nexus-chat-panel__header-left">
         <div class="nexus-chat-panel__avatar" aria-hidden="true">
-          <img v-if="contactAvatarUrl" :src="contactAvatarUrl" alt="" />
+          <img
+            v-if="contactAvatarUrl && !avatarImgFailed"
+            :src="contactAvatarUrl"
+            alt=""
+            @error="avatarImgFailed = true"
+          />
           <span v-else>{{ contactInitials }}</span>
           <span
             v-if="contactType === 'agent'"
@@ -39,7 +44,12 @@
         <span v-if="resolvedPanel.unreadCount" class="nexus-badge">{{ resolvedPanel.unreadCount }}</span>
       </div>
       <div class="nexus-chat-panel__header-actions" @pointerdown.stop>
-        <slot name="header-actions" />
+        <slot
+          name="header-actions"
+          :mode-transition="modeTransitionState"
+          :start-mode-transition="startModeTransition"
+          :cancel-mode-transition="cancelModeTransition"
+        />
         <button
           v-if="showDefaultContextButton"
           type="button"
@@ -195,7 +205,36 @@
         <div class="nexus-chat-panel__meta">
           <span>Usage: {{ usageSummary }}</span>
           <span v-if="resolvedPanel.credits && resolvedPanel.credits.usedCents != null">
-            Credits: {{ formatMoney(resolvedPanel.credits.usedCents) }}
+            {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
+          </span>
+          <span v-if="modeBadgeVisible" class="nexus-mode-badge">
+            <span class="nexus-mode-badge__label">Mode</span>
+            <span v-if="modeTransitionState.phase === 'transitioning'" class="nexus-mode-transition">
+              <span class="nexus-mode-transition__ring" style="width: 14px; height: 14px;">
+                <svg width="14" height="14" class="nexus-mode-transition__svg">
+                  <circle cx="7" cy="7" r="5.5" fill="none" stroke="currentColor" stroke-width="2" class="nexus-checkback__track" />
+                  <circle
+                    cx="7"
+                    cy="7"
+                    r="5.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    class="nexus-mode-transition__progress"
+                    :stroke-dasharray="modeRingCircumference"
+                    :stroke-dashoffset="modeRingDashOffset"
+                  />
+                </svg>
+              </span>
+              <span class="nexus-mode-transition__labels">
+                <span class="nexus-mode-transition__from">{{ modeLabelFor(modeTransitionState.from) }}</span>
+                <span class="nexus-mode-transition__arrow">→</span>
+                <span class="nexus-mode-transition__to">{{ modeLabelFor(modeTransitionState.to) }}</span>
+                <span class="nexus-mode-transition__countdown">{{ modeTransitionCountdown }}</span>
+              </span>
+            </span>
+            <span v-else>{{ modeLabelFor(resolvedPanel.chatMode) }}</span>
           </span>
         </div>
 
@@ -241,7 +280,12 @@
 
         <slot name="queue" :panel="resolvedPanel" />
 
-        <div ref="messagesEl" class="nexus-chat-panel__messages">
+        <div
+          ref="messagesEl"
+          class="nexus-chat-panel__messages"
+          @scroll="onMessageListScroll"
+        >
+          <div ref="messagesContentEl">
           <div class="nexus-muted nexus-messages-label">{{ resolvedLabels.messages }}</div>
           <div
             v-for="turn in resolvedPanel.turns"
@@ -279,10 +323,12 @@
                 :choice-active="isChoiceActive(turn)"
                 :poll-workload="pollWorkload"
                 :trigger-check-back="triggerCheckBack"
+                :mode-transition="modeTransitionState"
                 @approve="$emit('approve-tool', $event)"
                 @revert="$emit('revert-tool', $event)"
                 @choice-select="$emit('choice-select', $event)"
                 @check-back-resume="$emit('check-back-resume')"
+                @switch-mode="onSwitchModeRequested"
               />
               <div
                 v-if="turn.role === 'user' && turn.deliveryStatus"
@@ -330,6 +376,7 @@
           <div v-if="resolvedPanel.streaming" class="nexus-muted">
             <span class="nexus-spin">↻</span> {{ resolvedLabels.streaming }}
           </div>
+          </div>
         </div>
 
         <group-room-leave-section
@@ -339,6 +386,10 @@
           :leave-room="leaveRoom"
           @left="$emit('left-room', $event)"
         />
+
+        <div class="nexus-chat-panel__approvals">
+          <slot name="data-access" :panel="resolvedPanel" />
+        </div>
 
         <div class="nexus-chat-panel__composer">
           <composer-attachment-rail
@@ -363,6 +414,9 @@
             :pick-attachment="pickAttachment"
             :onPaste="onComposerPaste"
             :ingestFiles="ingestFiles"
+            :mode-transition="modeTransitionState"
+            :start-mode-transition="startModeTransition"
+            :cancel-mode-transition="cancelModeTransition"
           >
             <textarea
               :value="draft"
@@ -407,8 +461,6 @@
         </div>
       </div>
     </div>
-
-    <slot name="data-access" :panel="resolvedPanel" />
   </div>
 </template>
 
@@ -424,6 +476,9 @@ import {
   uploadOptsForChatFileDestination,
   MAX_CHAT_ATTACHMENTS_PER_MESSAGE,
   isUploadAbortError,
+  useModeTransition,
+  formatModeTransitionCountdown,
+  modeLabel,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
 import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles } from '../tools';
@@ -431,7 +486,8 @@ import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
 import ComposerAttachmentRail from './ComposerAttachmentRail.vue';
 import RealtimeCallPanel from '../voice/RealtimeCallPanel.vue';
 import SessionSummaryChips from './SessionSummaryChips.vue';
-import { DEFAULT_PANEL_LABELS, formatCreditCents } from './labels';
+import { DEFAULT_PANEL_LABELS, formatMoneyMinor, spendLabelForCurrency } from './labels';
+import { createMessageListAutoScroll } from './message-list-scroll';
 
 function emptyPanel() {
   return {
@@ -485,6 +541,8 @@ export default {
     throttleRemainingMs: { type: Number, default: 0 },
     /** When chat is set, send via chat.sendMessage unless a host @send listener is present. */
     autoSend: { type: Boolean, default: true },
+    /** P8-8/C-4e: shared mode-transition timer duration — default is a confirmation affordance, not a spinner. */
+    modeTransitionDurationMs: { type: Number, default: 600 },
   },
   data() {
     return {
@@ -495,6 +553,14 @@ export default {
       embedState: null,
       embedUnsubscribe: null,
       expandedDeliveryErrorId: null,
+      // P8-8: single `useModeTransition` instance owned by the panel, shared by
+      // the header chip (via the header-actions scoped slot), the message-level
+      // badge below, and ToolCallTimeline's ModeRefusalChipWidget — so all three
+      // surfaces agree on "current" mid-transition. The controller itself
+      // (functions only) is kept off `data` to avoid Vue2 reactivity walking it;
+      // only the plain-object state snapshot is reactive.
+      modeTransitionState: null,
+      avatarImgFailed: false,
     };
   },
   computed: {
@@ -666,15 +732,29 @@ export default {
     canSend() {
       return (this.draft.trim().length > 0 || this.pendingAttachments.length > 0) && !this.isComposerDisabled;
     },
+    displayCurrency() {
+      return (
+        (this.resolvedPanel.usage && this.resolvedPanel.usage.displayCurrency) ||
+        (this.resolvedPanel.credits && this.resolvedPanel.credits.displayCurrency) ||
+        null
+      );
+    },
     usageSummary() {
       const used = this.resolvedPanel.usage && this.resolvedPanel.usage.tokensUsed;
       const max = this.resolvedPanel.usage && this.resolvedPanel.usage.maxContextTokens;
-      const cost = this.resolvedPanel.usage && this.resolvedPanel.usage.costCents;
+      const usage = this.resolvedPanel.usage || {};
+      const cost =
+        usage.displayCostMinor != null
+          ? usage.displayCostMinor
+          : usage.costCents;
       const parts = [];
       if (used != null) parts.push(`${used} tok`);
       if (max != null) parts.push(`/${max}`);
-      if (cost != null) parts.push(this.formatMoney(cost));
+      if (cost != null) parts.push(this.formatMoney(cost, this.displayCurrency));
       return parts.length ? parts.join(' ') : this.resolvedLabels.usageEmpty;
+    },
+    spendChromeLabel() {
+      return spendLabelForCurrency(this.displayCurrency);
     },
     attachmentSupported() {
       return Boolean(this.uploadAttachment || (this.chat && this.chat.uploadAttachment));
@@ -704,8 +784,56 @@ export default {
         mode: call.mode || 'browser',
       };
     },
+    // P8-8: message-level mode badge — visible once the host tracks a chatMode
+    // on the panel, or while a transition (agent- or user-initiated) is in flight.
+    modeBadgeVisible() {
+      return Boolean(this.resolvedPanel.chatMode || (this.modeTransitionState && this.modeTransitionState.phase !== 'idle'));
+    },
+    modeRingCircumference() {
+      return (2 * Math.PI * 5.5).toFixed(2);
+    },
+    modeRingDashOffset() {
+      const progress = (this.modeTransitionState && this.modeTransitionState.progress) || 0;
+      return (2 * Math.PI * 5.5 * (1 - progress)).toFixed(2);
+    },
+    modeTransitionCountdown() {
+      return formatModeTransitionCountdown((this.modeTransitionState && this.modeTransitionState.remainingMs) || 0);
+    },
+    messageListAnchor() {
+      const p = this.resolvedPanel || {};
+      const turns = p.turns || [];
+      const last = turns[turns.length - 1] || {};
+      const text = last.text || last.content || '';
+      const tools = (last.toolEvents && last.toolEvents.length) || 0;
+      const stream = (last.rawToolStream && last.rawToolStream.length) || 0;
+      return [
+        p.conversationId || '',
+        p.roomId || '',
+        turns.length,
+        last.id || '',
+        String(text).length,
+        tools,
+        stream,
+        p.streaming ? '1' : '0',
+      ].join(':');
+    },
   },
   watch: {
+    contactAvatarUrl() {
+      this.avatarImgFailed = false;
+    },
+    collapsed(val) {
+      if (!val) this.pinAndScrollMessages();
+    },
+    'resolvedPanel.conversationId'() {
+      this.pinAndScrollMessages();
+    },
+    'resolvedPanel.roomId'() {
+      this.pinAndScrollMessages();
+    },
+    messageListAnchor() {
+      this.scrollMessagesIfPinned();
+    },
     chat: {
       immediate: true,
       handler(chat) {
@@ -726,12 +854,77 @@ export default {
   },
   created() {
     ensureToolWidgetStyles();
+    this._modeTransitionController = useModeTransition({ durationMs: this.modeTransitionDurationMs });
+    this.modeTransitionState = this._modeTransitionController.getState();
+    this._modeTransitionUnsubscribe = this._modeTransitionController.subscribe((state) => {
+      this.modeTransitionState = state;
+    });
+  },
+  mounted() {
+    this._messageListScroll = createMessageListAutoScroll({
+      getEl: () => this.messageListEl(),
+    });
+    this.bindMessageListObservers();
+    this.pinAndScrollMessages();
   },
   beforeDestroy() {
+    this.unbindMessageListObservers();
     if (this.embedUnsubscribe) this.embedUnsubscribe();
+    if (this._modeTransitionUnsubscribe) this._modeTransitionUnsubscribe();
+    if (this._modeTransitionController) this._modeTransitionController.destroy();
     this.revokeAllPreviews();
   },
   methods: {
+    messageListEl() {
+      return this.$refs.messagesEl || null;
+    },
+    onMessageListScroll() {
+      if (this._messageListScroll) this._messageListScroll.onUserScroll();
+    },
+    pinAndScrollMessages() {
+      if (this._messageListScroll) this._messageListScroll.pin();
+      this.scrollMessagesIfPinned({ force: true });
+    },
+    scrollMessagesIfPinned(options) {
+      this.$nextTick(() => {
+        if (this._messageListScroll) this._messageListScroll.apply(options);
+      });
+    },
+    bindMessageListObservers() {
+      const el = this.messageListEl();
+      if (!el || typeof ResizeObserver === 'undefined') return;
+      this._messageListResizeObserver = new ResizeObserver(() => {
+        this.scrollMessagesIfPinned();
+      });
+      this._messageListResizeObserver.observe(el);
+      const content = this.$refs.messagesContentEl;
+      if (content && content !== el) this._messageListResizeObserver.observe(content);
+    },
+    unbindMessageListObservers() {
+      if (this._messageListResizeObserver) {
+        this._messageListResizeObserver.disconnect();
+        this._messageListResizeObserver = null;
+      }
+    },
+    modeLabelFor(mode) {
+      return modeLabel(mode);
+    },
+    /** Exposed for the header-actions scoped slot and for hosts calling via $refs. */
+    startModeTransition(to, opts) {
+      if (this._modeTransitionController) this._modeTransitionController.start(to, opts);
+    },
+    /** Recovery path when the actual mode-switch command dispatch fails. */
+    cancelModeTransition() {
+      if (this._modeTransitionController) this._modeTransitionController.cancel();
+    },
+    onSwitchModeRequested(payload) {
+      // Presentation starts immediately so an agent-initiated switch looks
+      // identical to a user-initiated one; the host performs the actual
+      // dispatch (it owns the commandClient) and calls cancelModeTransition()
+      // via $refs if the command fails.
+      this.startModeTransition(payload.required, { from: payload.mode });
+      this.$emit('switch-mode-requested', payload);
+    },
     onHeaderPointerDown(ev) {
       if (!this.headerDraggable) return;
       const target = ev && ev.target;
@@ -773,8 +966,13 @@ export default {
           ev.status !== 'reverted',
       );
     },
-    formatMoney(cents) {
-      return formatCreditCents(cents);
+    formatMoney(cents, currency) {
+      const cur =
+        currency ||
+        (this.resolvedPanel.usage && this.resolvedPanel.usage.displayCurrency) ||
+        (this.resolvedPanel.credits && this.resolvedPanel.credits.displayCurrency) ||
+        null;
+      return formatMoneyMinor(cents, cur);
     },
     itemDestLabel(item) {
       if (!item) return '';
@@ -1388,6 +1586,16 @@ export default {
   font-size: 10px;
   opacity: 0.9;
   white-space: pre-wrap;
+}
+.nexus-chat-panel__approvals {
+  flex-shrink: 0;
+  min-width: 0;
+  max-height: 46%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.nexus-chat-panel__approvals:empty {
+  display: none;
 }
 .nexus-chat-panel__composer {
   border-top: 1px solid #e9ecef;

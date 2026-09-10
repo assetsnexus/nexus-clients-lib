@@ -3,6 +3,7 @@ export { AskUserChoiceToolWidget } from './AskUserChoiceToolWidget';
 export { ScheduleCheckBackToolWidget } from './ScheduleCheckBackToolWidget';
 export { StorageFileToolWidget } from './StorageFileToolWidget';
 export { DefaultToolRunWidget } from './DefaultToolRunWidget';
+export { ModeRefusalChipWidget } from './ModeRefusalChipWidget';
 export { SubAgentRunWidget } from './SubAgentRunWidget';
 export { ToolCallTimeline } from './ToolCallTimeline';
 export { toolTimelineProps, normalizeToolRun, toolStatusClass } from './shared';

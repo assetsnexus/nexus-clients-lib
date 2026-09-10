@@ -253,6 +253,10 @@
           @left="$emit('left-room', $event)"
         />
 
+        <div class="nexus-chat-panel__approvals">
+          <slot name="data-access" :panel="resolvedPanel" />
+        </div>
+
         <div class="nexus-chat-panel__composer">
           <slot
             name="composer"
@@ -295,8 +299,6 @@
         </div>
       </div>
     </div>
-
-    <slot name="data-access" :panel="resolvedPanel" />
   </div>
 </template>
 
@@ -741,6 +743,16 @@ export default {
 .nexus-message-bubble.system {
   background: #fff3cd;
   font-style: italic;
+}
+.nexus-chat-panel__approvals {
+  flex-shrink: 0;
+  min-width: 0;
+  max-height: 46%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.nexus-chat-panel__approvals:empty {
+  display: none;
 }
 .nexus-chat-panel__composer {
   border-top: 1px solid #e9ecef;

@@ -12,6 +12,19 @@ export function toolStatusClass(status: string | undefined): string {
   return '';
 }
 
+export function displayAnxCommandName(ev: Record<string, unknown> | ChatToolRun): string {
+  const tool = String((ev as ChatToolRun).tool || (ev as { name?: string }).name || '');
+  const args = ((ev as ChatToolRun).args || (ev as { arguments?: unknown }).arguments || {}) as Record<
+    string,
+    unknown
+  >;
+  const fromArgs = typeof args.command === 'string' ? args.command.trim() : '';
+  if (fromArgs.startsWith('anx.')) return fromArgs;
+  if (tool.startsWith('anx.')) return tool;
+  if ((tool === 'anx_command' || tool === 'anx.command') && fromArgs) return fromArgs;
+  return tool;
+}
+
 export function normalizeToolRun(ev: Record<string, unknown> | ChatToolRun): ChatToolRun & {
   argsPreview?: string;
 } {
@@ -25,10 +38,12 @@ export function normalizeToolRun(ev: Record<string, unknown> | ChatToolRun): Cha
     }
   }
   const id = String((ev as ChatToolRun).id || (ev as any).callId || '');
+  const tool = String((ev as ChatToolRun).tool || (ev as any).name || '');
+  const commandLabel = displayAnxCommandName(ev);
   return {
     id,
-    tool: String((ev as ChatToolRun).tool || (ev as any).name || ''),
-    label: String((ev as ChatToolRun).label || (ev as ChatToolRun).tool || (ev as any).name || ''),
+    tool: commandLabel || tool,
+    label: String((ev as ChatToolRun).label || commandLabel || tool || ''),
     status: ((ev as ChatToolRun).status || 'running') as ChatToolRun['status'],
     args: (args && typeof args === 'object' ? args : {}) as Record<string, unknown>,
     result: (ev as ChatToolRun).result,
@@ -46,11 +61,15 @@ export function normalizeToolRun(ev: Record<string, unknown> | ChatToolRun): Cha
 }
 
 export function toolTimelineProps(events: Array<Record<string, unknown>>) {
-  return (events || []).map((ev) => ({
-    ...ev,
-    id: ev.id || ev.callId,
-    callId: ev.callId || ev.id,
-    label: ev.label || ev.tool || ev.name,
-    approvalRequired: !!(ev.approvalRequired || ev.status === 'needs_approval'),
-  }));
+  return (events || []).map((ev) => {
+    const commandLabel = displayAnxCommandName(ev);
+    return {
+      ...ev,
+      id: ev.id || ev.callId,
+      callId: ev.callId || ev.id,
+      tool: commandLabel || ev.tool || ev.name,
+      label: ev.label || commandLabel || ev.tool || ev.name,
+      approvalRequired: !!(ev.approvalRequired || ev.status === 'needs_approval'),
+    };
+  });
 }

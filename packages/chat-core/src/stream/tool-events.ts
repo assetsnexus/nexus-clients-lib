@@ -28,6 +28,9 @@ const STATUS_SET = new Set<string>([
   'approved',
   'reverted',
   'paused',
+  // P8-8: refused by the region tool bridge under the current chat mode —
+  // must not fall through to the `d.result != null` -> 'success' default below.
+  'mode_blocked',
 ]);
 
 export function normalizeToolRunStatus(

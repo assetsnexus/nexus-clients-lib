@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@nexus/media-generation-core": ["../media-generation-core/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

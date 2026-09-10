@@ -16,7 +16,13 @@ export type ChatToolRunStatus =
   | 'needs_approval'
   | 'approved'
   | 'reverted'
-  | 'paused';
+  | 'paused'
+  /**
+   * P8-8: the region tool bridge refused the call because the conversation's
+   * execution mode (ask|plan) does not allow the mutation class the command
+   * needs. Must render as a distinct refusal chip, never as "done" (success).
+   */
+  | 'mode_blocked';
 
 /** WP23: sub-agent completion status chip values. */
 export type SubAgentFinalStatus =

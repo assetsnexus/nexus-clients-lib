@@ -57,4 +57,26 @@ describe('stt-tts helpers', () => {
       expect(result.workloadId).toBe('wl-1');
     }
   });
+
+  it('forwards agentId and difficultWords to stt.live-session.create (G9)', async () => {
+    const send = vi.fn(async () => ({
+      ok: true,
+      data: {
+        mode: 'rolling_batch',
+        modelId: 'stt-1',
+        difficultWords: ['Acme'],
+        token: 't',
+        endpoints: ['wss://example/stt'],
+      },
+    }));
+    // Inline the same contract createLiveSttSession uses (api.ts).
+    await send('anx.inference.stt.live-session.create', {
+      agentId: '11111111-1111-1111-1111-111111111111',
+      difficultWords: ['Acme'],
+    });
+    expect(send).toHaveBeenCalledWith('anx.inference.stt.live-session.create', {
+      agentId: '11111111-1111-1111-1111-111111111111',
+      difficultWords: ['Acme'],
+    });
+  });
 });

@@ -68,6 +68,10 @@ export type ChatUsageSnapshot = {
   maxContextTokens?: number;
   costCents?: number;
   creditsCents?: number;
+  /** Money minor units for UI when not prepaid platform credits. */
+  displayCostMinor?: number;
+  /** ISO 4217 currency for displayCostMinor / money formatting. */
+  displayCurrency?: string;
   contextSnapshot?: unknown;
 };
 
@@ -90,6 +94,8 @@ export type ChatCreditsState = {
   availableCents?: number | null;
   usedCents?: number | null;
   billingMode?: 'credits' | 'free' | 'admin_waived' | string | null;
+  /** When set, usedCents/availableCents are money minor units in this currency. */
+  displayCurrency?: string | null;
 };
 
 /** Stable billing / quota issue shown by portal BillingIssueWidget. */
@@ -176,6 +182,8 @@ export type ChatRoomDetail = {
   viewerIsOwner?: boolean;
   participants: ChatRoomParticipant[];
   encryptionMode?: string | null;
+  /** Disappearing-message TTL (seconds); null = retain indefinitely. */
+  messageTtlSeconds?: number | null;
   orchestration?: ChatRoomOrchestration | null;
 };
 
@@ -231,6 +239,17 @@ export type ChatSendOutcomeCode =
 export type ChatHooks = {
   onScaRequired?: (info: { authRequestId: string | null; command: string }) => void;
   onDataAccessApproval?: (info: unknown) => void;
+  onPermissionElevationRequired?: (info: {
+    elevationId?: string | null;
+    pack?: string | null;
+    command?: string | null;
+    commandNames?: string[];
+    callId?: string | null;
+    resourceRef?: Record<string, unknown> | null;
+    reason?: string | null;
+    requiredOnboardingType?: string | null;
+    onboardingSatisfied?: boolean;
+  }) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolApprovalRequired?: (run: {
     callId: string;

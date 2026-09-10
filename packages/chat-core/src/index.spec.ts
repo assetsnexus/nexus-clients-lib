@@ -191,7 +191,46 @@ describe('chat-core', () => {
     expect(sent).toContain('anx.communicate.conversations.create');
   });
 
-  it('keeps list avatars as refs and hydrates bytes via media.get', async () => {
+  it('binds /ai-agents/ve HTTP media paths immediately without media.get', async () => {
+    const sent: string[] = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          sent.push(command);
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return {
+              ok: true,
+              data: [
+                {
+                  employeeId: 've-pic',
+                  name: 'Pixie',
+                  profilePictureRef: {
+                    kind: 'url',
+                    value: '/ai-agents/ve/ve-pic/avatar',
+                    slot: 'profilePicture',
+                  },
+                },
+              ],
+            };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            return { ok: true, data: [] };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+      publicFilesBaseUrl: 'https://gateway.test',
+    });
+    await chat.loadContacts();
+    const first = chat.getState().contacts.find((c) => c.id === 've-pic');
+    expect(first?.avatarUrl).toBe('https://gateway.test/ai-agents/ve/ve-pic/avatar');
+    expect(sent).not.toContain('anx.ai-agents.virtual-employees.media.get');
+  });
+
+  it('keeps deferred list avatars and hydrates via media.get URL', async () => {
     const sent: string[] = [];
     const chat = createNexusChat({
       client: {
@@ -218,21 +257,21 @@ describe('chat-core', () => {
           if (command === 'anx.ai-agents.virtual-employees.media.get') {
             return {
               ok: true,
-              data: { media: { src: 'data:image/png;base64,abc', slot: 'profilePicture' } },
+              data: { media: { src: '/ai-agents/ve/ve-pic/avatar', slot: 'profilePicture', delivery: 'url' } },
             };
           }
           return { ok: true, data: {} };
         },
       },
+      publicFilesBaseUrl: 'https://gateway.test',
     });
     await chat.loadContacts();
     const first = chat.getState().contacts.find((c) => c.id === 've-pic');
     expect(first?.avatarUrl).toBeNull();
-    expect(JSON.stringify(chat.getState().contacts)).not.toContain('data:image/png;base64,HUGE');
     await new Promise((r) => setTimeout(r, 30));
     expect(sent).toContain('anx.ai-agents.virtual-employees.media.get');
     expect(chat.getState().contacts.find((c) => c.id === 've-pic')?.avatarUrl).toBe(
-      'data:image/png;base64,abc',
+      'https://gateway.test/ai-agents/ve/ve-pic/avatar',
     );
   });
 

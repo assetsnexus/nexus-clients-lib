@@ -7,6 +7,7 @@ import {
 import AskUserChoiceToolWidget from './AskUserChoiceToolWidget';
 import DefaultToolRunWidget from './DefaultToolRunWidget';
 import MediaToolWidget from './MediaToolWidget';
+import ModeRefusalChipWidget from './ModeRefusalChipWidget';
 import ScheduleCheckBackToolWidget from './ScheduleCheckBackToolWidget';
 import StorageFileToolWidget from './StorageFileToolWidget';
 import SubAgentRunWidget from './SubAgentRunWidget';
@@ -46,6 +47,7 @@ export const ToolCallTimeline = {
     AskUserChoiceToolWidget,
     DefaultToolRunWidget,
     MediaToolWidget,
+    ModeRefusalChipWidget,
     ScheduleCheckBackToolWidget,
     StorageFileToolWidget,
     SubAgentRunWidget,
@@ -59,6 +61,8 @@ export const ToolCallTimeline = {
     canViewToolDetails: { type: Boolean, default: true },
     pollWorkload: { type: Function, default: null },
     triggerCheckBack: { type: Function, default: null },
+    /** P8-8: shared `useModeTransition` state, owned by the panel — drives the refusal chip's ring. */
+    modeTransition: { type: Object, default: null },
   },
   computed: {
     normalized(): ChatToolRun[] {
@@ -78,7 +82,20 @@ export const ToolCallTimeline = {
     onResumeComplete() {
       this.$emit('check-back-resume');
     },
+    onSwitchMode(payload: { required: string; mode: string; callId: string }) {
+      this.$emit('switch-mode', payload);
+    },
     renderRun(h: any, run: ChatToolRun) {
+      // P8-8: a mode refusal is a terminal, distinct state — check status first,
+      // ahead of every tool-name branch (including DefaultToolRunWidget), so a
+      // blocked call never renders as "done" regardless of which tool it was.
+      if (run.status === 'mode_blocked') {
+        return h(ModeRefusalChipWidget, {
+          key: run.id,
+          props: { run, modeTransition: this.modeTransition },
+          on: { 'switch-mode': this.onSwitchMode },
+        });
+      }
       if (isScheduleCheckBackTool(run.tool) && parseScheduleCheckBackResult(run.result)) {
         return h(ScheduleCheckBackToolWidget, {
           key: run.id,

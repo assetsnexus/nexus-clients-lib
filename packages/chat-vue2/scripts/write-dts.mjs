@@ -111,6 +111,11 @@ export type NexusChatPanelLabels = {
 export declare const DEFAULT_PANEL_LABELS: Required<NexusChatPanelLabels>;
 export declare function formatCallDuration(sec: number | null | undefined): string;
 export declare function formatCreditCents(cents: number | null | undefined): string;
+export declare function formatMoneyMinor(
+  minor: number | null | undefined,
+  currency?: string | null,
+): string;
+export declare function spendLabelForCurrency(currency?: string | null): string;
 
 export declare function contactsFromChat(chat: {
   getState: () => { contacts: Array<{ id: string; name: string; type: string }> };

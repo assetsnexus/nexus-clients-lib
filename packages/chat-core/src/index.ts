@@ -46,6 +46,22 @@ import {
   type UploadAttachmentOpts,
 } from './tools/upload-attachment.js';
 
+function elevationCommandNames(elev: {
+  command?: string | null;
+  commandNames?: string[];
+  resume?: { command?: string };
+}): string[] {
+  const names = Array.isArray(elev.commandNames)
+    ? elev.commandNames.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+    : [];
+  const single =
+    (typeof elev.command === 'string' && elev.command.trim()) ||
+    (typeof elev.resume?.command === 'string' && elev.resume.command.trim()) ||
+    '';
+  if (single && !names.includes(single)) names.unshift(single);
+  return names;
+}
+
 export type {
   ChatTransport,
   AgentSource,
@@ -118,6 +134,19 @@ export {
   patchToolRunStatus,
   normalizeToolRunStatus,
 } from './stream/tool-events.js';
+export {
+  useModeTransition,
+  formatModeTransitionCountdown,
+  modeLabel,
+} from './mode-transition.js';
+export type {
+  ChatExecutionMode,
+  ModeTransitionPhase,
+  ModeTransitionState,
+  ModeTransitionListener,
+  ModeTransitionOptions,
+  ModeTransitionController,
+} from './mode-transition.js';
 export {
   uploadAttachment,
   conversationAttachmentDescriptor,
@@ -224,6 +253,7 @@ export type SendResult =
       kind:
         | 'sca_required'
         | 'data_access_approval_required'
+        | 'permission_elevation_required'
         | 'error'
         | 'insufficient_credits'
         | 'subscription_inactive'
@@ -231,6 +261,15 @@ export type SendResult =
         | 'agent_usage_limit';
       authRequestId?: string | null;
       dataAccessApproval?: unknown;
+      permissionElevation?: {
+        elevationId?: string | null;
+        pack?: string | null;
+        commandNames?: string[];
+        resourceRef?: Record<string, unknown> | null;
+        reason?: string | null;
+        requiredOnboardingType?: string | null;
+        onboardingSatisfied?: boolean;
+      };
       message?: string;
       retryAfterMs?: number;
       lockedUntil?: string | null;
@@ -337,6 +376,7 @@ function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null 
     typeof data.maxContextTokens === 'number' ||
     typeof data.costCents === 'number' ||
     typeof data.creditsCents === 'number' ||
+    typeof data.displayCostMinor === 'number' ||
     data.contextSnapshot != null;
   if (!hasUsage) return null;
   return {
@@ -344,6 +384,12 @@ function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null 
     maxContextTokens: typeof data.maxContextTokens === 'number' ? data.maxContextTokens : undefined,
     costCents: typeof data.costCents === 'number' ? data.costCents : undefined,
     creditsCents: typeof data.creditsCents === 'number' ? data.creditsCents : undefined,
+    displayCostMinor:
+      typeof data.displayCostMinor === 'number' ? data.displayCostMinor : undefined,
+    displayCurrency:
+      typeof data.displayCurrency === 'string' && data.displayCurrency.trim()
+        ? data.displayCurrency.trim().toUpperCase()
+        : undefined,
     contextSnapshot: data.contextSnapshot,
   };
 }
@@ -424,7 +470,34 @@ function isFetchableAvatarUrl(value: unknown): boolean {
   return /^(https?:\/\/|\/|blob:)/i.test(v);
 }
 
-function avatarFromVeRow(row: any): { avatarUrl: string | null; avatarRef: ChatContact['avatarRef'] } {
+function isRelativePublicFilePath(value: unknown): boolean {
+  return typeof value === 'string' && /^\/public-files(\/|\?|$)/i.test(value.trim());
+}
+
+function isVeMediaHttpPath(value: unknown): boolean {
+  return typeof value === 'string' && /^\/ai-agents\/ve\/[^/]+\/(avatar|avatar3d)(\?|$)/i.test(value.trim());
+}
+
+/** Prefix relative region paths with gateway base when configured. */
+export function absolutizeAvatarUrl(
+  value: string | null | undefined,
+  publicFilesBaseUrl?: string | null,
+): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const v = value.trim();
+  if (/^(https?:\/\/|blob:|data:)/i.test(v)) return v;
+  if (!v.startsWith('/')) return v;
+  const base = String(publicFilesBaseUrl || '')
+    .trim()
+    .replace(/\/$/, '');
+  if (!base) return v;
+  return `${base}${v}`;
+}
+
+function avatarFromVeRow(
+  row: any,
+  publicFilesBaseUrl?: string | null,
+): { avatarUrl: string | null; avatarRef: ChatContact['avatarRef'] } {
   const ref = row?.profilePictureRef;
   if (ref && typeof ref === 'object' && typeof ref.kind === 'string') {
     const avatarRef = {
@@ -433,14 +506,48 @@ function avatarFromVeRow(row: any): { avatarUrl: string | null; avatarRef: ChatC
       fileId: typeof ref.fileId === 'string' ? ref.fileId : undefined,
       slot: typeof ref.slot === 'string' ? ref.slot : 'profilePicture',
     };
-    const avatarUrl =
+    // Relative /public-files → hydrate via media.get (may need signed URL).
+    if (avatarRef.kind === 'url' && isRelativePublicFilePath(avatarRef.value)) {
+      return {
+        avatarUrl: null,
+        avatarRef: { ...avatarRef, kind: 'deferred' },
+      };
+    }
+    if (avatarRef.kind === 'deferred') {
+      return { avatarUrl: null, avatarRef };
+    }
+    const rawUrl =
       avatarRef.kind === 'url' && isFetchableAvatarUrl(avatarRef.value) ? String(avatarRef.value) : null;
+    // Immediate-bind absolute http(s)/blob and /ai-agents/ve/... media paths.
+    const avatarUrl =
+      rawUrl && /^https?:\/\//i.test(rawUrl)
+        ? absolutizeAvatarUrl(rawUrl, publicFilesBaseUrl)
+        : rawUrl && rawUrl.startsWith('blob:')
+          ? rawUrl
+          : rawUrl && isVeMediaHttpPath(rawUrl)
+            ? absolutizeAvatarUrl(rawUrl, publicFilesBaseUrl)
+            : null;
+    if (rawUrl && !avatarUrl) {
+      return {
+        avatarUrl: null,
+        avatarRef: { ...avatarRef, kind: 'deferred' },
+      };
+    }
     return { avatarUrl, avatarRef };
   }
   const raw = row?.profilePicture || row?.avatarUrl || row?.avatar || row?.imageUrl || null;
-  if (typeof raw === 'string' && isFetchableAvatarUrl(raw)) {
+  if (typeof raw === 'string' && isRelativePublicFilePath(raw)) {
+    return { avatarUrl: null, avatarRef: { kind: 'deferred', slot: 'profilePicture', value: raw } };
+  }
+  if (typeof raw === 'string' && isVeMediaHttpPath(raw)) {
     return {
-      avatarUrl: raw,
+      avatarUrl: absolutizeAvatarUrl(raw, publicFilesBaseUrl),
+      avatarRef: { kind: 'url', value: raw, slot: 'profilePicture' },
+    };
+  }
+  if (typeof raw === 'string' && /^https?:\/\//i.test(raw.trim())) {
+    return {
+      avatarUrl: absolutizeAvatarUrl(raw, publicFilesBaseUrl),
       avatarRef: { kind: 'url', value: raw, slot: 'profilePicture' },
     };
   }
@@ -452,7 +559,7 @@ function avatarFromVeRow(row: any): { avatarUrl: string | null; avatarRef: ChatC
 
 function mapVeAgents(
   rows: unknown[],
-  opts?: { canConfigure?: boolean },
+  opts?: { canConfigure?: boolean; publicFilesBaseUrl?: string | null },
 ): ChatContact[] {
   return rows
     .map((row: any, i: number) => {
@@ -463,7 +570,7 @@ function mapVeAgents(
       const aliases = [mongoId, employeeId, row?.virtualEmployeeId, row?.agentId]
         .map((v) => (v == null ? '' : String(v).trim()))
         .filter((v) => v && v !== id);
-      const { avatarUrl, avatarRef } = avatarFromVeRow(row);
+      const { avatarUrl, avatarRef } = avatarFromVeRow(row, opts?.publicFilesBaseUrl);
       return {
         id,
         name: String(row?.name || row?.title || row?.publicRole || 'Agent'),
@@ -484,6 +591,7 @@ function mapVeAgents(
 async function hydrateAgentAvatars(
   contacts: ChatContact[],
   client: CommandClient,
+  publicFilesBaseUrl?: string | null,
 ): Promise<ChatContact[]> {
   const pending = contacts.filter(
     (c) => c.type === 'agent' && !c.avatarUrl && c.avatarRef?.kind === 'deferred',
@@ -513,7 +621,10 @@ async function hydrateAgentAvatars(
             : data;
         const src = typeof media.src === 'string' ? media.src : null;
         if (src && (isFetchableAvatarUrl(src) || src.startsWith('data:image/'))) {
-          srcById.set(contact.id, src);
+          const resolved = src.startsWith('data:')
+            ? src
+            : absolutizeAvatarUrl(src, publicFilesBaseUrl) || src;
+          srcById.set(contact.id, resolved);
         }
       } catch {
         // Avatar hydrate must not fail the contacts list.
@@ -607,7 +718,7 @@ export type NexusChat = {
     conversationId: string;
   }) => Promise<{ cancelled: boolean; generationInProgress: boolean }>;
   loadContacts: () => Promise<void>;
-  /** Create-or-resume conversation for an agent contact (VE id or agent id). */
+  /** Create a new conversation for an agent contact (VE id or agent id). Always allocates a new id. */
   openContact: (contactId: string, opts?: { title?: string }) => Promise<{ conversationId: string; agentId?: string }>;
   streamInit: (opts: { conversationId?: string; contactId?: string; roomId?: string }) => Promise<void>;
   listRooms: () => Promise<ChatRoomSummary[]>;
@@ -623,6 +734,8 @@ export type NexusChat = {
     }>;
     /** AI contacts to add after create (`agent` / `virtual_agent`). */
     aiParticipants?: Array<{ type: 'agent' | 'virtual_agent'; id: string; displayName?: string }>;
+    /** Disappearing-message TTL in seconds; null disables. Default applied by backend when omitted. */
+    messageTtlSeconds?: number | null;
   }) => Promise<{ roomId: string }>;
   updateRoom: (input: { roomId: string; name?: string | null }) => Promise<{
     roomId: string;
@@ -675,6 +788,10 @@ export type NexusChat = {
     expiresInMs?: number;
     maxUses?: number;
   }) => Promise<{ inviteCode: string; expiresAt?: string }>;
+  setRoomRetention: (input: {
+    roomId: string;
+    messageTtlSeconds: number | null;
+  }) => Promise<{ roomId: string; messageTtlSeconds: number | null }>;
   redeemRoomInvite: (input: {
     inviteCode: string;
   }) => Promise<{ roomId: string; joined: boolean }>;
@@ -770,14 +887,17 @@ export type NexusChat = {
     triggered: true;
     status: 'scheduled' | 'processing' | 'completed' | string;
   }>;
-  rehydrateTurns: (rows: Array<{
-    id?: string;
-    role: string;
-    content?: string;
-    text?: string;
-    toolCalls?: Array<Record<string, unknown>>;
-    attachments?: IoDescriptor[];
-  }>) => void;
+  rehydrateTurns: (
+    rows: Array<{
+      id?: string;
+      role: string;
+      content?: string;
+      text?: string;
+      toolCalls?: Array<Record<string, unknown>>;
+      attachments?: IoDescriptor[];
+    }>,
+    opts?: { conversationId?: string | null },
+  ) => void;
   /** Apply persisted conversation usage / context snapshot (e.g. from conversations.get). */
   applyUsage: (usage: ChatUsageSnapshot | null | undefined) => void;
   /** Region presign+register upload; returns region fileId as conversation_attachment ref. */
@@ -798,6 +918,11 @@ export type CreateNexusChatOptions = {
   hooks?: ChatHooks;
   i18n?: Record<string, string>;
   logger?: { debug?: Function; error?: Function; warn?: Function };
+  /**
+   * Region/gateway origin used to absolutize relative `/public-files/...`
+   * and `/ai-agents/ve/...` avatar URLs (portal and region are different origins in local/dev).
+   */
+  publicFilesBaseUrl?: string | null;
 };
 
 /**
@@ -886,11 +1011,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     if (!usage) return;
     const panel = store.getState().panels.find((entry) => entry.id === panelId);
     if (!panel) return;
+    const usedMinor =
+      usage.displayCostMinor ??
+      usage.creditsCents ??
+      usage.costCents ??
+      panel.credits?.usedCents ??
+      null;
     mergePanelPatch(panelId, {
       usage: usage as ChatTurn['usage'],
       credits: {
         ...(panel.credits || {}),
-        usedCents: usage.creditsCents ?? usage.costCents ?? panel.credits?.usedCents ?? null,
+        usedCents: usedMinor,
+        displayCurrency:
+          usage.displayCurrency ?? panel.credits?.displayCurrency ?? null,
       },
     });
     opts.hooks?.onUsage?.(usage);
@@ -930,6 +1063,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     }
   };
 
+  const finishPausedTurn = () => {
+    store.setState({ streaming: false });
+    patchCurrentPanel({ streaming: false });
+    opts.hooks?.onStreamState?.('idle');
+    closeSocket();
+  };
+
   const streamInit = async (initOpts: {
     conversationId?: string;
     contactId?: string;
@@ -963,10 +1103,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       contact?.type === 'agent' ? contact.virtualEmployeeId || contact.id : undefined;
     const agentId = contact?.agentId || undefined;
 
+    // Always creates a new conversation (backend does not resume-per-agent).
+    // Pass an existing conversationId via send/stream paths to continue a thread.
     const result = (await opts.client.send('anx.communicate.conversations.create', {
       ...(virtualEmployeeId
         ? { virtualEmployeeId }
         : { agentId: agentId || contactId }),
+      ...(openOpts?.title ? { title: openOpts.title } : {}),
     })) as SendResult;
 
     if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -1103,10 +1246,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
 
       const byId = new Map<string, ChatContact>();
       // Owned VEs first — marks canConfigure so portal can deep-link to agent settings.
-      for (const c of mapVeAgents(veRows, { canConfigure: true })) {
+      const publicFilesBaseUrl = opts.publicFilesBaseUrl || null;
+      for (const c of mapVeAgents(veRows, { canConfigure: true, publicFilesBaseUrl })) {
         byId.set(c.id, c);
       }
-      for (const c of mapVeAgents(vePublicRows, { canConfigure: false })) {
+      for (const c of mapVeAgents(vePublicRows, { canConfigure: false, publicFilesBaseUrl })) {
         if (!byId.has(c.id)) byId.set(c.id, c);
       }
       for (const c of mapHumanContacts(humanRows)) {
@@ -1115,7 +1259,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
 
       const contacts = Array.from(byId.values());
       store.setState({ contacts });
-      void hydrateAgentAvatars(contacts, opts.client)
+      void hydrateAgentAvatars(contacts, opts.client, publicFilesBaseUrl)
         .then((hydrated) => {
           if (hydrated !== contacts) store.setState({ contacts: hydrated });
         })
@@ -1173,6 +1317,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         encryptionMode,
         ...(Array.isArray(input.participants) && input.participants.length
           ? { participants: input.participants }
+          : {}),
+        ...(input.messageTtlSeconds !== undefined
+          ? { messageTtlSeconds: input.messageTtlSeconds }
           : {}),
       })) as SendResult | unknown;
       if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -1332,6 +1479,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         viewerUserId: typeof data.viewerUserId === 'string' ? data.viewerUserId : null,
         viewerIsOwner: Boolean(data.viewerIsOwner),
         encryptionMode: typeof data.encryptionMode === 'string' ? data.encryptionMode : null,
+        messageTtlSeconds:
+          data.messageTtlSeconds === null
+            ? null
+            : typeof data.messageTtlSeconds === 'number'
+              ? data.messageTtlSeconds
+              : undefined,
         orchestration,
         participants: participantsRaw.map((row) => {
           const type = String(row.type || 'user');
@@ -1438,8 +1591,28 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       }
       const data = unwrapData(result);
       return {
-        inviteCode: String(data.inviteCode || data.code || ''),
+        inviteCode: String(data.inviteToken || data.inviteCode || data.code || ''),
         expiresAt: typeof data.expiresAt === 'string' ? data.expiresAt : undefined,
+      };
+    },
+    async setRoomRetention(input) {
+      const result = (await opts.client.send('anx.communicate.rooms.retention.set', {
+        roomId: input.roomId,
+        messageTtlSeconds: input.messageTtlSeconds,
+      })) as SendResult | unknown;
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        const fail = result as Extract<SendResult, { ok: false }>;
+        throw new Error(fail.message || 'rooms.retention.set failed');
+      }
+      const data = unwrapData(result);
+      return {
+        roomId: String(data.roomId || input.roomId),
+        messageTtlSeconds:
+          data.messageTtlSeconds === null
+            ? null
+            : typeof data.messageTtlSeconds === 'number'
+              ? data.messageTtlSeconds
+              : input.messageTtlSeconds,
       };
     },
     async redeemRoomInvite(input) {
@@ -1552,17 +1725,39 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     resumeCall: voice.resumeCall,
     pauseOrResumeCall: voice.pauseOrResumeCall,
     signalBillingCredits: voice.signalBillingCredits,
-    rehydrateTurns(rows) {
+    rehydrateTurns(
+      rows: Array<{
+        id?: string;
+        role?: string;
+        content?: string;
+        text?: string;
+        toolCalls?: unknown;
+        attachments?: IoDescriptor[];
+      }>,
+      rehydrateOpts?: { conversationId?: string | null },
+    ) {
       const turns: ChatTurn[] = rows.map((row, i) => ({
         id: String(row.id || `hist_${i}`),
         role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
         text: String(row.content ?? row.text ?? ''),
-        toolEvents: rehydrateToolRunsFromHistory(row.toolCalls),
+        toolEvents: rehydrateToolRunsFromHistory(
+          Array.isArray(row.toolCalls)
+            ? (row.toolCalls as Array<Record<string, unknown>>)
+            : null,
+        ),
         ...(Array.isArray(row.attachments) && row.attachments.length
           ? { attachments: row.attachments }
           : {}),
       }));
       syncMessagesFromTurns(turns);
+      const conversationId =
+        typeof rehydrateOpts?.conversationId === 'string' && rehydrateOpts.conversationId.trim()
+          ? rehydrateOpts.conversationId.trim()
+          : null;
+      if (conversationId) {
+        store.setState({ conversationId });
+        patchCurrentPanel({ conversationId, roomId: null, roomPurpose: 'conversation' });
+      }
     },
     applyUsage(usage) {
       const panel = currentPanel(store.getState());
@@ -1795,6 +1990,74 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                       approvalId: run.approvalId,
                     });
                   }
+                  const toolResult =
+                    parsed.data && typeof parsed.data === 'object'
+                      ? (parsed.data as { result?: unknown }).result
+                      : undefined;
+                  if (
+                    toolResult &&
+                    typeof toolResult === 'object' &&
+                    (toolResult as { needsApproval?: unknown }).needsApproval === true &&
+                    (toolResult as { approvalKind?: unknown }).approvalKind ===
+                      'permission_elevation'
+                  ) {
+                    const elev = toolResult as {
+                      elevationId?: string | null;
+                      pack?: string | null;
+                      command?: string | null;
+                      commandNames?: string[];
+                      resume?: { command?: string };
+                      resourceRef?: Record<string, unknown> | null;
+                      reason?: string | null;
+                      requiredOnboardingType?: string | null;
+                      onboardingSatisfied?: boolean;
+                    };
+                    const commandNames = elevationCommandNames(elev);
+                    opts.hooks?.onPermissionElevationRequired?.({
+                      elevationId: elev.elevationId ?? null,
+                      pack: elev.pack ?? null,
+                      command:
+                        typeof elev.command === 'string' ? elev.command : null,
+                      commandNames,
+                      callId: run?.id ?? null,
+                      resourceRef: elev.resourceRef ?? null,
+                      reason: elev.reason ?? null,
+                      requiredOnboardingType: elev.requiredOnboardingType ?? null,
+                      onboardingSatisfied: elev.onboardingSatisfied,
+                    });
+                    finishPausedTurn();
+                  }
+                }
+                if (parsed.type === 'permission_elevation_request') {
+                  const elev =
+                    parsed.data && typeof parsed.data === 'object'
+                      ? (parsed.data as {
+                          elevationId?: string | null;
+                          pack?: string | null;
+                          command?: string | null;
+                          commandNames?: string[];
+                          callId?: string | null;
+                          resourceRef?: Record<string, unknown> | null;
+                          reason?: string | null;
+                          requiredOnboardingType?: string | null;
+                          onboardingSatisfied?: boolean;
+                        })
+                      : {};
+                  opts.hooks?.onPermissionElevationRequired?.({
+                    elevationId: elev.elevationId ?? null,
+                    pack: elev.pack ?? null,
+                    command: typeof elev.command === 'string' ? elev.command : null,
+                    commandNames: elevationCommandNames(elev),
+                    callId: typeof elev.callId === 'string' ? elev.callId : null,
+                    resourceRef: elev.resourceRef ?? null,
+                    reason: elev.reason ?? null,
+                    requiredOnboardingType: elev.requiredOnboardingType ?? null,
+                    onboardingSatisfied: elev.onboardingSatisfied,
+                  });
+                  finishPausedTurn();
+                }
+                if (parsed.type === 'paused') {
+                  finishPausedTurn();
                 }
                 if (
                   parsed.type === 'done' ||
@@ -1862,6 +2125,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           }
           if (result.kind === 'data_access_approval_required') {
             opts.hooks?.onDataAccessApproval?.(result.dataAccessApproval);
+          }
+          if (result.kind === 'permission_elevation_required') {
+            opts.hooks?.onPermissionElevationRequired?.(result.permissionElevation ?? {
+              elevationId: null,
+              pack: null,
+              reason: result.message || null,
+            });
           }
           if (panelId) {
             applyThrottleToPanel(panelId, throttleFromFailure(result));

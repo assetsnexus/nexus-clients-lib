@@ -245,7 +245,14 @@ export function createVoiceApi(deps: VoiceApiDeps) {
     },
     createBrowserCall,
     createRealtimeCall,
-    async createLiveSttSession(input: { bookId?: string; modelId?: string } = {}) {
+    async createLiveSttSession(
+      input: {
+        bookId?: string;
+        modelId?: string;
+        agentId?: string;
+        difficultWords?: string[];
+      } = {},
+    ) {
       const result = (await deps.client.send('anx.inference.stt.live-session.create', input)) as
         | SendResult
         | unknown;
@@ -253,6 +260,7 @@ export function createVoiceApi(deps: VoiceApiDeps) {
       return deps.unwrapData(result) as {
         mode: string;
         modelId: string | null;
+        difficultWords?: string[];
         token?: string;
         expiresAt?: string;
         endpoints?: string[];
@@ -401,9 +409,65 @@ export function createVoiceApi(deps: VoiceApiDeps) {
       });
     },
     getVoiceChannel,
+    async getDialInOptions(
+      agentId: string,
+      opts: { country?: string | null; virtualAgentId?: string | null } = {},
+    ): Promise<Record<string, unknown> | null> {
+      const result = (await deps.client.send('anx.agents.voice-channel.dial-in-options.get', {
+        agentId,
+        country: opts.country ?? undefined,
+        virtualAgentId: opts.virtualAgentId ?? undefined,
+      })) as SendResult | unknown;
+      if (result && typeof result === 'object' && 'ok' in result && (result as SendResult).ok === false) {
+        return null;
+      }
+      const data = deps.unwrapData(result);
+      return Object.keys(data).length ? data : null;
+    },
     async prepareInboundCall(agentId: string): Promise<ChatVoiceCallSession> {
-      const channel = await getVoiceChannel(agentId);
-      const dialIn = channel ? dialInFromChannel(channel) : null;
+      const options = await (async () => {
+        try {
+          const result = (await deps.client.send('anx.agents.voice-channel.dial-in-options.get', {
+            agentId,
+          })) as SendResult | unknown;
+          if (result && typeof result === 'object' && 'ok' in result && (result as SendResult).ok === false) {
+            return null;
+          }
+          return deps.unwrapData(result);
+        } catch {
+          return null;
+        }
+      })();
+      const numbers = Array.isArray(options?.numbers) ? (options!.numbers as Record<string, unknown>[]) : [];
+      const first = numbers[0] || null;
+      let dialIn: ChatVoiceDialInInfo | null = null;
+      if (first) {
+        dialIn = {
+          phoneE164: typeof first.phoneE164 === 'string' ? first.phoneE164 : null,
+          phoneDisplay:
+            typeof first.friendlyName === 'string'
+              ? first.friendlyName
+              : typeof first.phoneE164 === 'string'
+                ? first.phoneE164
+                : null,
+          accessCode:
+            typeof options?.accessCode === 'string'
+              ? options.accessCode
+              : typeof first.accessCode === 'string'
+                ? first.accessCode
+                : typeof first.routingCode === 'string'
+                  ? first.routingCode
+                  : null,
+          channelId: null,
+          resolvedPricing:
+            options?.telephonyPricing && typeof options.telephonyPricing === 'object'
+              ? (options.telephonyPricing as Record<string, unknown>)
+              : null,
+        };
+      } else {
+        const channel = await getVoiceChannel(agentId);
+        dialIn = channel ? dialInFromChannel(channel) : null;
+      }
       return upsertCall(deps, {
         agentId,
         callSid: `inbound-wait-${agentId}`,

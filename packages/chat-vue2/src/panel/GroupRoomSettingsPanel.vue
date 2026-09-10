@@ -85,6 +85,33 @@
           </div>
         </section>
 
+        <!-- Retention / disappearing messages -->
+        <section v-if="detail.viewerIsOwner" class="nexus-room-settings__section">
+          <div class="nexus-room-settings__section-title">Disappearing messages</div>
+          <p class="nexus-muted nexus-room-settings__hint">
+            Applies to new messages. Uploaded chat media follows the same TTL when indexed with the message.
+          </p>
+          <div class="nexus-room-settings__ai-row">
+            <select v-model="retentionPreset" class="nexus-input" :disabled="busy">
+              <option
+                v-for="opt in retentionOptions"
+                :key="String(opt.value)"
+                :value="opt.value"
+              >
+                {{ opt.label }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="nexus-btn nexus-btn--sm"
+              :disabled="busy || !retentionDirty"
+              @click="saveRetention"
+            >
+              Save
+            </button>
+          </div>
+        </section>
+
         <!-- Invite link -->
         <section v-if="detail.viewerIsOwner" class="nexus-room-settings__section">
           <div class="nexus-room-settings__section-title">Invite</div>
@@ -130,11 +157,25 @@
 
 <script>
 /**
- * Room settings panel — participants, encryption mode, invites, AI participant upsert.
+ * Room settings panel — participants, encryption mode, retention, invites, AI participant upsert.
  * Ported from inference React GroupRoomSettingsDialog UX reference.
  */
 import RoomOrchestrationSection from './RoomOrchestrationSection.vue';
 import RoomParticipantsAiConfig from './RoomParticipantsAiConfig.vue';
+
+const DEFAULT_TTL = 30 * 24 * 3600;
+const RETENTION_PRESETS = [
+  { value: String(7 * 24 * 3600), label: '7 days' },
+  { value: String(DEFAULT_TTL), label: '30 days' },
+  { value: String(90 * 24 * 3600), label: '90 days' },
+  { value: 'off', label: 'Off (retain indefinitely)' },
+];
+
+function presetFromTtl(ttl) {
+  if (ttl == null) return 'off';
+  const match = RETENTION_PRESETS.find((p) => p.value !== 'off' && Number(p.value) === Number(ttl));
+  return match ? match.value : String(ttl);
+}
 
 export default {
   name: 'GroupRoomSettingsPanel',
@@ -149,6 +190,7 @@ export default {
     upgradeRoomEncryption: { type: Function, default: null },
     downgradeRoomEncryption: { type: Function, default: null },
     createRoomInvite: { type: Function, default: null },
+    setRoomRetention: { type: Function, default: null },
     upsertAiParticipantFn: { type: Function, default: null },
     updateRoomOrchestration: { type: Function, default: null },
     models: { type: Array, default: () => [] },
@@ -164,7 +206,15 @@ export default {
       inviteCode: '',
       inviteExpiresAt: '',
       aiParticipantId: '',
+      retentionPreset: String(DEFAULT_TTL),
+      savedRetentionPreset: String(DEFAULT_TTL),
+      retentionOptions: RETENTION_PRESETS,
     };
+  },
+  computed: {
+    retentionDirty() {
+      return this.retentionPreset !== this.savedRetentionPreset;
+    },
   },
   watch: {
     roomId() {
@@ -182,6 +232,8 @@ export default {
       this.inviteCode = '';
       this.inviteExpiresAt = '';
       this.aiParticipantId = '';
+      this.retentionPreset = String(DEFAULT_TTL);
+      this.savedRetentionPreset = String(DEFAULT_TTL);
     },
     async toggleOpen() {
       if (this.settingsOpen) {
@@ -198,6 +250,9 @@ export default {
       this.loadError = null;
       try {
         this.detail = await this.getRoom(this.roomId);
+        const preset = presetFromTtl(this.detail && this.detail.messageTtlSeconds);
+        this.retentionPreset = preset;
+        this.savedRetentionPreset = preset;
       } catch (err) {
         this.loadError = (err && err.message) || 'Failed to load room';
         this.detail = null;
@@ -257,6 +312,28 @@ export default {
         this.$emit('encryption-changed', res);
       } catch (err) {
         this.actionError = (err && err.message) || 'Encryption downgrade failed';
+      } finally {
+        this.busy = false;
+      }
+    },
+    async saveRetention() {
+      if (!this.setRoomRetention || !this.retentionDirty) return;
+      this.busy = true;
+      this.actionError = null;
+      try {
+        const messageTtlSeconds =
+          this.retentionPreset === 'off' ? null : Number(this.retentionPreset);
+        const res = await this.setRoomRetention({
+          roomId: this.roomId,
+          messageTtlSeconds,
+        });
+        if (this.detail) {
+          this.detail.messageTtlSeconds =
+            res && res.messageTtlSeconds !== undefined ? res.messageTtlSeconds : messageTtlSeconds;
+        }
+        this.savedRetentionPreset = this.retentionPreset;
+      } catch (err) {
+        this.actionError = (err && err.message) || 'Retention update failed';
       } finally {
         this.busy = false;
       }
@@ -340,6 +417,10 @@ export default {
 .nexus-room-settings__encryption-mode {
   margin-bottom: 6px;
   font-family: monospace;
+}
+.nexus-room-settings__hint {
+  font-size: 11px;
+  margin: 0 0 8px;
 }
 .nexus-room-settings__encryption-actions {
   margin-bottom: 4px;

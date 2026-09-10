@@ -84,6 +84,7 @@ export {
   ScheduleCheckBackToolWidget,
   StorageFileToolWidget,
   DefaultToolRunWidget,
+  ModeRefusalChipWidget,
   SubAgentRunWidget,
   ToolCallTimeline,
   toolTimelineProps,
@@ -115,12 +116,15 @@ export {
   DEFAULT_PANEL_LABELS,
   formatCallDuration,
   formatCreditCents,
+  formatMoneyMinor,
+  spendLabelForCurrency,
 } from './panel/labels';
 export type { NexusChatPanelLabels } from './panel/labels';
 
 export { default as RealtimeCallPanel } from './voice/RealtimeCallPanel.vue';
 export { default as ActivePhoneChip } from './voice/ActivePhoneChip.vue';
 export { default as CallModeChooserModal } from './voice/CallModeChooserModal.vue';
+export { default as DialInInstructions } from './voice/DialInInstructions.vue';
 
 export function contactsFromChat(chat: {
   getState: () => { contacts: Array<{ id: string; name: string; type: string }> };
