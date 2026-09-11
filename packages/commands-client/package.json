@@ -1,7 +1,7 @@
 {
   "name": "@nexus/commands-client",
-  "version": "0.2.0",
-  "description": "Nexus commands client: envelope, SCA/2FA, long-running 102, OAuth PKCE, region discovery",
+  "version": "0.2.1",
+  "description": "Nexus commands client: envelope, SCA/2FA, elevation, long-running 102, OAuth PKCE, region discovery",
   "license": "UNLICENSED",
   "publishConfig": {
     "access": "public"

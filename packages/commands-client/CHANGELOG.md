@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- `403 PERMISSION_ELEVATION_REQUIRED` maps to `kind: 'permission_elevation_required'` with typed `permissionElevation` (elevationId, pack, command / commandNames, onboarding flags).
+- New `mapPermissionElevationError` + testing fixture `fixturePermissionElevation`.
+- Catalog codes: `PERMISSION_ELEVATION_REQUIRED`, `APPROVER_INSUFFICIENT_PERMISSION`, `ONBOARDING_REQUIRED_FOR_GRANT`.
+
 ## 0.2.0
 
 - Envelope `102` maps to `kind: 'accepted'` with `taskId`, `mode`, `statusCommand`, `cancelCommand`, `pollAfterMs`, `expiresAt`, `channels`, `progress`.

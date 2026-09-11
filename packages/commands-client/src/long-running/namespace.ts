@@ -1,5 +1,5 @@
 import type { NexusClient } from '../client.js';
-import { NexusError } from '../errors/nexus-error.js';
+import { NEXUS_ERROR_CATALOG, NexusError, type NexusErrorCode } from '../errors/nexus-error.js';
 import type {
   LongRunningTaskView,
   SendAccepted,
@@ -45,7 +45,11 @@ export class LongRunningNamespace {
       }
       const res = await this.get(taskId);
       if (!res.ok) {
-        throw new NexusError(res.error.code || 'UNKNOWN', res.error.message || 'anx.long-running.get failed');
+        const code: NexusErrorCode =
+          res.error.code && res.error.code in NEXUS_ERROR_CATALOG
+            ? (res.error.code as NexusErrorCode)
+            : 'UNKNOWN';
+        throw new NexusError(code, res.error.message || 'anx.long-running.get failed');
       }
       const task = res.kind === 'ok' ? res.data.task : undefined;
       if (task && TERMINAL.has(task.status)) return task;

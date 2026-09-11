@@ -4,6 +4,10 @@ export {
   type DataAccessApprovalPrompt,
 } from './data-access.js';
 export {
+  mapPermissionElevationError,
+  type PermissionElevationPrompt,
+} from './permission-elevation.js';
+export {
   NexusError,
   NEXUS_ERROR_CATALOG,
   mapHttpStatusToCode,
@@ -50,6 +54,7 @@ export {
 export {
   type SendResult,
   type SendAccepted,
+  type SendPermissionElevationRequired,
   type SendOptions,
   type CommandResponse,
   type RateLimitInfo,

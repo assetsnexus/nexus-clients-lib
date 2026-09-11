@@ -166,6 +166,34 @@ export function fixtureDataAccessApproval(overrides?: Partial<{
   };
 }
 
+export function fixturePermissionElevation(overrides?: Partial<{
+  elevationId: string;
+  pack: string;
+  command: string;
+  requiredOnboardingType: string | null;
+  onboardingSatisfied: boolean;
+}>): CommandResponse {
+  const command = overrides?.command || 'anx.crm.project.list';
+  return {
+    responseCode: 403,
+    errorObjects: [
+      {
+        code: 'PERMISSION_ELEVATION_REQUIRED',
+        message: 'This action requires elevated permissions.',
+        details: {
+          elevationId: overrides?.elevationId || 'elev_1',
+          pack: overrides?.pack || 'crm',
+          command,
+          commandNames: [command],
+          reason: 'This action requires elevated permissions.',
+          requiredOnboardingType: overrides?.requiredOnboardingType ?? null,
+          onboardingSatisfied: overrides?.onboardingSatisfied ?? true,
+        },
+      },
+    ],
+  };
+}
+
 export function fixtureRateLimited(): {
   status: number;
   headers: Headers;

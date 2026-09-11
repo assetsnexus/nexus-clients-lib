@@ -8,6 +8,9 @@ export type NexusErrorCode =
   | 'NOT_FOUND'
   | 'SCA_REQUIRED'
   | 'DATA_ACCESS_APPROVAL_REQUIRED'
+  | 'PERMISSION_ELEVATION_REQUIRED'
+  | 'APPROVER_INSUFFICIENT_PERMISSION'
+  | 'ONBOARDING_REQUIRED_FOR_GRANT'
   | 'INVALID_GRANT'
   | 'INVALID_CLIENT'
   | 'REGION_NOT_FOUND'
@@ -96,6 +99,31 @@ export const NEXUS_ERROR_CATALOG: Record<NexusErrorCode, NexusErrorCatalogEntry>
     meaning: 'User must approve data access for this resource.',
     remediation: 'Surface the approval prompt; retry after the user decides.',
     docsAnchor: 'errors#data_access_approval_required',
+  },
+  PERMISSION_ELEVATION_REQUIRED: {
+    code: 'PERMISSION_ELEVATION_REQUIRED',
+    httpStatus: 403,
+    retryable: false,
+    meaning: 'An AI identity lacks a capability or RBAC for this command.',
+    remediation:
+      'Show pack + command names. If onboarding is required, complete it first. Else anx.ai-agents.elevations.respond (deny / allow_once / allow_session / allow_permanent), then retry the original chat turn.',
+    docsAnchor: 'errors#permission_elevation_required',
+  },
+  APPROVER_INSUFFICIENT_PERMISSION: {
+    code: 'APPROVER_INSUFFICIENT_PERMISSION',
+    httpStatus: 403,
+    retryable: false,
+    meaning: 'The human responding to an elevation does not hold the target permission.',
+    remediation: 'Have an approver who already has that RBAC grant the elevation. Public chatters cannot escalate.',
+    docsAnchor: 'errors#approver_insufficient_permission',
+  },
+  ONBOARDING_REQUIRED_FOR_GRANT: {
+    code: 'ONBOARDING_REQUIRED_FOR_GRANT',
+    httpStatus: 403,
+    retryable: false,
+    meaning: 'The elevation target requires an onboarding type that is not yet complete.',
+    remediation: 'Finish the required onboarding type, then call elevations.respond again.',
+    docsAnchor: 'errors#onboarding_required_for_grant',
   },
   INVALID_GRANT: {
     code: 'INVALID_GRANT',

@@ -23,6 +23,8 @@ if (result.ok) {
   console.log(result.data);
 } else if (result.kind === 'sca_required') {
   // MUST render authorizationText + uiMetadata.dynamicFields next to the factor
+} else if (result.kind === 'permission_elevation_required') {
+  // 403 — elevations.respond, then retry the original chat turn
 } else if (result.kind === 'accepted') {
   // Envelope 102 (or legacy non-SCA 202) — follow anx.long-running.get; do not retry the write
   if (result.taskId) {
@@ -36,7 +38,7 @@ if (result.ok) {
 ## Features
 
 - Full command envelope with `requestId` / `traceId`
-- SCA/2FA (`202`) and long-running (`102`) typed results; `client.longRunning` follow/cancel/wait
+- SCA/2FA (`202`), data-access approval, permission elevation (`403`), and long-running (`102`) typed results; `client.longRunning` follow/cancel/wait
 - Auto `idempotencyKey` for non-read commands
 - Rate-limit / `Retry-After` aware backoff
 - OAuth PKCE helpers, JWKS cache, introspection

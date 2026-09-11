@@ -1,4 +1,5 @@
 import { mapDataAccessApprovalError } from './data-access.js';
+import { mapPermissionElevationError } from './permission-elevation.js';
 import { DiscoveryNamespace } from './discovery/namespace.js';
 import { mapHttpStatusToCode, NexusError } from './errors/nexus-error.js';
 import { GrantNamespace } from './grant/namespace.js';
@@ -310,6 +311,18 @@ export class NexusClient {
           requestId,
           dataAccessApproval: dataAccess,
           error: primary || { code: 'DATA_ACCESS_APPROVAL_REQUIRED' },
+          response,
+          rateLimit,
+        };
+      }
+      const permissionElevation = mapPermissionElevationError(primary);
+      if (permissionElevation) {
+        return {
+          ok: false,
+          kind: 'permission_elevation_required',
+          requestId,
+          permissionElevation,
+          error: primary || { code: 'PERMISSION_ELEVATION_REQUIRED' },
           response,
           rateLimit,
         };

@@ -1,4 +1,5 @@
 import type { DataAccessApprovalPrompt } from './data-access.js';
+import type { PermissionElevationPrompt } from './permission-elevation.js';
 
 export type CommandEnvelope = {
   command: string;
@@ -135,6 +136,16 @@ export type SendDataAccessRequired = {
   rateLimit?: RateLimitInfo;
 };
 
+export type SendPermissionElevationRequired = {
+  ok: false;
+  kind: 'permission_elevation_required';
+  requestId: string;
+  permissionElevation: PermissionElevationPrompt;
+  error: { code?: string; message?: string; details?: Record<string, any> };
+  response?: CommandResponse;
+  rateLimit?: RateLimitInfo;
+};
+
 export type SendError = {
   ok: false;
   kind: 'error' | 'rate_limited';
@@ -149,6 +160,7 @@ export type SendResult<T = unknown> =
   | SendAccepted<T>
   | SendScaRequired
   | SendDataAccessRequired
+  | SendPermissionElevationRequired
   | SendError;
 
 export type SendOptions = {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NexusClient } from '../src/client.js';
 import { mapDataAccessApprovalError } from '../src/data-access.js';
+import { mapPermissionElevationError } from '../src/permission-elevation.js';
 import { NexusError, NEXUS_ERROR_CATALOG } from '../src/errors/nexus-error.js';
 import { generatePkce, buildAuthorizeUrl } from '../src/oauth/helpers.js';
 import { GatewayRegionResolver, StaticRegionIndex } from '../src/regions/resolvers.js';
@@ -9,6 +10,7 @@ import {
   createTestClient,
   fixtureAccepted,
   fixtureDataAccessApproval,
+  fixturePermissionElevation,
   fixtureLongRunning,
   fixtureOk,
   fixtureSca,
@@ -43,6 +45,35 @@ describe('mapDataAccessApprovalError', () => {
     });
     expect(mapped?.grantId).toBe('g1');
     expect(mapped?.scopeChoices).toHaveLength(2);
+  });
+});
+
+describe('mapPermissionElevationError', () => {
+  it('returns null for unrelated errors', () => {
+    expect(mapPermissionElevationError({ code: 'FORBIDDEN' })).toBeNull();
+    expect(mapPermissionElevationError({ code: 'DATA_ACCESS_APPROVAL_REQUIRED' })).toBeNull();
+  });
+
+  it('maps PERMISSION_ELEVATION_REQUIRED and prepends command', () => {
+    const mapped = mapPermissionElevationError({
+      code: 'PERMISSION_ELEVATION_REQUIRED',
+      message: 'needs grant',
+      details: {
+        elevationId: 'elev_1',
+        pack: 'crm',
+        command: 'anx.crm.project.list',
+        commandNames: ['anx.crm.lead.list'],
+        resourceRef: { type: 'crm_project', id: 'p1' },
+        requiredOnboardingType: 'business-verification-l2',
+        onboardingSatisfied: false,
+      },
+    });
+    expect(mapped?.elevationId).toBe('elev_1');
+    expect(mapped?.pack).toBe('crm');
+    expect(mapped?.command).toBe('anx.crm.project.list');
+    expect(mapped?.commandNames).toEqual(['anx.crm.project.list', 'anx.crm.lead.list']);
+    expect(mapped?.onboardingSatisfied).toBe(false);
+    expect(mapped?.requiredOnboardingType).toBe('business-verification-l2');
   });
 });
 
@@ -123,6 +154,22 @@ describe('NexusClient.send', () => {
     const res = await client.send('anx.file.get', { id: 'f1' });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.kind).toBe('data_access_approval_required');
+  });
+
+  it('surfaces permission_elevation_required on 403', async () => {
+    const client = createTestClient({
+      'anx.crm.project.list': () => fixturePermissionElevation({ elevationId: 'elev_9' }),
+    });
+    const res = await client.send('anx.crm.project.list', {});
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.kind).toBe('permission_elevation_required');
+      if (res.kind === 'permission_elevation_required') {
+        expect(res.permissionElevation.elevationId).toBe('elev_9');
+        expect(res.permissionElevation.command).toBe('anx.crm.project.list');
+        expect(res.permissionElevation.pack).toBe('crm');
+      }
+    }
   });
 
   it('adds idempotency for non-read commands', async () => {
