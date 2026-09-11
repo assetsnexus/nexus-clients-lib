@@ -116,6 +116,7 @@ const SUB_AGENT_FINAL_SET = new Set<string>([
   'timeout',
   'cancelled',
   'interrupted',
+  'paused',
 ]);
 
 function resolveSubAgentFinalStatus(
@@ -127,6 +128,47 @@ function resolveSubAgentFinalStatus(
   return evType.endsWith('error') ? 'error' : 'completed';
 }
 
+function pickRunMeta(d: Record<string, unknown>): Partial<ChatToolRun> {
+  const result =
+    d.result && typeof d.result === 'object' ? (d.result as Record<string, unknown>) : null;
+  const runId =
+    (typeof d.runId === 'string' && d.runId) ||
+    (typeof d.subAgentRunId === 'string' && d.subAgentRunId) ||
+    (typeof result?.runId === 'string' && result.runId) ||
+    (typeof result?.subAgentRunId === 'string' && result.subAgentRunId) ||
+    null;
+  const linkedConversationId =
+    (typeof d.linkedConversationId === 'string' && d.linkedConversationId) ||
+    (typeof result?.linkedConversationId === 'string' && result.linkedConversationId) ||
+    null;
+  const plan =
+    (d.plan && typeof d.plan === 'object' ? d.plan : null) ||
+    (result?.plan && typeof result.plan === 'object' ? result.plan : null);
+  const tasks = Array.isArray(d.tasks)
+    ? d.tasks
+    : Array.isArray(result?.tasks)
+      ? result.tasks
+      : undefined;
+  const costLimitMinor =
+    typeof d.costLimitMinor === 'number'
+      ? d.costLimitMinor
+      : typeof result?.costLimitMinor === 'number'
+        ? result.costLimitMinor
+        : undefined;
+  return {
+    ...(runId ? { subAgentRunId: String(runId) } : {}),
+    ...(linkedConversationId ? { linkedConversationId: String(linkedConversationId) } : {}),
+    ...(plan ? { plan: plan as ChatToolRun['plan'] } : {}),
+    ...(tasks ? { tasks: tasks as ChatToolRun['tasks'] } : {}),
+    ...(costLimitMinor != null ? { costLimitMinor } : {}),
+    ...(typeof d.startedAtMs === 'number'
+      ? { startedAtMs: d.startedAtMs }
+      : typeof d.startedAt === 'string' && !Number.isNaN(Date.parse(d.startedAt))
+        ? { startedAtMs: Date.parse(d.startedAt) }
+        : {}),
+  };
+}
+
 /** Merge raw stream tool events into callId-keyed runs. */
 export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] {
   const byId = new Map<string, ChatToolRun>();
@@ -135,9 +177,10 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
     if (!ev?.type) continue;
 
     if (ev.type === 'tool_call' || ev.type === 'sub_agent_tool_call') {
-      const d = (ev.data || {}) as ToolCallPayload;
+      const d = (ev.data || {}) as ToolCallPayload & Record<string, unknown>;
       const name = String(d.name || d.tool || 'tool');
       const callId = String(d.callId || d.id || '').trim() || `call-${byId.size}-${name}`;
+      const meta = pickRunMeta(d as Record<string, unknown>);
       byId.set(callId, {
         id: callId,
         tool: name,
@@ -148,31 +191,43 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
         approvalRequired: !!d.approvalRequired,
         approvalId: d.approvalId || null,
         parentCallId: d.parentCallId || null,
-        kind: ev.type.startsWith('sub_agent') ? 'sub_agent' : 'tool',
+        kind: ev.type.startsWith('sub_agent') || name === 'run_sub_agent' ? 'sub_agent' : 'tool',
+        startedAtMs: Date.now(),
+        ...meta,
       });
       continue;
     }
 
     if (ev.type === 'tool_result' || ev.type === 'sub_agent_tool_result') {
-      const d = (ev.data || {}) as ToolResultPayload;
-      const name = String(d.name || d.tool || 'tool');
-      const callId = String(d.callId || d.id || '').trim() || `call-${byId.size}-${name}`;
+      const d = (ev.data || {}) as ToolResultPayload & Record<string, unknown>;
+      const callId = String(d.callId || d.id || '').trim() || `call-${byId.size}-tool`;
       const existing = byId.get(callId);
+      const incomingName =
+        (typeof d.name === 'string' && d.name.trim()) ||
+        (typeof d.tool === 'string' && d.tool.trim()) ||
+        '';
+      // Preserve the original tool name when a status-only patch (e.g. paused) omits name.
+      const name = incomingName || existing?.tool || 'tool';
       const status = statusFromToolResult(d, existing);
       const approvalRequired = status === 'needs_approval' || approvalFromResult(d.result, d);
+      const meta = pickRunMeta(d as Record<string, unknown>);
       const patch: ChatToolRun = {
         id: callId,
         tool: name,
-        label: name,
+        label: existing?.label && !incomingName ? existing.label : name,
         status,
         args: existing?.args || {},
-        result: d.result,
-        error: formatError(d.error),
+        result: d.result !== undefined ? d.result : existing?.result,
+        error: formatError(d.error) ?? existing?.error ?? null,
         round: d.round ?? existing?.round,
         approvalRequired,
         approvalId: approvalIdFrom(d) || existing?.approvalId || null,
         parentCallId: d.parentCallId || existing?.parentCallId || null,
-        kind: ev.type.startsWith('sub_agent') ? 'sub_agent' : 'tool',
+        kind:
+          ev.type.startsWith('sub_agent') || name === 'run_sub_agent' || existing?.kind === 'sub_agent'
+            ? 'sub_agent'
+            : 'tool',
+        ...meta,
       };
       byId.set(callId, existing ? { ...existing, ...patch, args: existing.args } : patch);
       continue;
@@ -183,13 +238,15 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
         text?: string;
         tokensUsed?: number;
         currentTool?: string;
-      };
+      } & Record<string, unknown>;
       const callId = String(d.callId || d.id || d.parentCallId || '').trim();
       if (!callId) continue;
       const existing = byId.get(callId);
+      const meta = pickRunMeta(d);
       if (existing) {
         existing.status = 'running';
         existing.kind = 'sub_agent';
+        Object.assign(existing, meta);
         if (ev.type === 'sub_agent_token' && d.text) {
           existing.subAgentText = (existing.subAgentText || '') + d.text;
         }
@@ -211,6 +268,7 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
           subAgentText: ev.type === 'sub_agent_token' && d.text ? d.text : undefined,
           subAgentTokensUsed: typeof d.tokensUsed === 'number' ? d.tokensUsed : undefined,
           subAgentCurrentTool: typeof d.currentTool === 'string' ? d.currentTool : undefined,
+          ...meta,
         });
       }
       continue;
@@ -220,18 +278,20 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
       const d = (ev.data || {}) as ToolResultPayload & {
         summary?: unknown;
         finalStatus?: string;
-      };
+      } & Record<string, unknown>;
       const callId = String(d.callId || d.id || '').trim();
       if (!callId) continue;
       const existing = byId.get(callId);
       const status: ChatToolRunStatus = ev.type.endsWith('error') ? 'error' : 'success';
       const finalStatus = resolveSubAgentFinalStatus(d.finalStatus || d.status, ev.type);
+      const meta = pickRunMeta(d);
       if (existing) {
         existing.status = status;
         existing.error = formatError(d.error) || existing.error;
         existing.kind = 'sub_agent';
         existing.subAgentSummary = d.summary ?? d.result;
         existing.subAgentFinalStatus = finalStatus;
+        Object.assign(existing, meta);
       } else {
         byId.set(callId, {
           id: callId,
@@ -243,6 +303,7 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
           kind: 'sub_agent',
           subAgentSummary: d.summary ?? d.result,
           subAgentFinalStatus: finalStatus,
+          ...meta,
         });
       }
     }
@@ -256,6 +317,17 @@ export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] 
   });
 }
 
+function isSubAgentHistoryRow(row: Record<string, unknown>): boolean {
+  const name = String(row.name || row.tool || '');
+  return (
+    row.kind === 'sub_agent' ||
+    name === 'run_sub_agent' ||
+    row.subAgentRunId != null ||
+    row.subAgentFinalStatus != null ||
+    row.linkedConversationId != null
+  );
+}
+
 /** Rehydrate tool runs from persisted conversation toolCalls rows. */
 export function rehydrateToolRunsFromHistory(
   toolCalls: Array<Record<string, unknown>> | null | undefined,
@@ -265,18 +337,30 @@ export function rehydrateToolRunsFromHistory(
   for (const row of toolCalls) {
     const callId = String(row.callId || row.id || '');
     const name = String(row.name || row.tool || 'tool');
+    const sub = isSubAgentHistoryRow(row);
+    const callType = sub ? 'sub_agent_tool_call' : 'tool_call';
+    const resultType = sub ? 'sub_agent_tool_result' : 'tool_result';
+    const meta = {
+      runId: row.runId || row.subAgentRunId,
+      subAgentRunId: row.subAgentRunId || row.runId,
+      linkedConversationId: row.linkedConversationId,
+      plan: row.plan,
+      tasks: row.tasks,
+      costLimitMinor: row.costLimitMinor,
+    };
     events.push({
-      type: 'tool_call',
+      type: callType,
       data: {
         callId,
         name,
         arguments: row.arguments ?? row.args ?? {},
         round: row.round,
+        ...meta,
       },
     });
-    if (row.result != null || row.error != null || row.status) {
+    if (row.result != null || row.error != null || row.status || row.subAgentFinalStatus) {
       events.push({
-        type: 'tool_result',
+        type: resultType,
         data: {
           callId,
           name,
@@ -285,8 +369,32 @@ export function rehydrateToolRunsFromHistory(
           status: row.status,
           approvalId: row.approvalId,
           approvalRequired: row.approvalRequired,
+          summary: row.subAgentSummary ?? row.summary,
+          finalStatus: row.subAgentFinalStatus,
+          ...meta,
         },
       });
+    }
+    if (sub && (row.subAgentText || row.subAgentFinalStatus || row.subAgentSummary)) {
+      if (row.subAgentText) {
+        events.push({
+          type: 'sub_agent_token',
+          data: { callId, text: String(row.subAgentText), ...meta },
+        });
+      }
+      if (row.subAgentFinalStatus || row.subAgentSummary) {
+        events.push({
+          type: row.subAgentFinalStatus === 'error' ? 'sub_agent_error' : 'sub_agent_done',
+          data: {
+            callId,
+            name,
+            summary: row.subAgentSummary ?? row.summary,
+            finalStatus: row.subAgentFinalStatus || 'completed',
+            result: row.result,
+            ...meta,
+          },
+        });
+      }
     }
   }
   return mergeToolStreamEvents(events);

@@ -12,6 +12,19 @@ import {
   parsePresentFileItems,
   parseMediaImages,
   parseUserChoiceOptions,
+  collectSubAgentRuns,
+  activeSubAgentCountFromTurns,
+  mapConversationListItem,
+  subscribeConversationActivity,
+  pauseAgentRun,
+  cancelAgentRun,
+  resumeAgentRun,
+  messageAgentRun,
+  getAgentRunPlan,
+  listAgentRunTasks,
+  updateAgentRunTask,
+  listAgentRuns,
+  getAgentRun,
 } from '@nexus/chat-core';
 
 export type {
@@ -24,6 +37,14 @@ export type {
   MediaCarouselImage,
   UserChoiceOption,
   ScheduleCheckBackResult,
+  ChatSessionSummary,
+  AgentRunSummary,
+  SubAgentStripItem,
+  MessageDelivery,
+  ActivityConnectionStatus,
+  ActivityEvent,
+  ActivityEventData,
+  ActivitySubscribeOptions,
 } from '@nexus/chat-core';
 export {
   createNexusChat,
@@ -39,6 +60,19 @@ export {
   parsePresentFileItems,
   parseMediaImages,
   parseUserChoiceOptions,
+  collectSubAgentRuns,
+  activeSubAgentCountFromTurns,
+  mapConversationListItem,
+  subscribeConversationActivity,
+  pauseAgentRun,
+  cancelAgentRun,
+  resumeAgentRun,
+  messageAgentRun,
+  getAgentRunPlan,
+  listAgentRunTasks,
+  updateAgentRunTask,
+  listAgentRuns,
+  getAgentRun,
 };
 
 export { renderChatMarkdown, markdownHasTable, CHAT_MARKDOWN_ROOT_CLASS } from './markdown';
@@ -48,7 +82,10 @@ export {
   ScheduleCheckBackToolWidget,
   StorageFileToolWidget,
   DefaultToolRunWidget,
+  ModeRefusalChipWidget,
   SubAgentRunWidget,
+  SubAgentsStrip,
+  DeliveryModePicker,
   ToolCallTimeline,
   toolTimelineProps,
   normalizeToolRun,
@@ -58,11 +95,16 @@ export {
 } from './tools';
 
 export { default as NexusChatPanel } from './panel/NexusChatPanel.vue';
+export { default as LinkedSubChatBanner } from './panel/LinkedSubChatBanner.vue';
+export { default as SpeakTurnWidget } from './panel/SpeakTurnWidget.vue';
+export { default as ConversationBillingPopover } from './panel/ConversationBillingPopover.vue';
 export { default as GroupRoomLeaveSection } from './panel/GroupRoomLeaveSection.vue';
 export {
   DEFAULT_PANEL_LABELS,
   formatCallDuration,
   formatCreditCents,
+  formatMoneyMinor,
+  spendLabelForCurrency,
 } from './panel/labels';
 export type { NexusChatPanelLabels } from './panel/labels';
 

@@ -203,12 +203,19 @@
         </div>
 
         <div class="nexus-chat-panel__meta">
-          <span>Usage: {{ usageSummary }}</span>
-          <span v-if="resolvedPanel.credits && resolvedPanel.credits.usedCents != null">
-            {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
-          </span>
+          <button
+            type="button"
+            class="nexus-chat-panel__meta-btn"
+            :title="resolvedLabels.usageDetails"
+            @click="billingOpen = true"
+          >
+            <span>{{ resolvedLabels.usage }}: {{ usageSummary }}</span>
+            <span v-if="showSpendChrome">
+              {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
+            </span>
+          </button>
           <span v-if="modeBadgeVisible" class="nexus-mode-badge">
-            <span class="nexus-mode-badge__label">Mode</span>
+            <span class="nexus-mode-badge__label">{{ resolvedLabels.mode }}</span>
             <span v-if="modeTransitionState.phase === 'transitioning'" class="nexus-mode-transition">
               <span class="nexus-mode-transition__ring" style="width: 14px; height: 14px;">
                 <svg width="14" height="14" class="nexus-mode-transition__svg">
@@ -280,6 +287,25 @@
 
         <slot name="queue" :panel="resolvedPanel" />
 
+        <linked-sub-chat-banner
+          :conversation-role="resolvedPanel.conversationRole"
+          :parent-conversation-id="resolvedPanel.parentConversationId"
+          :parent-title="parentConversationTitle"
+          :run-id="resolvedPanel.subAgentRunId"
+          :delivery="subchatDelivery"
+          @open-parent="$emit('open-parent-conversation', $event)"
+          @update:delivery="subchatDelivery = $event"
+        />
+
+        <sub-agents-strip
+          v-if="showSubAgentsStrip"
+          :runs="subAgentStripRuns"
+          :can-control="true"
+          @open-run="$emit('subagent-open', $event)"
+          @pause-run="$emit('subagent-pause', $event)"
+          @cancel-run="$emit('subagent-cancel', $event)"
+        />
+
         <div
           ref="messagesEl"
           class="nexus-chat-panel__messages"
@@ -294,6 +320,7 @@
             :class="'nexus-message-row--' + turn.role"
           >
             <div class="nexus-message-bubble" :class="turn.role">
+              <div class="nexus-turn-meta">{{ turnSenderLine(turn) }}</div>
               <div v-if="turn.compaction" class="nexus-compaction">
                 {{ resolvedLabels.contextCompacted }}
                 <span v-if="turn.compaction.beforeTokens != null">
@@ -329,6 +356,11 @@
                 @choice-select="$emit('choice-select', $event)"
                 @check-back-resume="$emit('check-back-resume')"
                 @switch-mode="onSwitchModeRequested"
+                @subagent-pause="$emit('subagent-pause', $event)"
+                @subagent-cancel="$emit('subagent-cancel', $event)"
+                @subagent-open="$emit('subagent-open', $event)"
+                @subagent-message="$emit('subagent-message', $event)"
+                @subagent-task-toggle="$emit('subagent-task-toggle', $event)"
               />
               <div
                 v-if="turn.role === 'user' && turn.deliveryStatus"
@@ -363,14 +395,27 @@
               </div>
             </div>
             <button
-              v-if="turn.text"
+              v-if="turn.text && turn.role !== 'user'"
               type="button"
               class="nexus-btn-link"
-              title="Copy"
+              :title="resolvedLabels.copy"
               @click="copyMessage(turn.text)"
             >
               ⎘
             </button>
+            <speak-turn-widget
+              v-if="turn.role === 'assistant' && turn.text && commandClient"
+              :text="turn.text"
+              :turn-id="turn.id"
+              :command-client="commandClient"
+              :agent-id="resolvedAgentId"
+              :virtual-agent-id="virtualAgentId"
+              :can-configure-agent="canConfigureAgent"
+              :auto-speak="autoVoice && isLastAssistantTurn(turn)"
+              :fallback-model-id="fallbackTtsModelId"
+              :labels="resolvedLabels"
+              @open-agent-voice-config="$emit('open-agent-voice-config', $event)"
+            />
             <slot name="message-actions" :turn="turn" :panel="resolvedPanel" />
           </div>
           <div v-if="resolvedPanel.streaming" class="nexus-muted">
@@ -461,6 +506,15 @@
         </div>
       </div>
     </div>
+    <conversation-billing-popover
+      :open="billingOpen"
+      :command-client="commandClient"
+      :conversation-id="resolvedPanel.conversationId"
+      :usage="resolvedPanel.usage"
+      :labels="resolvedLabels"
+      @close="billingOpen = false"
+      @open-cost-dashboard="$emit('open-cost-dashboard', { panel: resolvedPanel, panelIndex })"
+    />
   </div>
 </template>
 
@@ -476,16 +530,21 @@ import {
   uploadOptsForChatFileDestination,
   MAX_CHAT_ATTACHMENTS_PER_MESSAGE,
   isUploadAbortError,
+  collectSubAgentRuns,
   useModeTransition,
   formatModeTransitionCountdown,
   modeLabel,
+  formatTurnSenderLine,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
-import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles } from '../tools';
+import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
 import ComposerAttachmentRail from './ComposerAttachmentRail.vue';
 import RealtimeCallPanel from '../voice/RealtimeCallPanel.vue';
 import SessionSummaryChips from './SessionSummaryChips.vue';
+import LinkedSubChatBanner from './LinkedSubChatBanner.vue';
+import SpeakTurnWidget from './SpeakTurnWidget.vue';
+import ConversationBillingPopover from './ConversationBillingPopover.vue';
 import { DEFAULT_PANEL_LABELS, formatMoneyMinor, spendLabelForCurrency } from './labels';
 import { createMessageListAutoScroll } from './message-list-scroll';
 
@@ -505,6 +564,11 @@ function emptyPanel() {
     billingIssue: null,
     usage: null,
     queuedMessages: [],
+    activeSubAgentCount: 0,
+    backgroundSubAgentCompleted: false,
+    conversationRole: null,
+    parentConversationId: null,
+    subAgentRunId: null,
   };
 }
 
@@ -516,6 +580,10 @@ export default {
     RealtimeCallPanel,
     SessionSummaryChips,
     ComposerAttachmentRail,
+    SubAgentsStrip,
+    LinkedSubChatBanner,
+    SpeakTurnWidget,
+    ConversationBillingPopover,
   },
   props: {
     /** Optional chat-core controller — embed mode binds panel state from subscribe(). */
@@ -543,6 +611,20 @@ export default {
     autoSend: { type: Boolean, default: true },
     /** P8-8/C-4e: shared mode-transition timer duration — default is a confirmation affordance, not a spinner. */
     modeTransitionDurationMs: { type: Number, default: 600 },
+    /** Session rows used to resolve parent conversation title in subagent chats. */
+    sessions: { type: Array, default: () => [] },
+    /** Authenticated viewer id — maps user turns to "You". */
+    viewerUserId: { type: String, default: null },
+    /** Auto-speak assistant replies (drives SpeakTurnWidget). */
+    autoVoice: { type: Boolean, default: false },
+    /** Command client for TTS / billing (optional; host may inject via speak slot). */
+    commandClient: { type: Object, default: null },
+    /** Whether the viewer can open global agent voice config. */
+    canConfigureAgent: { type: Boolean, default: false },
+    /** Agent / VE id for contact-tts and config deep-link. */
+    agentId: { type: String, default: null },
+    virtualAgentId: { type: String, default: null },
+    fallbackTtsModelId: { type: String, default: null },
   },
   data() {
     return {
@@ -561,11 +643,32 @@ export default {
       // only the plain-object state snapshot is reactive.
       modeTransitionState: null,
       avatarImgFailed: false,
+      subchatDelivery: 'queue',
+      billingOpen: false,
     };
   },
   computed: {
     resolvedLabels() {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
+    },
+    subAgentStripRuns() {
+      return collectSubAgentRuns(this.resolvedPanel?.turns || []);
+    },
+    isSubagentConversation() {
+      const panel = this.resolvedPanel || {};
+      return panel.conversationRole === 'subagent' || Boolean(panel.parentConversationId);
+    },
+    showSubAgentsStrip() {
+      return !this.isSubagentConversation && this.subAgentStripRuns.length > 0;
+    },
+    parentConversationTitle() {
+      const parentId = this.resolvedPanel?.parentConversationId;
+      if (!parentId) return null;
+      const hit = (this.sessions || []).find(
+        (row) => row && (row.conversationId === parentId || row.id === parentId),
+      );
+      if (!hit) return null;
+      return hit.title || hit.participantLabel || hit.customName || hit.name || null;
     },
     panelFromChat() {
       if (!this.chat) return null;
@@ -754,7 +857,22 @@ export default {
       return parts.length ? parts.join(' ') : this.resolvedLabels.usageEmpty;
     },
     spendChromeLabel() {
-      return spendLabelForCurrency(this.displayCurrency);
+      return spendLabelForCurrency(this.displayCurrency, {
+        cost: this.resolvedLabels.cost,
+        credits: this.resolvedLabels.credits,
+      });
+    },
+    showSpendChrome() {
+      const credits = this.resolvedPanel.credits;
+      if (!credits || credits.usedCents == null) return false;
+      const mode =
+        (this.resolvedPanel.usage && this.resolvedPanel.usage.billingMode) ||
+        credits.billingMode ||
+        null;
+      if (mode === 'byok' && !this.displayCurrency && Number(credits.usedCents) === 0) {
+        return false;
+      }
+      return true;
     },
     attachmentSupported() {
       return Boolean(this.uploadAttachment || (this.chat && this.chat.uploadAttachment));
@@ -764,6 +882,13 @@ export default {
     },
     callSupported() {
       return this.contactType === 'agent' && Boolean(this.contactRecord && this.contactRecord.agentId);
+    },
+    resolvedAgentId() {
+      return (
+        this.agentId ||
+        (this.contactRecord && (this.contactRecord.agentId || this.contactRecord.id)) ||
+        null
+      );
     },
     summaryGetter() {
       if (this.chat && typeof this.chat.getConversationSummary === 'function') {
@@ -1320,6 +1445,36 @@ export default {
       }
       this.$emit('copy-message', text);
     },
+    turnSenderLine(turn) {
+      const participants = this.resolvedPanel.presence || this.resolvedPanel.participants || [];
+      const participantNames = {};
+      if (Array.isArray(participants)) {
+        participants.forEach((p) => {
+          const id = p && (p.userId || p.id || p.participantId);
+          const name = p && (p.displayName || p.name || p.nickname);
+          if (id && name) participantNames[String(id)] = String(name);
+        });
+      }
+      return formatTurnSenderLine(turn || {}, {
+        viewerUserId: this.viewerUserId,
+        contactName: this.contactName,
+        participantNames,
+        youLabel: this.resolvedLabels.you,
+        assistantLabel: this.resolvedLabels.assistant,
+        systemLabel: this.resolvedLabels.system,
+        unknownLabel: this.resolvedLabels.unknown,
+      });
+    },
+    isLastAssistantTurn(turn) {
+      if (!turn || turn.role !== 'assistant') return false;
+      const turns = this.resolvedPanel.turns || [];
+      for (let i = turns.length - 1; i >= 0; i -= 1) {
+        if (turns[i] && turns[i].role === 'assistant' && turns[i].text) {
+          return turns[i].id === turn.id;
+        }
+      }
+      return false;
+    },
     toggleDeliveryError(turnId) {
       this.expandedDeliveryErrorId =
         this.expandedDeliveryErrorId === turnId ? null : turnId;
@@ -1502,6 +1657,22 @@ export default {
   color: #6c757d;
   font-size: 12px;
 }
+.nexus-chat-panel__meta-btn {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.nexus-chat-panel__meta-btn:hover {
+  color: #51cbce;
+  text-decoration: underline;
+}
 .nexus-chat-panel__messages {
   flex: 1;
   overflow-y: auto;
@@ -1523,6 +1694,19 @@ export default {
   padding: 6px 10px;
   border-radius: 10px;
   max-width: 85%;
+}
+.nexus-turn-meta {
+  font-size: 11px;
+  line-height: 1.2;
+  opacity: 0.72;
+  margin-bottom: 2px;
+  user-select: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nexus-message-bubble.user .nexus-turn-meta {
+  opacity: 0.85;
 }
 .nexus-message-bubble.user {
   background: #51cbce;

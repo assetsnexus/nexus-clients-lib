@@ -19,10 +19,21 @@ type CommandClient = {
 
 export type AudioModalityFilter = 'stt' | 'tts' | 'both';
 
+export type AudioModalityTransport =
+  | 'stt_batch'
+  | 'stt_stream'
+  | 'tts_batch'
+  | 'tts_stream'
+  | 'realtime_duplex';
+
 export type AudioModelListItem = {
   id: string;
   displayName: string;
   modality: 'stt' | 'tts';
+  /** All modalities this model supports (may include both for duplex). */
+  modalities: Array<'stt' | 'tts'>;
+  /** Batch vs streaming vs duplex — annotate only; list includes both. */
+  modalityTransport: AudioModalityTransport | null;
   capabilities: string[];
   runnable: boolean;
   externalModelId: string | null;
@@ -96,10 +107,29 @@ export async function listAudioModels(
       if (!id) return null;
       const modalityRaw = String(r.modality || '').toLowerCase();
       const m: 'stt' | 'tts' = modalityRaw === 'tts' ? 'tts' : 'stt';
+      const modalitiesRaw = Array.isArray(r.modalities)
+        ? (r.modalities as unknown[])
+            .map((x) => String(x).toLowerCase())
+            .filter((x): x is 'stt' | 'tts' => x === 'stt' || x === 'tts')
+        : [m];
+      const transportRaw = r.modalityTransport != null ? String(r.modalityTransport) : '';
+      const modalityTransport = (
+        [
+          'stt_batch',
+          'stt_stream',
+          'tts_batch',
+          'tts_stream',
+          'realtime_duplex',
+        ] as const
+      ).includes(transportRaw as AudioModalityTransport)
+        ? (transportRaw as AudioModalityTransport)
+        : null;
       return {
         id,
         displayName: String(r.displayName || r.externalModelId || id),
         modality: m,
+        modalities: modalitiesRaw.length ? modalitiesRaw : [m],
+        modalityTransport,
         capabilities: Array.isArray(r.capabilities) ? (r.capabilities as string[]) : [],
         runnable: r.runnable !== false,
         externalModelId: r.externalModelId != null ? String(r.externalModelId) : null,
@@ -108,7 +138,11 @@ export async function listAudioModels(
           : [],
       } satisfies AudioModelListItem;
     })
-    .filter((x): x is AudioModelListItem => Boolean(x));
+    .filter((x): x is AudioModelListItem => Boolean(x))
+    .filter((x) => {
+      if (modality === 'both') return true;
+      return x.modality === modality || x.modalities.includes(modality);
+    });
 }
 
 export type SttCreateResult = {

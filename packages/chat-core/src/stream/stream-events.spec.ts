@@ -121,6 +121,45 @@ describe('stream-events', () => {
     });
     expect(turns[0].text).toContain('[Error: Model exploded]');
   });
+
+  it('paused preserves real tool name (no synthetic TOOL pause TOOL)', () => {
+    let turns: ChatTurn[] = [
+      { id: 'a1', role: 'assistant', text: '', toolEvents: [], rawToolStream: [] },
+    ];
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'tool_call',
+      data: {
+        callId: 'cb1',
+        name: 'schedule_check_back',
+        arguments: '{"delaySec":60,"reason":"wait"}',
+      },
+    });
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'tool_result',
+      data: {
+        callId: 'cb1',
+        name: 'schedule_check_back',
+        result: {
+          scheduled: true,
+          delaySec: 60,
+          reason: 'wait',
+          wakeAt: new Date().toISOString(),
+          watchIds: [],
+          iteration: 1,
+          message: 'ok',
+        },
+      },
+    });
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'paused',
+      data: { conversationId: 'c1', callId: 'cb1', reason: 'check_back' },
+    });
+    const run = turns[0].toolEvents!.find((e) => e.id === 'cb1');
+    expect(run?.tool).toBe('schedule_check_back');
+    expect(run?.label).toBe('schedule_check_back');
+    expect(run?.status).toBe('paused');
+    expect(run?.tool).not.toBe('tool');
+  });
 });
 
 describe('tool-events', () => {

@@ -72,6 +72,10 @@ export type ChatUsageSnapshot = {
   displayCostMinor?: number;
   /** ISO 4217 currency for displayCostMinor / money formatting. */
   displayCurrency?: string;
+  /** Local / region billing mode (credits | byok | free | admin_waived | …). */
+  billingMode?: string;
+  /** Platform prepaid credits actually charged (0 on BYOK). */
+  creditsChargedCents?: number;
   contextSnapshot?: unknown;
 };
 
@@ -280,6 +284,11 @@ export type ChatContact = {
   name: string;
   type: 'agent' | 'user' | 'group';
   unreadCount?: number;
+  /**
+   * Agent availability when type=agent (`Agent.contactStatus`).
+   * `disabled` = owner turned the agent off (gray presence).
+   */
+  contactStatus?: 'available' | 'away' | 'disabled' | null;
   /** Sidecar Agent Mongo id when type=agent (after create/open). */
   agentId?: string | null;
   /** Region VE id when type=agent. */
@@ -307,4 +316,6 @@ export type ChatContact = {
   responsibleUserId?: string | null;
   /** Org that owns the VE when scoped to an organization. */
   orgId?: string | null;
+  /** Region VE scope — `global` platform agents appear in list-public. */
+  scope?: 'global' | 'org' | 'user' | null;
 };

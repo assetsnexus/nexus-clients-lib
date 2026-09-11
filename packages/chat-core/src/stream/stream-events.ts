@@ -55,16 +55,27 @@ export function applyStreamEventToTurns(
   } else if (ev.type === 'paused') {
     const data = (ev.data && typeof ev.data === 'object' ? ev.data : {}) as {
       callId?: string;
+      reason?: string;
     };
     if (data.callId) {
-      const raw = [
-        ...(turn.rawToolStream || []),
-        { type: 'tool_result', data: { callId: data.callId, status: 'paused', name: 'tool' } },
-      ];
-      turn.rawToolStream = raw;
-      turn.toolEvents = mergeToolStreamEvents(raw).map((r) =>
+      // Mark the existing tool run paused. Do NOT invent a synthetic tool named
+      // "tool" — that overwrote schedule_check_back labels as "TOOL pause TOOL".
+      const existingName = (turn.toolEvents || []).find((r) => r.id === data.callId)?.tool;
+      turn.toolEvents = (turn.toolEvents || []).map((r) =>
         r.id === data.callId ? { ...r, status: 'paused' as const } : r,
       );
+      turn.rawToolStream = [
+        ...(turn.rawToolStream || []),
+        {
+          type: 'tool_result',
+          data: {
+            callId: data.callId,
+            status: 'paused',
+            ...(existingName ? { name: existingName } : {}),
+            ...(data.reason ? { reason: data.reason } : {}),
+          },
+        },
+      ];
     }
   } else if (ev.type === 'usage') {
     const data = (ev.data && typeof ev.data === 'object' ? ev.data : {}) as Record<string, unknown>;
@@ -80,6 +91,12 @@ export function applyStreamEventToTurns(
         typeof data.displayCurrency === 'string' && data.displayCurrency.trim()
           ? data.displayCurrency.trim().toUpperCase()
           : undefined,
+      billingMode:
+        typeof data.billingMode === 'string' && data.billingMode.trim()
+          ? data.billingMode.trim()
+          : undefined,
+      creditsChargedCents:
+        typeof data.creditsChargedCents === 'number' ? data.creditsChargedCents : undefined,
       contextSnapshot: data.contextSnapshot,
     };
   } else if (ev.type === 'conversation') {
@@ -113,6 +130,9 @@ export function applyStreamEventToTurns(
     } else if (!(turn.text || '').trim()) {
       turn.text = '';
     }
+  } else if (ev.type === 'activity') {
+    // Session/panel-level; hosts patch session list via subscribeConversationActivity.
+    // Intentionally does not mutate assistant turn text.
   }
 
   next[idx] = turn;

@@ -3,10 +3,10 @@ import { createCompatH } from './hCompat';
 const h = createCompatH(vueH);
 
 import type { ChatToolRun } from '@nexus/chat-core';
-import { toolStatusClass } from './shared';
+import { toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
 
 /**
- * Default expandable tool run with approve/revert actions.
+ * Compact expandable tool run row with approve/revert actions.
  */
 export const DefaultToolRunWidget = {
   name: 'NexusDefaultToolRunWidget',
@@ -25,92 +25,112 @@ export const DefaultToolRunWidget = {
       const run = this.run as ChatToolRun;
       return !!(run.approvalRequired || run.status === 'needs_approval');
     },
+    title(): string {
+      const run = this.run as ChatToolRun;
+      return truncateLabel(run.label || run.tool || 'tool', 64);
+    },
+    statusText(): string {
+      return toolStatusLabel((this.run as ChatToolRun).status);
+    },
   },
-  render(_h: any) {
+  render() {
     const run = this.run as ChatToolRun;
-    return h('div', { class: 'nexus-tool-run' }, [
-      h(
-        'button',
-        {
-          class: 'nexus-tool-run__header btn btn-link btn-sm btn-block text-left p-1',
-          attrs: {
-            type: 'button',
-            disabled: !this.canViewToolDetails,
-          },
-          on: {
-            click: () => {
-              if (this.canViewToolDetails) this.expanded = !this.expanded;
-            },
-          },
-        },
-        [
-          h('span', { class: 'font-weight-bold' }, run.label || run.tool),
-          h(
-            'span',
-            {
-              class: [
-                'nexus-tool-run__badge small ml-2',
-                toolStatusClass(run.status),
-              ],
-            },
-            run.status === 'running' ? 'running…' : run.status === 'success' ? 'done' : run.status,
-          ),
-          h('span', { class: 'text-muted small ml-2 font-monospace' }, run.tool),
-          this.canViewToolDetails
-            ? h('span', { class: 'float-right text-muted' }, this.expanded ? '▾' : '▸')
-            : null,
+    return h(
+      'div',
+      {
+        class: [
+          'nexus-tool-run',
+          toolStatusClass(run.status),
+          this.expanded ? 'nexus-tool-run--open' : '',
         ],
-      ),
-      this.showApproval
-        ? h('div', { class: 'mt-1' }, [
-            h(
-              'button',
-              {
-                class: 'btn btn-xs btn-success mr-1',
-                attrs: { type: 'button' },
-                on: { click: () => this.$emit('approve', run) },
+      },
+      [
+        h(
+          'button',
+          {
+            class: 'nexus-tool-run__header',
+            attrs: {
+              type: 'button',
+              disabled: !this.canViewToolDetails,
+              title: run.tool || run.label || undefined,
+            },
+            on: {
+              click: () => {
+                if (this.canViewToolDetails) this.expanded = !this.expanded;
               },
-              'Approve',
-            ),
+            },
+          },
+          [
+            h('span', {
+              class: ['nexus-tool-run__dot', toolStatusClass(run.status)],
+              attrs: { 'aria-hidden': 'true' },
+            }),
+            h('span', { class: 'nexus-tool-run__title' }, this.title),
             h(
-              'button',
-              {
-                class: 'btn btn-xs btn-outline-secondary',
-                attrs: { type: 'button' },
-                on: { click: () => this.$emit('revert', run) },
-              },
-              'Revert',
+              'span',
+              { class: ['nexus-tool-run__chip', toolStatusClass(run.status)] },
+              this.statusText,
             ),
-          ])
-        : null,
-      this.canViewToolDetails && this.expanded
-        ? h('div', { class: 'nexus-tool-run__details mt-1' }, [
-            Object.keys(run.args || {}).length
-              ? h('div', { class: 'mb-1' }, [
-                  h('div', { class: 'text-muted small text-uppercase' }, 'Input'),
-                  h(
-                    'pre',
-                    { class: 'nexus-tool-run__pre small mb-0' },
-                    JSON.stringify(run.args, null, 2),
-                  ),
-                ])
+            this.canViewToolDetails
+              ? h(
+                  'span',
+                  { class: 'nexus-tool-run__chev', attrs: { 'aria-hidden': 'true' } },
+                  this.expanded ? '▾' : '▸',
+                )
               : null,
-            run.error
-              ? h('p', { class: 'text-danger small' }, String(run.error))
-              : null,
-            run.result != null
-              ? h('div', [
-                  h('div', { class: 'text-muted small text-uppercase' }, 'Output'),
-                  h(
-                    'pre',
-                    { class: 'nexus-tool-run__pre small mb-0' },
-                    JSON.stringify(run.result, null, 2),
-                  ),
-                ])
-              : null,
-          ])
-        : null,
-    ]);
+          ],
+        ),
+        this.showApproval
+          ? h('div', { class: 'nexus-tool-run__actions' }, [
+              h(
+                'button',
+                {
+                  class: 'nexus-tool-run__btn nexus-tool-run__btn--ok',
+                  attrs: { type: 'button' },
+                  on: { click: () => this.$emit('approve', run) },
+                },
+                'Approve',
+              ),
+              h(
+                'button',
+                {
+                  class: 'nexus-tool-run__btn',
+                  attrs: { type: 'button' },
+                  on: { click: () => this.$emit('revert', run) },
+                },
+                'Revert',
+              ),
+            ])
+          : null,
+        this.canViewToolDetails && this.expanded
+          ? h('div', { class: 'nexus-tool-run__details' }, [
+              Object.keys(run.args || {}).length
+                ? h('div', { class: 'nexus-tool-run__block' }, [
+                    h('div', { class: 'nexus-tool-run__kicker' }, 'Input'),
+                    h(
+                      'pre',
+                      { class: 'nexus-tool-run__pre' },
+                      JSON.stringify(run.args, null, 2),
+                    ),
+                  ])
+                : null,
+              run.error
+                ? h('p', { class: 'nexus-tool-run__error' }, String(run.error))
+                : null,
+              run.result != null
+                ? h('div', { class: 'nexus-tool-run__block' }, [
+                    h('div', { class: 'nexus-tool-run__kicker' }, 'Output'),
+                    h(
+                      'pre',
+                      { class: 'nexus-tool-run__pre' },
+                      JSON.stringify(run.result, null, 2),
+                    ),
+                  ])
+                : null,
+            ])
+          : null,
+      ],
+    );
   },
 };
 

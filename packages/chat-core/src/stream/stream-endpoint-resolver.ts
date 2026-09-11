@@ -1,10 +1,15 @@
 /**
  * Resolves ordered stream endpoints + token from anx.communicate.stream-init.
  * Client retries endpoints in order on connection failure.
+ *
+ * Handshake query must carry the same purpose/resource binding as the minted
+ * stream token (`pur` / `res`); the gateway rejects PURPOSE_MISMATCH otherwise.
  */
 export class StreamEndpointResolver {
   endpoints: string[] = [];
   token: string | null = null;
+  purpose: string | null = null;
+  resourceId: string | null = null;
   lastRequestId: string | null = null;
 
   setFromStreamInit(streamInitResponse: Record<string, unknown> | null | undefined): void {
@@ -21,6 +26,11 @@ export class StreamEndpointResolver {
       (typeof obj.streamToken === 'string' && obj.streamToken) ||
       (typeof obj.accessToken === 'string' && obj.accessToken) ||
       null;
+    this.purpose = typeof obj.purpose === 'string' && obj.purpose.trim() ? obj.purpose.trim() : null;
+    this.resourceId =
+      typeof obj.resourceId === 'string' && obj.resourceId.trim()
+        ? obj.resourceId.trim()
+        : null;
     this.lastRequestId = typeof obj.requestId === 'string' ? obj.requestId : null;
   }
 
@@ -35,9 +45,14 @@ export class StreamEndpointResolver {
   resolveWebSocketUrl(index = 0): string | null {
     const base = this.endpoints[index];
     if (!base) return null;
-    if (!this.token) return base;
+    const params = new URLSearchParams();
+    if (this.token) params.set('token', this.token);
+    if (this.purpose) params.set('purpose', this.purpose);
+    if (this.resourceId) params.set('resourceId', this.resourceId);
+    const qs = params.toString();
+    if (!qs) return base;
     const sep = base.includes('?') ? '&' : '?';
-    return `${base}${sep}token=${encodeURIComponent(this.token)}`;
+    return `${base}${sep}${qs}`;
   }
 
   async connectWebSocket(handlers: {

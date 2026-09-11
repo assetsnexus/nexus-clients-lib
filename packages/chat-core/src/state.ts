@@ -30,7 +30,8 @@ export type SubAgentFinalStatus =
   | 'error'
   | 'timeout'
   | 'cancelled'
-  | 'interrupted';
+  | 'interrupted'
+  | 'paused';
 
 export type ChatToolRun = {
   id: string;
@@ -55,6 +56,17 @@ export type ChatToolRun = {
   subAgentSummary?: unknown;
   /** WP23: sub-agent final status. */
   subAgentFinalStatus?: SubAgentFinalStatus;
+  /** AgentRun id when origin=chat_agent (stable across refresh). */
+  subAgentRunId?: string | null;
+  /** Linked child conversation for open-in-chat. */
+  linkedConversationId?: string | null;
+  /** Epoch ms when the sub-agent started (for elapsed UI). */
+  startedAtMs?: number | null;
+  /** queue | interrupt | steer preferred for follow-up messages. */
+  deliveryMode?: 'queue' | 'interrupt' | 'steer' | string | null;
+  plan?: import('./agent-runs/types.js').AgentRunPlan | null;
+  tasks?: import('./agent-runs/types.js').AgentRunTask[];
+  costLimitMinor?: number | null;
 };
 
 export type ChatDeliveryStatus = 'sending' | 'sent' | 'failed';
@@ -83,6 +95,12 @@ export type ChatTurn = {
   /** Outbound user-message delivery (messenger-style). */
   deliveryStatus?: ChatDeliveryStatus;
   deliveryError?: { code?: string; message: string; details?: string } | null;
+  /** ISO timestamp or epoch-ms string when the turn was created. */
+  createdAt?: string | null;
+  /** Actor id (user / agent) that authored the turn. */
+  senderId?: string | null;
+  /** Display name when known (rooms / multi-party). */
+  senderName?: string | null;
 };
 
 export type PanelState = {
@@ -94,8 +112,17 @@ export type PanelState = {
   roomPurpose?: 'conversation' | 'room';
   turns: ChatTurn[];
   streaming: boolean;
+  /** Alias of streaming from conversations.list generationInProgress. */
+  generationInProgress?: boolean;
   queuedMessages: string[];
   unreadCount: number;
+  /** Active chat_agent AgentRuns for this conversation. */
+  activeSubAgentCount?: number;
+  /** True when a background subagent finished while the panel was closed. */
+  backgroundSubAgentCompleted?: boolean;
+  conversationRole?: 'parent' | 'subagent' | 'room' | string | null;
+  parentConversationId?: string | null;
+  subAgentRunId?: string | null;
   usage?: ChatTurn['usage'];
   spendLimits?: ChatSpendLimitsState | null;
   throttle?: ChatThrottleState | null;

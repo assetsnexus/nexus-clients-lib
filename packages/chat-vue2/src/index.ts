@@ -12,6 +12,19 @@ import {
   parsePresentFileItems,
   parseMediaImages,
   parseUserChoiceOptions,
+  collectSubAgentRuns,
+  activeSubAgentCountFromTurns,
+  mapConversationListItem,
+  subscribeConversationActivity,
+  pauseAgentRun,
+  cancelAgentRun,
+  resumeAgentRun,
+  messageAgentRun,
+  getAgentRunPlan,
+  listAgentRunTasks,
+  updateAgentRunTask,
+  listAgentRuns,
+  getAgentRun,
 } from '@nexus/chat-core';
 
 export type {
@@ -31,6 +44,14 @@ export type {
   ConversationSummaryTopic,
   ConversationSummaryTodo,
   ConversationSummaryResult,
+  ChatSessionSummary,
+  AgentRunSummary,
+  SubAgentStripItem,
+  MessageDelivery,
+  ActivityConnectionStatus,
+  ActivityEvent,
+  ActivityEventData,
+  ActivitySubscribeOptions,
 } from '@nexus/chat-core';
 export {
   createNexusChat,
@@ -46,6 +67,19 @@ export {
   parsePresentFileItems,
   parseMediaImages,
   parseUserChoiceOptions,
+  collectSubAgentRuns,
+  activeSubAgentCountFromTurns,
+  mapConversationListItem,
+  subscribeConversationActivity,
+  pauseAgentRun,
+  cancelAgentRun,
+  resumeAgentRun,
+  messageAgentRun,
+  getAgentRunPlan,
+  listAgentRunTasks,
+  updateAgentRunTask,
+  listAgentRuns,
+  getAgentRun,
   tierIcon,
   tierSortKey,
   resolveHostingFallback,
@@ -86,6 +120,8 @@ export {
   DefaultToolRunWidget,
   ModeRefusalChipWidget,
   SubAgentRunWidget,
+  SubAgentsStrip,
+  DeliveryModePicker,
   ToolCallTimeline,
   toolTimelineProps,
   normalizeToolRun,
@@ -96,6 +132,9 @@ export {
 
 export { default as NexusChatPanel } from './panel/NexusChatPanel.vue';
 export { default as SessionSummaryChips } from './panel/SessionSummaryChips.vue';
+export { default as LinkedSubChatBanner } from './panel/LinkedSubChatBanner.vue';
+export { default as SpeakTurnWidget } from './panel/SpeakTurnWidget.vue';
+export { default as ConversationBillingPopover } from './panel/ConversationBillingPopover.vue';
 export { default as GroupRoomLeaveSection } from './panel/GroupRoomLeaveSection.vue';
 export { default as GroupRoomSettingsPanel } from './panel/GroupRoomSettingsPanel.vue';
 export { default as RoomOrchestrationSection } from './panel/RoomOrchestrationSection.vue';

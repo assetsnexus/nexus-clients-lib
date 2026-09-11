@@ -191,6 +191,33 @@ describe('chat-core', () => {
     expect(sent).toContain('anx.communicate.conversations.create');
   });
 
+  it('includes scope:global agents from list-public in contacts', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [] };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            return {
+              ok: true,
+              data: [{ employeeId: 've-global', name: 'Nexus', scope: 'global' }],
+            };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const hit = chat.getState().contacts.find((c) => c.id === 've-global');
+    expect(hit?.type).toBe('agent');
+    expect(hit?.scope).toBe('global');
+    expect(hit?.name).toBe('Nexus');
+  });
+
   it('binds /ai-agents/ve HTTP media paths immediately without media.get', async () => {
     const sent: string[] = [];
     const chat = createNexusChat({
@@ -513,6 +540,58 @@ describe('chat-core', () => {
     expect((panel?.usage?.contextSnapshot as { dispatchedTokens?: number })?.dispatchedTokens).toBe(
       4200,
     );
+  });
+
+  it('applyUsage prefers displayCostMinor + currency for BYOK chrome', () => {
+    const chat = createNexusChat({
+      client: { send: async () => ({ ok: true, data: {} }) },
+    });
+    chat.applyUsage({
+      tokensUsed: 187,
+      maxContextTokens: 128000,
+      costCents: 0,
+      displayCostMinor: 42,
+      displayCurrency: 'EUR',
+      billingMode: 'byok',
+      creditsChargedCents: 0,
+    });
+    const panel = chat.getState().panels[0];
+    expect(panel?.credits?.usedCents).toBe(42);
+    expect(panel?.credits?.displayCurrency).toBe('EUR');
+    expect(panel?.credits?.billingMode).toBe('byok');
+    expect(panel?.usage?.displayCostMinor).toBe(42);
+  });
+
+  it('rehydrateTurns preserves createdAt and sender fields', () => {
+    const chat = createNexusChat({
+      client: { send: async () => ({ ok: true, data: {} }) },
+    });
+    chat.rehydrateTurns(
+      [
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'hi',
+          createdAt: '2026-09-11T14:00:00.000Z',
+          senderId: 'u1',
+          senderName: 'Alex',
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'hello',
+          createdAt: '2026-09-11T14:00:05.000Z',
+          senderId: 'agent-1',
+        },
+      ],
+      { conversationId: 'conv-1' },
+    );
+    const turns = chat.getState().turns;
+    expect(turns[0]?.createdAt).toBe('2026-09-11T14:00:00.000Z');
+    expect(turns[0]?.senderId).toBe('u1');
+    expect(turns[0]?.senderName).toBe('Alex');
+    expect(turns[1]?.createdAt).toBe('2026-09-11T14:00:05.000Z');
+    expect(chat.getState().conversationId).toBe('conv-1');
   });
 
   it('uploadAttachment runs region presign+register path and returns fileId', async () => {

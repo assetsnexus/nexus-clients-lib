@@ -128,35 +128,39 @@ export const ToolCallTimeline = {
       if (run.tool === 'present_file' || run.tool === 'present_files') {
         return h(StorageFileToolWidget, { key: run.id, props: { run } });
       }
-      if (run.tool === 'run_sub_agent') {
+      if (run.tool === 'run_sub_agent' || run.kind === 'sub_agent') {
         const subEvents = subAgentEventsForCall(
           this.toolEvents as StreamEv[],
           run.id,
         );
         const mission =
           typeof run.args?.mission === 'string' ? run.args.mission : '';
-        return h('div', { key: run.id, class: 'nexus-sub-agent-wrap' }, [
-          h(SubAgentRunWidget, {
-            props: {
-              mission,
-              events: subEvents,
-              status: subEvents.length
-                ? subAgentStatus(subEvents)
-                : run.status === 'running'
-                  ? 'running'
-                  : 'completed',
-              parentCallId: run.id,
-              canViewToolDetails: this.canViewToolDetails,
-              run,
-            },
-          }),
-          run.status !== 'running'
-            ? h(DefaultToolRunWidget, {
-                props: { run, canViewToolDetails: this.canViewToolDetails },
-                on: { approve: this.onApprove, revert: this.onRevert },
-              })
-            : null,
-        ]);
+        return h(SubAgentRunWidget, {
+          key: run.id,
+          props: {
+            mission,
+            events: subEvents,
+            status: subEvents.length
+              ? subAgentStatus(subEvents)
+              : run.status === 'running' || run.status === 'paused'
+                ? run.status
+                : run.subAgentFinalStatus || (run.status === 'success' ? 'completed' : 'completed'),
+            parentCallId: run.id,
+            canViewToolDetails: this.canViewToolDetails,
+            run,
+            plan: run.plan || null,
+            tasks: run.tasks || [],
+            linkedConversationId: run.linkedConversationId || null,
+            subAgentRunId: run.subAgentRunId || null,
+          },
+          on: {
+            pause: (p: unknown) => this.$emit('subagent-pause', p),
+            cancel: (p: unknown) => this.$emit('subagent-cancel', p),
+            open: (p: unknown) => this.$emit('subagent-open', p),
+            'message-delivery': (p: unknown) => this.$emit('subagent-message', p),
+            'task-toggle': (p: unknown) => this.$emit('subagent-task-toggle', p),
+          },
+        });
       }
       return h(DefaultToolRunWidget, {
         key: run.id,

@@ -99,12 +99,51 @@ export {
 export type { ChatPickerModelFields } from './model-capabilities.js';
 export { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 export { parseStreamMessage, applyStreamEventToTurns } from './stream/stream-events.js';
+export type { StreamEvent } from './stream/stream-events.js';
 export {
   classifyChatBillingIssue,
   isChatBillingIssueCode,
 } from './billing/classify-billing-issue.js';
 export { pollWorkload, BrowserCallRuntime, createVoiceApi };
 export type { WorkloadPollOptions, BrowserCallRuntimeOptions, VoiceCallSurface, VoiceBridgeEventPayload };
+export {
+  listAgentRuns,
+  getAgentRun,
+  pauseAgentRun,
+  cancelAgentRun,
+  resumeAgentRun,
+  messageAgentRun,
+  getAgentRunPlan,
+  listAgentRunTasks,
+  updateAgentRunTask,
+  mapAgentRunRow,
+} from './agent-runs/api.js';
+export { collectSubAgentRuns, activeSubAgentCountFromTurns } from './agent-runs/collect-runs.js';
+export type {
+  AgentRunOrigin,
+  AgentRunStatus,
+  MessageDelivery,
+  AgentRunPlan,
+  AgentRunPlanStep,
+  AgentRunTask,
+  AgentRunTaskStatus,
+  AgentRunSummary,
+  SubAgentStripItem,
+} from './agent-runs/types.js';
+export {
+  mapConversationListItem,
+  sessionBadgeFieldsFromSummary,
+  applySessionSummaryToPanel,
+  mergeSessionRowWithListItem,
+} from './session/session-summary.js';
+export type { ChatSessionSummary, ConversationRole } from './session/session-summary.js';
+export { subscribeConversationActivity } from './session/activity-subscribe.js';
+export type {
+  ActivityConnectionStatus,
+  ActivityEvent,
+  ActivityEventData,
+  ActivitySubscribeOptions,
+} from './session/activity-subscribe.js';
 export {
   listAudioModels,
   createSttJob,
@@ -115,12 +154,27 @@ export {
 } from './voice/stt-tts.js';
 export type {
   AudioModalityFilter,
+  AudioModalityTransport,
   AudioModelListItem,
   SttCreateResult,
   SttGetResult,
   SttPollOptions,
   TtsPlaybackResult,
 } from './voice/stt-tts.js';
+export {
+  createSpeakTurnController,
+  getContactTts,
+  setContactTts,
+  clearContactTts,
+} from './voice/speak-turn.js';
+export type {
+  ContactTtsView,
+  SpeakTurnPhase,
+  SpeakTurnState,
+  SpeakTurnController,
+} from './voice/speak-turn.js';
+export { formatTurnSenderLine, formatTurnTime } from './turn-meta.js';
+export type { TurnSenderLineOpts } from './turn-meta.js';
 export {
   waitForIceGatheringComplete,
   getBrowserRealtimeCallRuntime,
@@ -377,6 +431,7 @@ function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null 
     typeof data.costCents === 'number' ||
     typeof data.creditsCents === 'number' ||
     typeof data.displayCostMinor === 'number' ||
+    typeof data.creditsChargedCents === 'number' ||
     data.contextSnapshot != null;
   if (!hasUsage) return null;
   return {
@@ -390,6 +445,12 @@ function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null 
       typeof data.displayCurrency === 'string' && data.displayCurrency.trim()
         ? data.displayCurrency.trim().toUpperCase()
         : undefined,
+    billingMode:
+      typeof data.billingMode === 'string' && data.billingMode.trim()
+        ? data.billingMode.trim()
+        : undefined,
+    creditsChargedCents:
+      typeof data.creditsChargedCents === 'number' ? data.creditsChargedCents : undefined,
     contextSnapshot: data.contextSnapshot,
   };
 }
@@ -577,12 +638,28 @@ function mapVeAgents(
         type: 'agent' as const,
         virtualEmployeeId: employeeId || id,
         agentId: row?.agentId ? String(row.agentId) : null,
+        contactStatus:
+          row?.contactStatus === 'available' ||
+          row?.contactStatus === 'away' ||
+          row?.contactStatus === 'disabled'
+            ? row.contactStatus
+            : row?.availability?.status === 'offline'
+              ? 'disabled'
+              : row?.availability?.status === 'away'
+                ? 'away'
+                : row?.availability?.available === false
+                  ? 'away'
+                  : null,
         avatarUrl,
         avatarRef,
         aliases: aliases.length ? Array.from(new Set(aliases)) : undefined,
         canConfigure: opts?.canConfigure === true,
         responsibleUserId: row?.responsibleUserId ? String(row.responsibleUserId) : null,
         orgId: row?.orgId ? String(row.orgId) : null,
+        scope:
+          row?.scope === 'global' || row?.scope === 'org' || row?.scope === 'user'
+            ? row.scope
+            : null,
       };
     })
     .filter(Boolean) as ChatContact[];
@@ -721,6 +798,8 @@ export type NexusChat = {
   /** Create a new conversation for an agent contact (VE id or agent id). Always allocates a new id. */
   openContact: (contactId: string, opts?: { title?: string }) => Promise<{ conversationId: string; agentId?: string }>;
   streamInit: (opts: { conversationId?: string; contactId?: string; roomId?: string }) => Promise<void>;
+  /** True while this controller holds an open/connecting conversation WebSocket. */
+  hasLiveStream: () => boolean;
   listRooms: () => Promise<ChatRoomSummary[]>;
   createRoom: (input: {
     title?: string;
@@ -1017,6 +1096,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       usage.costCents ??
       panel.credits?.usedCents ??
       null;
+    const billingMode =
+      usage.billingMode ?? panel.credits?.billingMode ?? null;
     mergePanelPatch(panelId, {
       usage: usage as ChatTurn['usage'],
       credits: {
@@ -1024,6 +1105,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         usedCents: usedMinor,
         displayCurrency:
           usage.displayCurrency ?? panel.credits?.displayCurrency ?? null,
+        billingMode,
       },
     });
     opts.hooks?.onUsage?.(usage);
@@ -1061,6 +1143,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       }
       activeSocket = null;
     }
+  };
+
+  const hasLiveStream = (): boolean => {
+    if (!activeSocket) return false;
+    const state = (activeSocket as WebSocket).readyState;
+    return state === WebSocket.OPEN || state === WebSocket.CONNECTING;
   };
 
   const finishPausedTurn = () => {
@@ -1267,6 +1355,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     },
     openContact,
     streamInit,
+    hasLiveStream,
     async listRooms() {
       const result = (await opts.client.send('anx.communicate.rooms.list', {})) as SendResult | unknown;
       if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -1733,22 +1822,41 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         text?: string;
         toolCalls?: unknown;
         attachments?: IoDescriptor[];
+        createdAt?: string | null;
+        timestamp?: string | null;
+        senderId?: string | null;
+        senderName?: string | null;
       }>,
       rehydrateOpts?: { conversationId?: string | null },
     ) {
-      const turns: ChatTurn[] = rows.map((row, i) => ({
-        id: String(row.id || `hist_${i}`),
-        role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
-        text: String(row.content ?? row.text ?? ''),
-        toolEvents: rehydrateToolRunsFromHistory(
-          Array.isArray(row.toolCalls)
-            ? (row.toolCalls as Array<Record<string, unknown>>)
-            : null,
-        ),
-        ...(Array.isArray(row.attachments) && row.attachments.length
-          ? { attachments: row.attachments }
-          : {}),
-      }));
+      const turns: ChatTurn[] = rows.map((row, i) => {
+        const createdAt =
+          (typeof row.createdAt === 'string' && row.createdAt) ||
+          (typeof row.timestamp === 'string' && row.timestamp) ||
+          null;
+        const senderId =
+          typeof row.senderId === 'string' && row.senderId.trim() ? row.senderId.trim() : null;
+        const senderName =
+          typeof row.senderName === 'string' && row.senderName.trim()
+            ? row.senderName.trim()
+            : null;
+        return {
+          id: String(row.id || `hist_${i}`),
+          role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
+          text: String(row.content ?? row.text ?? ''),
+          toolEvents: rehydrateToolRunsFromHistory(
+            Array.isArray(row.toolCalls)
+              ? (row.toolCalls as Array<Record<string, unknown>>)
+              : null,
+          ),
+          ...(Array.isArray(row.attachments) && row.attachments.length
+            ? { attachments: row.attachments }
+            : {}),
+          ...(createdAt ? { createdAt } : {}),
+          ...(senderId ? { senderId } : {}),
+          ...(senderName ? { senderName } : {}),
+        };
+      });
       syncMessagesFromTurns(turns);
       const conversationId =
         typeof rehydrateOpts?.conversationId === 'string' && rehydrateOpts.conversationId.trim()
@@ -1851,6 +1959,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     ): Promise<SendMessageResult> {
       const id = `m_${Date.now()}`;
       const prevTurns = store.getState().turns;
+      const nowIso = new Date().toISOString();
       const userTurn: ChatTurn = {
         id,
         role: 'user',
@@ -1858,6 +1967,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         attachments: sendOpts.attachments,
         deliveryStatus: 'sending',
         deliveryError: null,
+        createdAt: nowIso,
       };
       syncMessagesFromTurns([...prevTurns, userTurn]);
       store.setState({ streaming: true });
@@ -1927,7 +2037,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         const assistantId = `a_${Date.now()}`;
         let turns: ChatTurn[] = [
           ...store.getState().turns,
-          { id: assistantId, role: 'assistant', text: '', toolEvents: [], rawToolStream: [] },
+          {
+            id: assistantId,
+            role: 'assistant',
+            text: '',
+            toolEvents: [],
+            rawToolStream: [],
+            createdAt: new Date().toISOString(),
+          },
         ];
         syncMessagesFromTurns(turns);
         patchCurrentPanel({

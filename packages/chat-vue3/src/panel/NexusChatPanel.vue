@@ -127,10 +127,17 @@
         </div>
 
         <div class="nexus-chat-panel__meta">
-          <span>Usage: {{ usageSummary }}</span>
-          <span v-if="resolvedPanel.credits && resolvedPanel.credits.usedCents != null">
-            Credits: {{ formatMoney(resolvedPanel.credits.usedCents) }}
-          </span>
+          <button
+            type="button"
+            class="nexus-chat-panel__meta-btn"
+            :title="resolvedLabels.usageDetails"
+            @click="billingOpen = true"
+          >
+            <span>{{ resolvedLabels.usage }}: {{ usageSummary }}</span>
+            <span v-if="showSpendChrome">
+              {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
+            </span>
+          </button>
         </div>
 
         <div v-if="pendingAttachments.length" class="nexus-attachment-chips">
@@ -185,6 +192,25 @@
 
         <slot name="queue" :panel="resolvedPanel" />
 
+        <linked-sub-chat-banner
+          :conversation-role="resolvedPanel.conversationRole"
+          :parent-conversation-id="resolvedPanel.parentConversationId"
+          :parent-title="parentConversationTitle"
+          :run-id="resolvedPanel.subAgentRunId"
+          :delivery="subchatDelivery"
+          @open-parent="$emit('open-parent-conversation', $event)"
+          @update:delivery="subchatDelivery = $event"
+        />
+
+        <sub-agents-strip
+          v-if="showSubAgentsStrip"
+          :runs="subAgentStripRuns"
+          :can-control="true"
+          @open-run="$emit('subagent-open', $event)"
+          @pause-run="$emit('subagent-pause', $event)"
+          @cancel-run="$emit('subagent-cancel', $event)"
+        />
+
         <div ref="messagesEl" class="nexus-chat-panel__messages">
           <div class="nexus-muted nexus-messages-label">{{ resolvedLabels.messages }}</div>
           <div
@@ -194,6 +220,7 @@
             :class="'nexus-message-row--' + turn.role"
           >
             <div class="nexus-message-bubble" :class="turn.role">
+              <div class="nexus-turn-meta">{{ turnSenderLine(turn) }}</div>
               <div v-if="turn.compaction" class="nexus-compaction">
                 {{ resolvedLabels.contextCompacted }}
                 <span v-if="turn.compaction.beforeTokens != null">
@@ -227,17 +254,35 @@
                 @revert="$emit('revert-tool', $event)"
                 @choice-select="$emit('choice-select', $event)"
                 @check-back-resume="$emit('check-back-resume')"
+                @subagent-pause="$emit('subagent-pause', $event)"
+                @subagent-cancel="$emit('subagent-cancel', $event)"
+                @subagent-open="$emit('subagent-open', $event)"
+                @subagent-message="$emit('subagent-message', $event)"
+                @subagent-task-toggle="$emit('subagent-task-toggle', $event)"
               />
             </div>
             <button
-              v-if="turn.text"
+              v-if="turn.text && turn.role !== 'user'"
               type="button"
               class="nexus-btn-link"
-              title="Copy"
+              :title="resolvedLabels.copy"
               @click="copyMessage(turn.text)"
             >
               ⎘
             </button>
+            <speak-turn-widget
+              v-if="turn.role === 'assistant' && turn.text && commandClient"
+              :text="turn.text"
+              :turn-id="turn.id"
+              :command-client="commandClient"
+              :agent-id="resolvedAgentId"
+              :virtual-agent-id="virtualAgentId"
+              :can-configure-agent="canConfigureAgent"
+              :auto-speak="autoVoice && isLastAssistantTurn(turn)"
+              :fallback-model-id="fallbackTtsModelId"
+              :labels="resolvedLabels"
+              @open-agent-voice-config="$emit('open-agent-voice-config', $event)"
+            />
             <slot name="message-actions" :turn="turn" :panel="resolvedPanel" />
           </div>
           <div v-if="resolvedPanel.streaming" class="nexus-muted">
@@ -299,15 +344,28 @@
         </div>
       </div>
     </div>
+    <conversation-billing-popover
+      :open="billingOpen"
+      :command-client="commandClient"
+      :conversation-id="resolvedPanel.conversationId"
+      :usage="resolvedPanel.usage"
+      :labels="resolvedLabels"
+      @close="billingOpen = false"
+      @open-cost-dashboard="$emit('open-cost-dashboard', { panel: resolvedPanel, panelIndex })"
+    />
   </div>
 </template>
 
 <script>
+import { collectSubAgentRuns, formatTurnSenderLine } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
-import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles } from '../tools';
+import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
 import RealtimeCallPanel from '../voice/RealtimeCallPanel.vue';
-import { DEFAULT_PANEL_LABELS, formatCreditCents } from './labels';
+import LinkedSubChatBanner from './LinkedSubChatBanner.vue';
+import SpeakTurnWidget from './SpeakTurnWidget.vue';
+import ConversationBillingPopover from './ConversationBillingPopover.vue';
+import { DEFAULT_PANEL_LABELS, formatMoneyMinor, spendLabelForCurrency } from './labels';
 
 function emptyPanel() {
   return {
@@ -324,6 +382,9 @@ function emptyPanel() {
     credits: null,
     usage: null,
     queuedMessages: [],
+    conversationRole: null,
+    parentConversationId: null,
+    subAgentRunId: null,
   };
 }
 
@@ -333,6 +394,10 @@ export default {
     ToolCallTimeline,
     GroupRoomLeaveSection,
     RealtimeCallPanel,
+    SubAgentsStrip,
+    LinkedSubChatBanner,
+    SpeakTurnWidget,
+    ConversationBillingPopover,
   },
   props: {
     /** Optional chat-core controller — embed mode binds panel state from subscribe(). */
@@ -354,6 +419,15 @@ export default {
     throttleRemainingMs: { type: Number, default: 0 },
     /** When chat is set, send via chat.sendMessage (embed mode). */
     autoSend: { type: Boolean, default: true },
+    /** Session rows used to resolve parent conversation title in subagent chats. */
+    sessions: { type: Array, default: () => [] },
+    viewerUserId: { type: String, default: null },
+    autoVoice: { type: Boolean, default: false },
+    commandClient: { type: Object, default: null },
+    canConfigureAgent: { type: Boolean, default: false },
+    agentId: { type: String, default: null },
+    virtualAgentId: { type: String, default: null },
+    fallbackTtsModelId: { type: String, default: null },
   },
   data() {
     return {
@@ -362,11 +436,32 @@ export default {
       uploadInFlight: false,
       embedState: null,
       embedUnsubscribe: null,
+      subchatDelivery: 'queue',
+      billingOpen: false,
     };
   },
   computed: {
     resolvedLabels() {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
+    },
+    subAgentStripRuns() {
+      return collectSubAgentRuns(this.resolvedPanel?.turns || []);
+    },
+    isSubagentConversation() {
+      const panel = this.resolvedPanel || {};
+      return panel.conversationRole === 'subagent' || Boolean(panel.parentConversationId);
+    },
+    showSubAgentsStrip() {
+      return !this.isSubagentConversation && this.subAgentStripRuns.length > 0;
+    },
+    parentConversationTitle() {
+      const parentId = this.resolvedPanel?.parentConversationId;
+      if (!parentId) return null;
+      const hit = (this.sessions || []).find(
+        (row) => row && (row.conversationId === parentId || row.id === parentId),
+      );
+      if (!hit) return null;
+      return hit.title || hit.participantLabel || hit.customName || hit.name || null;
     },
     panelFromChat() {
       if (!this.chat) return null;
@@ -461,18 +556,57 @@ export default {
     usageSummary() {
       const used = this.resolvedPanel.usage && this.resolvedPanel.usage.tokensUsed;
       const max = this.resolvedPanel.usage && this.resolvedPanel.usage.maxContextTokens;
-      const cost = this.resolvedPanel.usage && this.resolvedPanel.usage.costCents;
+      const usage = this.resolvedPanel.usage || {};
+      const cost =
+        usage.displayCostMinor != null ? usage.displayCostMinor : usage.costCents;
       const parts = [];
       if (used != null) parts.push(`${used} tok`);
       if (max != null) parts.push(`/${max}`);
-      if (cost != null) parts.push(this.formatMoney(cost));
+      if (cost != null) parts.push(this.formatMoney(cost, this.displayCurrency));
       return parts.length ? parts.join(' ') : this.resolvedLabels.usageEmpty;
+    },
+    displayCurrency() {
+      return (
+        (this.resolvedPanel.usage && this.resolvedPanel.usage.displayCurrency) ||
+        (this.resolvedPanel.credits && this.resolvedPanel.credits.displayCurrency) ||
+        null
+      );
+    },
+    spendChromeLabel() {
+      return spendLabelForCurrency(this.displayCurrency, {
+        cost: this.resolvedLabels.cost,
+        credits: this.resolvedLabels.credits,
+      });
+    },
+    showSpendChrome() {
+      const credits = this.resolvedPanel.credits;
+      if (!credits || credits.usedCents == null) return false;
+      const mode =
+        (this.resolvedPanel.usage && this.resolvedPanel.usage.billingMode) ||
+        credits.billingMode ||
+        null;
+      // BYOK: spend is shown on the Usage line as money; hide redundant "Credits: 0.00 cr".
+      if (mode === 'byok' && !this.displayCurrency && Number(credits.usedCents) === 0) {
+        return false;
+      }
+      if (mode === 'byok' && this.displayCurrency) {
+        // Show Cost line when we have real tracked money.
+        return Number(credits.usedCents) > 0 || Boolean(this.displayCurrency);
+      }
+      return true;
     },
     attachmentSupported() {
       return Boolean(this.uploadAttachment || (this.chat && this.chat.uploadAttachment));
     },
     callSupported() {
       return this.contactType === 'agent' && Boolean(this.contactRecord && this.contactRecord.agentId);
+    },
+    resolvedAgentId() {
+      return (
+        this.agentId ||
+        (this.contactRecord && (this.contactRecord.agentId || this.contactRecord.id)) ||
+        null
+      );
     },
     browserCallSurface() {
       const call = this.resolvedPanel.activeCall || {};
@@ -541,9 +675,6 @@ export default {
           ev.status !== 'reverted',
       );
     },
-    formatMoney(cents) {
-      return formatCreditCents(cents);
-    },
     async pickAttachment() {
       const uploader = this.uploadAttachment || (this.chat && this.chat.uploadAttachment);
       if (!uploader || this.uploadInFlight) return;
@@ -600,6 +731,39 @@ export default {
         navigator.clipboard.writeText(text).catch(() => {});
       }
       this.$emit('copy-message', text);
+    },
+    turnSenderLine(turn) {
+      const participants = this.resolvedPanel.presence || this.resolvedPanel.participants || [];
+      const participantNames = {};
+      if (Array.isArray(participants)) {
+        participants.forEach((p) => {
+          const id = p && (p.userId || p.id || p.participantId);
+          const name = p && (p.displayName || p.name || p.nickname);
+          if (id && name) participantNames[String(id)] = String(name);
+        });
+      }
+      return formatTurnSenderLine(turn || {}, {
+        viewerUserId: this.viewerUserId,
+        contactName: this.contactName,
+        participantNames,
+        youLabel: this.resolvedLabels.you,
+        assistantLabel: this.resolvedLabels.assistant,
+        systemLabel: this.resolvedLabels.system,
+        unknownLabel: this.resolvedLabels.unknown,
+      });
+    },
+    formatMoney(minor, currency) {
+      return formatMoneyMinor(minor, currency != null ? currency : this.displayCurrency);
+    },
+    isLastAssistantTurn(turn) {
+      if (!turn || turn.role !== 'assistant') return false;
+      const turns = this.resolvedPanel.turns || [];
+      for (let i = turns.length - 1; i >= 0; i -= 1) {
+        if (turns[i] && turns[i].role === 'assistant' && turns[i].text) {
+          return turns[i].id === turn.id;
+        }
+      }
+      return false;
     },
   },
 };
@@ -731,6 +895,19 @@ export default {
   padding: 6px 10px;
   border-radius: 10px;
   max-width: 85%;
+}
+.nexus-turn-meta {
+  font-size: 11px;
+  line-height: 1.2;
+  opacity: 0.72;
+  margin-bottom: 2px;
+  user-select: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nexus-message-bubble.user .nexus-turn-meta {
+  opacity: 0.85;
 }
 .nexus-message-bubble.user {
   background: #51cbce;

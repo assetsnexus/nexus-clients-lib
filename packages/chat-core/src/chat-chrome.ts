@@ -184,23 +184,37 @@ export type ActivityBarState = {
   activeStreams: number;
   pendingApprovals: number;
   hasVoiceCall: boolean;
+  activeSubAgents: number;
+  backgroundSubAgentCompleted: number;
 };
 
 export function computeActivityBar(panels: Array<{
   unreadCount?: number;
   streaming?: boolean;
+  generationInProgress?: boolean;
+  activeSubAgentCount?: number;
+  backgroundSubAgentCompleted?: boolean;
+  pendingApprovals?: number;
 }>): ActivityBarState {
   let unreadTotal = 0;
   let activeStreams = 0;
+  let activeSubAgents = 0;
+  let backgroundSubAgentCompleted = 0;
+  let pendingApprovals = 0;
   for (const p of panels) {
     unreadTotal += p.unreadCount || 0;
-    if (p.streaming) activeStreams += 1;
+    if (p.streaming || p.generationInProgress) activeStreams += 1;
+    activeSubAgents += Number(p.activeSubAgentCount || 0) || 0;
+    if (p.backgroundSubAgentCompleted) backgroundSubAgentCompleted += 1;
+    pendingApprovals += Number(p.pendingApprovals || 0) || 0;
   }
   return {
     unreadTotal,
     activeStreams,
-    pendingApprovals: 0,
+    pendingApprovals,
     hasVoiceCall: false,
+    activeSubAgents,
+    backgroundSubAgentCompleted,
   };
 }
 
@@ -209,7 +223,11 @@ export function computeActivityBar(panels: Array<{
 // ---------------------------------------------------------------------------
 
 export function fabBadgeCount(activity: ActivityBarState): number {
-  return activity.unreadTotal + activity.pendingApprovals;
+  return (
+    activity.unreadTotal +
+    activity.pendingApprovals +
+    (activity.backgroundSubAgentCompleted || 0)
+  );
 }
 
 export function fabBadgeLabel(count: number): string {

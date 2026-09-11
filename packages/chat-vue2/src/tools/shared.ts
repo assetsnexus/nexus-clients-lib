@@ -6,12 +6,68 @@ export function asRecord(v: unknown): Record<string, unknown> | null {
 
 export function toolStatusClass(status: string | undefined): string {
   if (status === 'error' || status === 'reverted') return 'is-error';
-  if (status === 'success' || status === 'approved') return 'is-success';
-  if (status === 'running' || status === 'paused' || status === 'pending') return 'is-running';
+  if (status === 'success' || status === 'approved' || status === 'completed') return 'is-success';
+  if (status === 'running' || status === 'pending' || status === 'queued') return 'is-running';
+  if (status === 'paused' || status === 'waiting') return 'is-paused';
   if (status === 'needs_approval') return 'is-approval';
-  // P8-8: mode refusal is a distinct "blocked pending action" state — never "done".
-  if (status === 'mode_blocked') return 'is-mode-blocked';
+  if (
+    status === 'mode_blocked' ||
+    status === 'timeout' ||
+    status === 'cancelled' ||
+    status === 'interrupted'
+  ) {
+    return 'is-mode-blocked';
+  }
   return '';
+}
+
+export function toolStatusLabel(status: string | undefined): string {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'success':
+    case 'approved':
+    case 'completed':
+      return 'done';
+    case 'paused':
+      return 'paused';
+    case 'pending':
+    case 'queued':
+      return 'queued';
+    case 'needs_approval':
+      return 'approve';
+    case 'mode_blocked':
+      return 'blocked';
+    case 'error':
+    case 'reverted':
+      return 'error';
+    case 'timeout':
+      return 'timeout';
+    case 'cancelled':
+      return 'cancelled';
+    case 'interrupted':
+      return 'interrupted';
+    default:
+      return status || '';
+  }
+}
+
+export function truncateLabel(text: string, max = 72): string {
+  const t = String(text || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/** Compact elapsed clock for running subagent widgets (`m:ss` or `h:mm:ss`). */
+export function formatElapsedMs(elapsedMs: number): string {
+  const totalSec = Math.max(0, Math.floor(Number(elapsedMs) / 1000) || 0);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export function displayAnxCommandName(ev: Record<string, unknown> | ChatToolRun): string {

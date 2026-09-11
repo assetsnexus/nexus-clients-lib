@@ -44,7 +44,11 @@ export declare const ScheduleCheckBackToolWidget: Record<string, unknown>;
 export declare const StorageFileToolWidget: Record<string, unknown>;
 export declare const DefaultToolRunWidget: Record<string, unknown>;
 export declare const SubAgentRunWidget: Record<string, unknown>;
+export declare const SubAgentsStrip: Record<string, unknown>;
+export declare const DeliveryModePicker: Record<string, unknown>;
 export declare const ToolCallTimeline: Record<string, unknown>;
+export declare const LinkedSubChatBanner: Record<string, unknown>;
+export declare const SessionSummaryChips: Record<string, unknown>;
 
 export declare function toolTimelineProps(events: Array<Record<string, unknown>>): Array<Record<string, unknown>>;
 export declare function normalizeToolRun(ev: Record<string, unknown>): Record<string, unknown>;

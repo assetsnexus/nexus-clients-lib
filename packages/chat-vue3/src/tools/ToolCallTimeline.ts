@@ -11,6 +11,7 @@ import {
 import AskUserChoiceToolWidget from './AskUserChoiceToolWidget';
 import DefaultToolRunWidget from './DefaultToolRunWidget';
 import MediaToolWidget from './MediaToolWidget';
+import ModeRefusalChipWidget from './ModeRefusalChipWidget';
 import ScheduleCheckBackToolWidget from './ScheduleCheckBackToolWidget';
 import StorageFileToolWidget from './StorageFileToolWidget';
 import SubAgentRunWidget from './SubAgentRunWidget';
@@ -50,6 +51,7 @@ export const ToolCallTimeline = {
     AskUserChoiceToolWidget,
     DefaultToolRunWidget,
     MediaToolWidget,
+    ModeRefusalChipWidget,
     ScheduleCheckBackToolWidget,
     StorageFileToolWidget,
     SubAgentRunWidget,
@@ -63,6 +65,8 @@ export const ToolCallTimeline = {
     canViewToolDetails: { type: Boolean, default: true },
     pollWorkload: { type: Function, default: null },
     triggerCheckBack: { type: Function, default: null },
+    /** P8-8: shared `useModeTransition` state, owned by the panel — drives the refusal chip's ring. */
+    modeTransition: { type: Object, default: null },
   },
   computed: {
     normalized(): ChatToolRun[] {
@@ -82,7 +86,20 @@ export const ToolCallTimeline = {
     onResumeComplete() {
       this.$emit('check-back-resume');
     },
-    renderRun(h: any, run: ChatToolRun) {
+    onSwitchMode(payload: { required: string; mode: string; callId: string }) {
+      this.$emit('switch-mode', payload);
+    },
+    renderRun(_h: any, run: ChatToolRun) {
+      // P8-8: a mode refusal is a terminal, distinct state — check status first,
+      // ahead of every tool-name branch (including DefaultToolRunWidget), so a
+      // blocked call never renders as "done" regardless of which tool it was.
+      if (run.status === 'mode_blocked') {
+        return h(ModeRefusalChipWidget, {
+          key: run.id,
+          props: { run, modeTransition: this.modeTransition },
+          on: { 'switch-mode': this.onSwitchMode },
+        });
+      }
       if (isScheduleCheckBackTool(run.tool) && parseScheduleCheckBackResult(run.result)) {
         return h(ScheduleCheckBackToolWidget, {
           key: run.id,
@@ -115,35 +132,39 @@ export const ToolCallTimeline = {
       if (run.tool === 'present_file' || run.tool === 'present_files') {
         return h(StorageFileToolWidget, { key: run.id, props: { run } });
       }
-      if (run.tool === 'run_sub_agent') {
+      if (run.tool === 'run_sub_agent' || run.kind === 'sub_agent') {
         const subEvents = subAgentEventsForCall(
           this.toolEvents as StreamEv[],
           run.id,
         );
         const mission =
           typeof run.args?.mission === 'string' ? run.args.mission : '';
-        return h('div', { key: run.id, class: 'nexus-sub-agent-wrap' }, [
-          h(SubAgentRunWidget, {
-            props: {
-              mission,
-              events: subEvents,
-              status: subEvents.length
-                ? subAgentStatus(subEvents)
-                : run.status === 'running'
-                  ? 'running'
-                  : 'completed',
-              parentCallId: run.id,
-              canViewToolDetails: this.canViewToolDetails,
-              run,
-            },
-          }),
-          run.status !== 'running'
-            ? h(DefaultToolRunWidget, {
-                props: { run, canViewToolDetails: this.canViewToolDetails },
-                on: { approve: this.onApprove, revert: this.onRevert },
-              })
-            : null,
-        ]);
+        return h(SubAgentRunWidget, {
+          key: run.id,
+          props: {
+            mission,
+            events: subEvents,
+            status: subEvents.length
+              ? subAgentStatus(subEvents)
+              : run.status === 'running' || run.status === 'paused'
+                ? run.status
+                : run.subAgentFinalStatus || (run.status === 'success' ? 'completed' : 'completed'),
+            parentCallId: run.id,
+            canViewToolDetails: this.canViewToolDetails,
+            run,
+            plan: run.plan || null,
+            tasks: run.tasks || [],
+            linkedConversationId: run.linkedConversationId || null,
+            subAgentRunId: run.subAgentRunId || null,
+          },
+          on: {
+            pause: (p: unknown) => this.$emit('subagent-pause', p),
+            cancel: (p: unknown) => this.$emit('subagent-cancel', p),
+            open: (p: unknown) => this.$emit('subagent-open', p),
+            'message-delivery': (p: unknown) => this.$emit('subagent-message', p),
+            'task-toggle': (p: unknown) => this.$emit('subagent-task-toggle', p),
+          },
+        });
       }
       return h(DefaultToolRunWidget, {
         key: run.id,

@@ -87,11 +87,16 @@ export function formatMoneyMinor(
 }
 
 /** Spend / credits chrome label: money → "Cost", else "Credits". */
-export function spendLabelForCurrency(currency?: string | null): string {
+export function spendLabelForCurrency(
+  currency?: string | null,
+  labels?: { cost?: string; credits?: string } | null,
+): string {
   const code = String(currency || '')
     .trim()
     .toUpperCase();
-  return /^[A-Z]{3}$/.test(code) ? 'Cost' : 'Credits';
+  return /^[A-Z]{3}$/.test(code)
+    ? labels?.cost || 'Cost'
+    : labels?.credits || 'Credits';
 }
 
 export type NexusChatPanelLabels = {
@@ -127,6 +132,53 @@ export type NexusChatPanelLabels = {
   destConversation?: string;
   destBucket?: string;
   destExpires?: string;
+  /** Transcript / chrome */
+  you?: string;
+  assistant?: string;
+  system?: string;
+  unknown?: string;
+  copy?: string;
+  usage?: string;
+  usageDetails?: string;
+  cost?: string;
+  credits?: string;
+  mode?: string;
+  /** Speak widget */
+  speak?: string;
+  speaking?: string;
+  generatingVoice?: string;
+  playing?: string;
+  playAgain?: string;
+  cancelSpeak?: string;
+  voiceSettings?: string;
+  replyVoice?: string;
+  agentVoiceHint?: string;
+  agentVoiceSettings?: string;
+  model?: string;
+  voicePreset?: string;
+  optional?: string;
+  save?: string;
+  saving?: string;
+  reset?: string;
+  transportBatch?: string;
+  transportStream?: string;
+  /** Billing popover */
+  billingTitle?: string;
+  billingClose?: string;
+  billingLoading?: string;
+  billingMode?: string;
+  billingTokens?: string;
+  billingTracked?: string;
+  billingTrackedSpend?: string;
+  billingCreditsCharged?: string;
+  billingByokHint?: string;
+  billingRecentTurns?: string;
+  billingEmptyTurns?: string;
+  billingOpenDashboard?: string;
+  billingModeByok?: string;
+  billingModeCredits?: string;
+  billingModeWaived?: string;
+  billingModeFree?: string;
 };
 
 export const DEFAULT_PANEL_LABELS: Required<NexusChatPanelLabels> = {
@@ -162,4 +214,49 @@ export const DEFAULT_PANEL_LABELS: Required<NexusChatPanelLabels> = {
   destConversation: 'In conversation',
   destBucket: 'In bucket',
   destExpires: 'Expires',
+  you: 'You',
+  assistant: 'Assistant',
+  system: 'System',
+  unknown: 'Unknown',
+  copy: 'Copy',
+  usage: 'Usage',
+  usageDetails: 'Usage details',
+  cost: 'Cost',
+  credits: 'Credits',
+  mode: 'Mode',
+  speak: 'Speak',
+  speaking: 'Speaking…',
+  generatingVoice: 'Generating voice…',
+  playing: 'Playing…',
+  playAgain: 'Play again',
+  cancelSpeak: 'Cancel',
+  voiceSettings: 'Voice settings',
+  replyVoice: 'Reply voice',
+  agentVoiceHint: 'Open agent Channels to edit the default reply voice.',
+  agentVoiceSettings: 'Agent voice settings',
+  model: 'Model',
+  voicePreset: 'Voice preset',
+  optional: 'optional',
+  save: 'Save',
+  saving: 'Saving…',
+  reset: 'Reset',
+  transportBatch: 'batch',
+  transportStream: 'streaming',
+  billingTitle: 'Conversation usage',
+  billingClose: 'Close',
+  billingLoading: 'Loading…',
+  billingMode: 'Mode',
+  billingTokens: 'Tokens',
+  billingTracked: '{label} (tracked)',
+  billingTrackedSpend: 'Tracked spend',
+  billingCreditsCharged: 'Platform credits charged',
+  billingByokHint:
+    'BYOK / region subscription: usage is metered; platform prepaid credits are not debited.',
+  billingRecentTurns: 'Recent turns',
+  billingEmptyTurns: 'No billed turns recorded yet for this session.',
+  billingOpenDashboard: 'Open cost dashboard',
+  billingModeByok: 'BYOK / region (metered)',
+  billingModeCredits: 'Platform credits',
+  billingModeWaived: 'Waived',
+  billingModeFree: 'Free',
 };

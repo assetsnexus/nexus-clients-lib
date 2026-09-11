@@ -5,6 +5,8 @@ export { StorageFileToolWidget } from './StorageFileToolWidget';
 export { DefaultToolRunWidget } from './DefaultToolRunWidget';
 export { ModeRefusalChipWidget } from './ModeRefusalChipWidget';
 export { SubAgentRunWidget } from './SubAgentRunWidget';
+export { SubAgentsStrip } from './SubAgentsStrip';
+export { DeliveryModePicker } from './DeliveryModePicker';
 export { ToolCallTimeline } from './ToolCallTimeline';
 export { toolTimelineProps, normalizeToolRun, toolStatusClass } from './shared';
 export { ensureToolWidgetStyles, TOOL_WIDGET_CSS } from './styles';
