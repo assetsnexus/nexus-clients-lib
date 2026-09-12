@@ -42,9 +42,14 @@ import {
 } from './voice.js';
 import {
   uploadAttachment as uploadAttachmentViaRegion,
+  linkConversationAttachments,
   type UploadAttachmentResult,
   type UploadAttachmentOpts,
 } from './tools/upload-attachment.js';
+import {
+  attachmentsForCommand,
+  mergeAttachmentDisplay,
+} from './attachments.js';
 
 function elevationCommandNames(elev: {
   command?: string | null;
@@ -147,10 +152,17 @@ export type {
 export {
   listAudioModels,
   createSttJob,
+  createAndPollStt,
+  createLiveSttSession,
+  connectLiveSttWebSocket,
   getSttJobResult,
   pollSttJob,
   createAndPollTts,
   playAudioUrl,
+  listTtsVoices,
+  ttsVoicesForPicker,
+  transcribeOrNull,
+  speakText,
 } from './voice/stt-tts.js';
 export type {
   AudioModalityFilter,
@@ -159,16 +171,29 @@ export type {
   SttCreateResult,
   SttGetResult,
   SttPollOptions,
+  LiveSttSession,
+  LiveSttSocket,
   TtsPlaybackResult,
+  TtsVoiceListItem,
+  TtsVoicesListResult,
+  TtsVoicePickerOption,
 } from './voice/stt-tts.js';
+export {
+  filterSttModelsForPicker,
+  findSttModel,
+  modelHasSttCapability,
+  modelSupportsSttStream,
+} from './voice/stt-models-picker.js';
 export {
   createSpeakTurnController,
   getContactTts,
   setContactTts,
   clearContactTts,
+  contactTtsNeedsSetup,
 } from './voice/speak-turn.js';
 export type {
   ContactTtsView,
+  ContactVoiceSampleRef,
   SpeakTurnPhase,
   SpeakTurnState,
   SpeakTurnController,
@@ -204,6 +229,8 @@ export type {
 export {
   uploadAttachment,
   conversationAttachmentDescriptor,
+  linkConversationWorkspaceItem,
+  linkConversationAttachments,
   isUploadAbortError,
 } from './tools/upload-attachment.js';
 export type {
@@ -412,16 +439,6 @@ function unwrapData(result: unknown): Record<string, unknown> {
 
 function currentPanel(state: ChatState): PanelState | null {
   return state.panels[state.activePanelIndex] || null;
-}
-
-function attachmentRefs(attachments: IoDescriptor[] | undefined): string[] {
-  return (attachments || [])
-    .filter(
-      (attachment): attachment is Extract<IoDescriptor, { kind: 'entity' }> =>
-        attachment.kind === 'entity' && attachment.entityType === 'conversation_attachment',
-    )
-    .map((attachment) => attachment.ref)
-    .filter(Boolean);
 }
 
 function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null {
@@ -1560,13 +1577,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           compactBeforeReply: Boolean(row.compactBeforeReply),
         });
       }
+      const viewerIsOwner = Boolean(data.viewerIsOwner);
+      const viewerIsModerator = Boolean(data.viewerIsModerator);
       const detail: ChatRoomDetail = {
         id: String(data.roomId || data.id || data._id || roomId),
         title: String(data.title || data.name || data.label || 'Room'),
         type: typeof data.type === 'string' ? data.type : undefined,
         ownerUserId: typeof data.ownerUserId === 'string' ? data.ownerUserId : null,
         viewerUserId: typeof data.viewerUserId === 'string' ? data.viewerUserId : null,
-        viewerIsOwner: Boolean(data.viewerIsOwner),
+        viewerIsOwner,
+        viewerIsModerator,
+        viewerCanManage: Boolean(data.viewerCanManage) || viewerIsOwner || viewerIsModerator,
         encryptionMode: typeof data.encryptionMode === 'string' ? data.encryptionMode : null,
         messageTtlSeconds:
           data.messageTtlSeconds === null
@@ -1584,6 +1605,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             role: typeof row.role === 'string' ? row.role : null,
             displayName: typeof row.displayName === 'string' ? row.displayName : null,
             username: typeof row.username === 'string' ? row.username : null,
+            avatarUrl: typeof row.avatarUrl === 'string' ? row.avatarUrl : null,
             aiConfig: aiCfgByKey.get(`${type}:${id}`) || null,
           };
         }),
@@ -1850,7 +1872,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               : null,
           ),
           ...(Array.isArray(row.attachments) && row.attachments.length
-            ? { attachments: row.attachments }
+            ? {
+                attachments: mergeAttachmentDisplay(store.getState().turns, row.attachments),
+              }
             : {}),
           ...(createdAt ? { createdAt } : {}),
           ...(senderId ? { senderId } : {}),
@@ -1960,11 +1984,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const id = `m_${Date.now()}`;
       const prevTurns = store.getState().turns;
       const nowIso = new Date().toISOString();
+      const displayAttachments = sendOpts.attachments;
+      const commandAttachments = attachmentsForCommand(displayAttachments);
       const userTurn: ChatTurn = {
         id,
         role: 'user',
         text,
-        attachments: sendOpts.attachments,
+        attachments: displayAttachments,
         deliveryStatus: 'sending',
         deliveryError: null,
         createdAt: nowIso,
@@ -1979,7 +2005,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const roomId = sendOpts.roomId;
       const panel = currentPanel(store.getState());
       const panelId = panel?.id;
-      const tempFileIds = attachmentRefs(sendOpts.attachments);
       const selectedContact = contactId
         ? findChatContact(store.getState().contacts, contactId)
         : null;
@@ -2158,6 +2183,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                           reason?: string | null;
                           requiredOnboardingType?: string | null;
                           onboardingSatisfied?: boolean;
+                          runId?: string | null;
+                          subAgentRunId?: string | null;
+                          linkedConversationId?: string | null;
+                          parentConversationId?: string | null;
+                          conversationId?: string | null;
                         })
                       : {};
                   opts.hooks?.onPermissionElevationRequired?.({
@@ -2170,6 +2200,28 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                     reason: elev.reason ?? null,
                     requiredOnboardingType: elev.requiredOnboardingType ?? null,
                     onboardingSatisfied: elev.onboardingSatisfied,
+                    runId:
+                      typeof elev.runId === 'string'
+                        ? elev.runId
+                        : typeof elev.subAgentRunId === 'string'
+                          ? elev.subAgentRunId
+                          : null,
+                    subAgentRunId:
+                      typeof elev.subAgentRunId === 'string'
+                        ? elev.subAgentRunId
+                        : typeof elev.runId === 'string'
+                          ? elev.runId
+                          : null,
+                    linkedConversationId:
+                      typeof elev.linkedConversationId === 'string'
+                        ? elev.linkedConversationId
+                        : null,
+                    parentConversationId:
+                      typeof elev.parentConversationId === 'string'
+                        ? elev.parentConversationId
+                        : typeof elev.conversationId === 'string'
+                          ? elev.conversationId
+                          : null,
                   });
                   finishPausedTurn();
                 }
@@ -2225,9 +2277,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           message: command === 'anx.inference.chat.completions' ? text : undefined,
           conversationId: roomId ? undefined : store.getState().conversationId || conversationId,
           contactId: roomId || conversationId ? undefined : contactId,
-          roomId,
-          attachments: sendOpts.attachments,
-          pageContext: tempFileIds.length ? { tempFileIds } : undefined,
+          ...(roomId ? { roomId } : {}),
+          ...(commandAttachments.length ? { attachments: commandAttachments } : {}),
           ...(sendOpts.modelOverride ? { modelOverride: sendOpts.modelOverride } : {}),
           ...(sendOpts.reasoningEffort ? { reasoningEffort: sendOpts.reasoningEffort } : {}),
           ...(sendOpts.uiLocale ? { uiLocale: sendOpts.uiLocale } : {}),
@@ -2291,6 +2342,24 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           }
           mergePanelPatch(panelId, { throttle: null, billingIssue: null });
         }
+
+        const linkedConversationId = String(
+          data?.conversationId || store.getState().conversationId || conversationId || '',
+        ).trim();
+        if (linkedConversationId && commandAttachments.length) {
+          await linkConversationAttachments(opts.client, {
+            conversationId: linkedConversationId,
+            attachments: commandAttachments,
+            onError: ({ fileId, err }) => {
+              log('workspace_link_failed', {
+                conversationId: linkedConversationId,
+                fileId,
+                message: err instanceof Error ? err.message : String(err),
+              });
+            },
+          });
+        }
+
         if (data?.conversationId) {
           store.setState({ conversationId: String(data.conversationId) });
           patchCurrentPanel({ conversationId: String(data.conversationId) });

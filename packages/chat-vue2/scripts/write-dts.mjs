@@ -57,6 +57,11 @@ export declare function ensureToolWidgetStyles(): void;
 export declare const TOOL_WIDGET_CSS: string;
 
 export declare const NexusChatPanel: Record<string, unknown>;
+export declare const SessionSummaryChips: Record<string, unknown>;
+export declare const LinkedSubChatBanner: Record<string, unknown>;
+export declare const SpeakTurnWidget: Record<string, unknown>;
+export declare const VoiceInputOverlay: Record<string, unknown>;
+export declare const ConversationBillingPopover: Record<string, unknown>;
 export declare const GroupRoomLeaveSection: Record<string, unknown>;
 export declare const GroupRoomSettingsPanel: Record<string, unknown>;
 export declare const RoomOrchestrationSection: Record<string, unknown>;
@@ -66,6 +71,7 @@ export declare const MentionAutocomplete: Record<string, unknown>;
 export declare const RealtimeCallPanel: Record<string, unknown>;
 export declare const ActivePhoneChip: Record<string, unknown>;
 export declare const CallModeChooserModal: Record<string, unknown>;
+export declare const DialInInstructions: Record<string, unknown>;
 
 export declare const MAX_ROOM_ORCHESTRATION_RULES: number;
 export declare const MAX_ROOM_ORCHESTRATION_RULE_LENGTH: number;

@@ -20,6 +20,7 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

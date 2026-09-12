@@ -81,7 +81,11 @@ export default {
       return parts.filter((p) => p.type === 'agent' || p.type === 'virtual_agent')
     },
     canEdit() {
-      return Boolean(this.detail && this.detail.viewerIsOwner && this.upsertAiParticipantFn)
+      return Boolean(
+        this.detail &&
+          (this.detail.viewerCanManage || this.detail.viewerIsOwner) &&
+          this.upsertAiParticipantFn,
+      )
     },
     roomDefaultLabel() {
       const mode =

@@ -130,16 +130,43 @@ export {
   TOOL_WIDGET_CSS,
 } from './tools';
 
-export { default as NexusChatPanel } from './panel/NexusChatPanel.vue';
-export { default as SessionSummaryChips } from './panel/SessionSummaryChips.vue';
-export { default as LinkedSubChatBanner } from './panel/LinkedSubChatBanner.vue';
-export { default as SpeakTurnWidget } from './panel/SpeakTurnWidget.vue';
-export { default as ConversationBillingPopover } from './panel/ConversationBillingPopover.vue';
-export { default as GroupRoomLeaveSection } from './panel/GroupRoomLeaveSection.vue';
-export { default as GroupRoomSettingsPanel } from './panel/GroupRoomSettingsPanel.vue';
-export { default as RoomOrchestrationSection } from './panel/RoomOrchestrationSection.vue';
-export { default as RoomOrchestrationRulesEditor } from './panel/RoomOrchestrationRulesEditor.vue';
-export { default as RoomParticipantsAiConfig } from './panel/RoomParticipantsAiConfig.vue';
+// Explicit default imports — Vue 2 webpack/ts-loader can leave
+// `export { default as X } from '*.vue'` as undefined named bindings.
+import NexusChatPanel from './panel/NexusChatPanel.vue';
+import SessionSummaryChips from './panel/SessionSummaryChips.vue';
+import LinkedSubChatBanner from './panel/LinkedSubChatBanner.vue';
+import SpeakTurnWidget from './panel/SpeakTurnWidget.vue';
+import VoiceInputOverlay from './panel/VoiceInputOverlay.vue';
+import ConversationBillingPopover from './panel/ConversationBillingPopover.vue';
+import GroupRoomLeaveSection from './panel/GroupRoomLeaveSection.vue';
+import GroupRoomSettingsPanel from './panel/GroupRoomSettingsPanel.vue';
+import RoomOrchestrationSection from './panel/RoomOrchestrationSection.vue';
+import RoomOrchestrationRulesEditor from './panel/RoomOrchestrationRulesEditor.vue';
+import RoomParticipantsAiConfig from './panel/RoomParticipantsAiConfig.vue';
+import MentionAutocomplete from './panel/MentionAutocomplete.vue';
+import RealtimeCallPanel from './voice/RealtimeCallPanel.vue';
+import ActivePhoneChip from './voice/ActivePhoneChip.vue';
+import CallModeChooserModal from './voice/CallModeChooserModal.vue';
+import DialInInstructions from './voice/DialInInstructions.vue';
+
+export {
+  NexusChatPanel,
+  SessionSummaryChips,
+  LinkedSubChatBanner,
+  SpeakTurnWidget,
+  VoiceInputOverlay,
+  ConversationBillingPopover,
+  GroupRoomLeaveSection,
+  GroupRoomSettingsPanel,
+  RoomOrchestrationSection,
+  RoomOrchestrationRulesEditor,
+  RoomParticipantsAiConfig,
+  MentionAutocomplete,
+  RealtimeCallPanel,
+  ActivePhoneChip,
+  CallModeChooserModal,
+  DialInInstructions,
+}
 export {
   MAX_ROOM_ORCHESTRATION_RULES,
   MAX_ROOM_ORCHESTRATION_RULE_LENGTH,
@@ -150,7 +177,6 @@ export {
   participantResponseModeFromSelect,
   participantResponseModeSelectValue,
 } from './panel/room-participants-ai-config.util.js';
-export { default as MentionAutocomplete } from './panel/MentionAutocomplete.vue';
 export {
   DEFAULT_PANEL_LABELS,
   formatCallDuration,
@@ -159,11 +185,6 @@ export {
   spendLabelForCurrency,
 } from './panel/labels';
 export type { NexusChatPanelLabels } from './panel/labels';
-
-export { default as RealtimeCallPanel } from './voice/RealtimeCallPanel.vue';
-export { default as ActivePhoneChip } from './voice/ActivePhoneChip.vue';
-export { default as CallModeChooserModal } from './voice/CallModeChooserModal.vue';
-export { default as DialInInstructions } from './voice/DialInInstructions.vue';
 
 export function contactsFromChat(chat: {
   getState: () => { contacts: Array<{ id: string; name: string; type: string }> };

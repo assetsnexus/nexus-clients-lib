@@ -261,28 +261,29 @@
                 @subagent-task-toggle="$emit('subagent-task-toggle', $event)"
               />
             </div>
-            <button
-              v-if="turn.text && turn.role !== 'user'"
-              type="button"
-              class="nexus-btn-link"
-              :title="resolvedLabels.copy"
-              @click="copyMessage(turn.text)"
-            >
-              ⎘
-            </button>
-            <speak-turn-widget
-              v-if="turn.role === 'assistant' && turn.text && commandClient"
-              :text="turn.text"
-              :turn-id="turn.id"
-              :command-client="commandClient"
-              :agent-id="resolvedAgentId"
-              :virtual-agent-id="virtualAgentId"
-              :can-configure-agent="canConfigureAgent"
-              :auto-speak="autoVoice && isLastAssistantTurn(turn)"
-              :fallback-model-id="fallbackTtsModelId"
-              :labels="resolvedLabels"
-              @open-agent-voice-config="$emit('open-agent-voice-config', $event)"
-            />
+            <div v-if="turn.text" class="nexus-message-actions">
+              <button
+                type="button"
+                class="nexus-btn-link nexus-message-actions__btn"
+                :title="resolvedLabels.copy"
+                @click="copyMessage(turn.text)"
+              >
+                ⎘
+              </button>
+              <speak-turn-widget
+                v-if="commandClient"
+                :text="turn.text"
+                :turn-id="turn.id"
+                :command-client="commandClient"
+                :agent-id="resolvedAgentId"
+                :virtual-agent-id="virtualAgentId"
+                :can-configure-agent="canConfigureAgent"
+                :auto-speak="autoVoice && isLastAssistantTurn(turn)"
+                :fallback-model-id="fallbackTtsModelId"
+                :labels="resolvedLabels"
+                @open-agent-voice-config="$emit('open-agent-voice-config', $event)"
+              />
+            </div>
             <slot name="message-actions" :turn="turn" :panel="resolvedPanel" />
           </div>
           <div v-if="resolvedPanel.streaming" class="nexus-muted">
@@ -886,10 +887,25 @@ export default {
 .nexus-message-row {
   display: flex;
   align-items: flex-start;
+  gap: 0.35rem;
   margin-bottom: 8px;
 }
 .nexus-message-row--user {
   justify-content: flex-end;
+}
+.nexus-message-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+}
+.nexus-message-actions__btn {
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.15rem;
+  min-width: 1.4rem;
 }
 .nexus-message-bubble {
   padding: 6px 10px;

@@ -9,7 +9,19 @@ import type {
   MessageDelivery,
   SubAgentFinalStatus,
 } from '@nexus/chat-core';
+import { renderChatMarkdown, CHAT_MARKDOWN_ROOT_CLASS } from '../markdown';
 import DeliveryModePicker from './DeliveryModePicker';
+import {
+  engineChipClass,
+  engineIconLabel,
+  extractNestedSearchToolRow,
+  httpStatusChipClass,
+  isSearchPresetNestedTool,
+  outcomeChipClass,
+  pairSubAgentToolEvents,
+  summaryMarkdownText,
+  type NestedSearchToolRow,
+} from './search-preset-tool-ui';
 import { formatElapsedMs, toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
 
 type SubEvent = { type: string; data?: Record<string, unknown> };
@@ -154,11 +166,29 @@ export const SubAgentRunWidget = {
       if (!this.isRunning) return '';
       return formatElapsedMs(this.nowMs - this.startedAtMs);
     },
-    recentTools(): string[] {
+    nestedSearchToolRows(): NestedSearchToolRow[] {
+      return pairSubAgentToolEvents(this.toolCalls, this.toolResults)
+        .filter(({ call }) => isSearchPresetNestedTool(String(call.data?.name || '')))
+        .map(({ call, result }) => {
+          const name = String(call.data?.name || '');
+          const row = extractNestedSearchToolRow(
+            name,
+            call.data?.arguments,
+            result?.data?.result,
+            Boolean(result),
+          );
+          row.callId = String(call.data?.callId || name);
+          return row;
+        });
+    },
+    otherRecentTools(): string[] {
       const names = this.toolCalls
         .map((ev) => String(ev.data?.name || '').trim())
-        .filter(Boolean);
+        .filter((name) => name && !isSearchPresetNestedTool(name));
       return names.slice(-4);
+    },
+    summaryText(): string {
+      return summaryMarkdownText(this.summary);
     },
   },
   watch: {
@@ -464,15 +494,84 @@ export const SubAgentRunWidget = {
       ],
     );
 
+    const nestedToolsBlock =
+      this.nestedSearchToolRows.length
+        ? h(
+            'div',
+            { class: 'nexus-sub-agent__tool-rows', attrs: { 'aria-label': 'Search tool calls' } },
+            this.nestedSearchToolRows.map((row: NestedSearchToolRow) =>
+              h('div', { key: row.callId, class: 'nexus-sub-agent__tool-row' }, [
+                h(
+                  'span',
+                  {
+                    class: ['nexus-sub-agent__engine-icon', engineChipClass(row.engineId)],
+                    attrs: { title: row.engineId || 'engine', 'aria-hidden': 'true' },
+                  },
+                  engineIconLabel(row.engineId),
+                ),
+                h('span', { class: 'nexus-sub-agent__tool-name' }, row.shortName),
+                row.engineId && row.engineId !== 'fetch' && row.engineId !== 'marketplace'
+                  ? h('span', { class: 'nexus-sub-agent__engine-id' }, row.engineId)
+                  : null,
+                row.hint
+                  ? h(
+                      'span',
+                      { class: 'nexus-sub-agent__tool-hint', attrs: { title: row.hint } },
+                      row.hint,
+                    )
+                  : null,
+                row.httpStatus != null
+                  ? h(
+                      'span',
+                      {
+                        class: [
+                          'nexus-tool-run__chip',
+                          'nexus-sub-agent__http',
+                          httpStatusChipClass(row.httpStatus),
+                        ],
+                      },
+                      String(row.httpStatus),
+                    )
+                  : row.status === 'running'
+                    ? h('span', { class: ['nexus-tool-run__chip', 'is-running'] }, '…')
+                    : null,
+                row.outcome || row.blockedReason
+                  ? h(
+                      'span',
+                      {
+                        class: [
+                          'nexus-tool-run__chip',
+                          'nexus-sub-agent__outcome',
+                          outcomeChipClass(row.outcome, row.blockedReason),
+                        ],
+                        attrs: row.blockedReason ? { title: row.blockedReason } : undefined,
+                      },
+                      row.blockedReason || row.outcome,
+                    )
+                  : null,
+              ]),
+            ),
+          )
+        : null;
+
     const toolTrail =
-      this.recentTools.length
+      this.otherRecentTools.length
         ? h(
             'div',
             { class: 'nexus-sub-agent__trail' },
-            this.recentTools.map((name: string, i: number) =>
+            this.otherRecentTools.map((name: string, i: number) =>
               h('span', { key: `${name}-${i}`, class: 'nexus-sub-agent__trail-chip' }, name),
             ),
           )
+        : null;
+
+    const summaryBlock =
+      this.summaryText
+        ? h('div', {
+            class: ['nexus-sub-agent__summary-md', CHAT_MARKDOWN_ROOT_CLASS],
+            domProps: { innerHTML: renderChatMarkdown(this.summaryText.slice(0, 4000)) },
+            attrs: { 'aria-label': 'Subagent summary' },
+          })
         : null;
 
     const body = this.open
@@ -486,6 +585,7 @@ export const SubAgentRunWidget = {
             controls,
             planBlock,
             tasksBlock,
+            nestedToolsBlock,
             toolTrail,
             this.subAgentText
               ? h(
@@ -497,7 +597,8 @@ export const SubAgentRunWidget = {
                   this.subAgentText.slice(0, 2000),
                 )
               : null,
-            this.canViewToolDetails && this.summary
+            summaryBlock,
+            this.canViewToolDetails && this.summary && !this.summaryText
               ? h('div', { class: 'nexus-sub-agent__details' }, [
                   h(
                     'button',

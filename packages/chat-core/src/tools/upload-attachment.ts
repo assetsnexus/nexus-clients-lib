@@ -26,7 +26,7 @@ export type UploadAttachmentResult = {
   descriptor: Extract<IoDescriptor, { kind: 'entity' }>;
 };
 
-class UploadCommandError extends Error {
+export class UploadCommandError extends Error {
   readonly code?: string;
   readonly command: string;
   constructor(command: string, message: string, code?: string) {
@@ -74,7 +74,7 @@ function failInfo(result: unknown): { code?: string; message?: string } | null {
   return null;
 }
 
-function assertCommandOk(result: unknown, command: string): Record<string, unknown> {
+export function assertCommandOk(result: unknown, command: string): Record<string, unknown> {
   const fail = failInfo(result);
   if (fail) {
     throw new UploadCommandError(
@@ -145,6 +145,70 @@ export function conversationAttachmentDescriptor(
 }
 
 /**
+ * Region J1: first items.add with conversationId CAS-creates+links the workspace.
+ * Duplicate fileId is a no-op on the region side.
+ */
+export async function linkConversationWorkspaceItem(
+  client: UploadAttachmentClient,
+  args: {
+    conversationId?: string;
+    workspaceId?: string;
+    fileId: string;
+    source?: 'conversation_media' | 'storage_bucket';
+    label?: string;
+    mimeType?: string;
+  },
+): Promise<void> {
+  const conversationId = args.conversationId ? String(args.conversationId).trim() : '';
+  const workspaceId = args.workspaceId ? String(args.workspaceId).trim() : '';
+  const fileId = String(args.fileId || '').trim();
+  if (!fileId || (!conversationId && !workspaceId)) return;
+  assertCommandOk(
+    await client.send('anx.workspace.items.add', {
+      ...(workspaceId ? { workspaceId } : {}),
+      ...(conversationId ? { conversationId } : {}),
+      fileId,
+      source: args.source || 'conversation_media',
+      ...(args.label ? { label: args.label } : {}),
+      ...(args.mimeType ? { mimeType: args.mimeType } : {}),
+    }),
+    'anx.workspace.items.add',
+  );
+}
+
+/** Send-time backfill: first items.add CAS-creates+links; duplicate fileId is a no-op. */
+export async function linkConversationAttachments(
+  client: UploadAttachmentClient,
+  args: {
+    conversationId?: string;
+    attachments?: IoDescriptor[];
+    onError?: (info: { fileId: string; err: unknown }) => void;
+  },
+): Promise<void> {
+  const conversationId = args.conversationId ? String(args.conversationId).trim() : '';
+  if (!conversationId || !args.attachments?.length) return;
+  for (const attachment of args.attachments) {
+    if (attachment.kind !== 'entity' || attachment.entityType !== 'conversation_attachment') {
+      continue;
+    }
+    const fileId = String(attachment.ref || '').trim();
+    if (!fileId) continue;
+    try {
+      await linkConversationWorkspaceItem(client, {
+        conversationId,
+        fileId,
+        source: 'conversation_media',
+        label: attachment.filename,
+        mimeType: attachment.mimeType,
+      });
+    } catch (err) {
+      if (args.onError) args.onError({ fileId, err });
+      else throw err;
+    }
+  }
+}
+
+/**
  * Thin consumer of region S1 upload path:
  * upload-init → (presign.put + HTTP PUT + complete-presign) when the backend supports
  * presigned PUT, else upload-complete (base64) — same split as Storage Explorer.
@@ -157,6 +221,8 @@ export type UploadAttachmentOpts = {
   folderId?: string;
   originalName?: string;
   module?: string;
+  /** Conversation to CAS-bind on first chat upload (`anx.workspace.items.add`). */
+  conversationId?: string;
   /**
    * Chat attachments should use `org` (org session) or `user-known` (personal).
    * When omitted for `module:'chat-attachment'`, region defaults from identity.orgId.
@@ -363,6 +429,16 @@ export async function uploadAttachment(
       /* best-effort orphan cleanup */
     }
     throw err;
+  }
+
+  if (opts?.conversationId) {
+    await linkConversationWorkspaceItem(client, {
+      conversationId: opts.conversationId,
+      fileId,
+      source: opts.module === 'storage-browser' ? 'storage_bucket' : 'conversation_media',
+      label: filename,
+      mimeType,
+    });
   }
 
   return {

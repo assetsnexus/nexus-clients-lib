@@ -1,0 +1,21 @@
+{
+  "name": "@nexus/file-explorer-vue2",
+  "version": "0.1.0",
+  "description": "Vue 2.7 explorer/viewer host for portal (markdown, image, PDF, capability badges)",
+  "license": "UNLICENSED",
+  "publishConfig": { "access": "public" },
+  "main": "./src/index.js",
+  "files": ["src", "README.md"],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "echo skip"
+  },
+  "peerDependencies": {
+    "vue": "^2.7.0",
+    "@nexus/files-core": "*"
+  },
+  "devDependencies": {
+    "@nexus/files-core": "file:../files-core",
+    "vitest": "^2.1.4"
+  }
+}

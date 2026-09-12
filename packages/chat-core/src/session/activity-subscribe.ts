@@ -12,9 +12,20 @@ export type ActivityEventData = {
   unreadDelta?: number;
   unreadCount?: number;
   runId?: string;
+  subAgentRunId?: string;
   linkedConversationId?: string | null;
   status?: string;
   title?: string | null;
+  /** Subagent pause → parent elevation prompt (pass-through from activity payload). */
+  approvalKind?: string;
+  elevationId?: string | null;
+  pack?: string | null;
+  command?: string | null;
+  commandNames?: string[];
+  reason?: string | null;
+  resourceRef?: Record<string, unknown> | null;
+  requiredOnboardingType?: string | null;
+  onboardingSatisfied?: boolean;
 };
 
 export type ActivityEvent = {
@@ -73,6 +84,7 @@ function toActivityEvent(
   if (
     parsed.type !== 'activity' &&
     !parsed.type.startsWith('sub_agent_') &&
+    parsed.type !== 'permission_elevation_request' &&
     parsed.type !== 'done' &&
     parsed.type !== 'complete' &&
     parsed.type !== 'finished' &&
@@ -90,6 +102,12 @@ function toActivityEvent(
       ? data.conversationId
       : fallbackConversationId || '';
   if (!conversationId && parsed.type !== 'ready') return null;
+  const runId =
+    typeof data.runId === 'string'
+      ? data.runId
+      : typeof data.subAgentRunId === 'string'
+        ? data.subAgentRunId
+        : undefined;
   return {
     type: parsed.type,
     data: {
@@ -116,16 +134,44 @@ function toActivityEvent(
                 : undefined,
       unreadDelta: typeof data.unreadDelta === 'number' ? data.unreadDelta : undefined,
       unreadCount: typeof data.unreadCount === 'number' ? data.unreadCount : undefined,
-      runId:
-        typeof data.runId === 'string'
-          ? data.runId
-          : typeof data.subAgentRunId === 'string'
-            ? data.subAgentRunId
-            : undefined,
+      runId,
+      subAgentRunId:
+        typeof data.subAgentRunId === 'string'
+          ? data.subAgentRunId
+          : runId,
       linkedConversationId:
         data.linkedConversationId != null ? String(data.linkedConversationId) : null,
       status: typeof data.status === 'string' ? data.status : undefined,
       title: typeof data.title === 'string' ? data.title : null,
+      approvalKind: typeof data.approvalKind === 'string' ? data.approvalKind : undefined,
+      elevationId:
+        data.elevationId != null && data.elevationId !== ''
+          ? String(data.elevationId)
+          : data.elevationId === null
+            ? null
+            : undefined,
+      pack: typeof data.pack === 'string' ? data.pack : data.pack === null ? null : undefined,
+      command:
+        typeof data.command === 'string' ? data.command : data.command === null ? null : undefined,
+      commandNames: Array.isArray(data.commandNames)
+        ? data.commandNames.filter((c): c is string => typeof c === 'string')
+        : undefined,
+      reason:
+        typeof data.reason === 'string' ? data.reason : data.reason === null ? null : undefined,
+      resourceRef:
+        data.resourceRef && typeof data.resourceRef === 'object' && !Array.isArray(data.resourceRef)
+          ? (data.resourceRef as Record<string, unknown>)
+          : data.resourceRef === null
+            ? null
+            : undefined,
+      requiredOnboardingType:
+        typeof data.requiredOnboardingType === 'string'
+          ? data.requiredOnboardingType
+          : data.requiredOnboardingType === null
+            ? null
+            : undefined,
+      onboardingSatisfied:
+        typeof data.onboardingSatisfied === 'boolean' ? data.onboardingSatisfied : undefined,
     },
   };
 }

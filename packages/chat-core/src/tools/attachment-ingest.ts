@@ -37,6 +37,8 @@ export type ChatFileUploadOpts = {
   originalName?: string;
   module?: string;
   retentionPolicy?: ChatAttachmentRetentionPolicy;
+  /** When set, upload also CAS-links the file onto the conversation workspace. */
+  conversationId?: string;
 };
 
 const MIME_EXT: Record<string, string> = {
@@ -206,6 +208,7 @@ export function uploadOptsForChatFileDestination(
     folderId?: string;
     withExpiry?: boolean;
     retentionPolicy?: ChatAttachmentRetentionPolicy;
+    conversationId?: string;
   },
 ): ChatFileUploadOpts {
   if (destination === 'bucket') {
@@ -213,6 +216,7 @@ export function uploadOptsForChatFileDestination(
       module: 'storage-browser',
       ...(extra?.workspaceId ? { workspaceId: extra.workspaceId } : {}),
       ...(extra?.folderId ? { folderId: extra.folderId } : {}),
+      ...(extra?.conversationId ? { conversationId: extra.conversationId } : {}),
     };
   }
   const retentionPolicy =
@@ -222,6 +226,7 @@ export function uploadOptsForChatFileDestination(
       : undefined);
   return {
     module: 'chat-attachment',
+    ...(extra?.conversationId ? { conversationId: extra.conversationId } : {}),
     ...(retentionPolicy ? { retentionPolicy } : {}),
   };
 }

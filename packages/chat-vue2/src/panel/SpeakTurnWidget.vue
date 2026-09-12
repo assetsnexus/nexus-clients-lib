@@ -87,23 +87,83 @@
           </label>
           <label class="nexus-speak-widget__field">
             <span>{{ L.voicePreset }}</span>
-            <input
+            <select
               v-model="draftVoicePreset"
+              class="nexus-speak-widget__select"
+              :disabled="voicesLoading"
+            >
+              <option value="">{{ L.optional || '—' }}</option>
+              <option v-for="v in voiceOptions" :key="v.id" :value="v.id">
+                {{ v.title }}
+              </option>
+              <option v-if="allowCustomVoice" value="__custom__">Custom…</option>
+            </select>
+          </label>
+          <label
+            v-if="draftVoicePreset === '__custom__' || showCustomVoiceInput"
+            class="nexus-speak-widget__field"
+          >
+            <span>{{ L.voicePreset }} (custom)</span>
+            <input
+              v-model="customVoicePreset"
               type="text"
               class="nexus-speak-widget__input"
               :placeholder="L.optional"
             />
           </label>
-          <div class="nexus-speak-widget__popover-actions">
-            <button type="button" class="nexus-btn" :disabled="saving" @click="saveOverride">
-              {{ saving ? L.saving : L.save }}
-            </button>
-            <button type="button" class="nexus-btn-link" :disabled="saving" @click="clearOverride">
-              {{ L.reset }}
+        </template>
+        <div v-if="canSetVoiceSample" class="nexus-speak-widget__sample">
+          <div class="nexus-speak-widget__field">
+            <span>{{ L.customVoiceSample }}</span>
+            <p class="nexus-speak-widget__hint">{{ L.customVoiceSampleHint }}</p>
+            <input
+              ref="sampleFile"
+              type="file"
+              accept="audio/wav,audio/x-wav,audio/wave,.wav,audio/mpeg,audio/mp3"
+              class="nexus-speak-widget__file"
+              @change="onSampleFilePicked"
+            />
+            <p v-if="sampleLabel" class="nexus-speak-widget__sample-label">{{ sampleLabel }}</p>
+            <label class="nexus-speak-widget__field">
+              <span>{{ L.sampleTranscript }}</span>
+              <input
+                v-model="draftSampleTranscript"
+                type="text"
+                class="nexus-speak-widget__input"
+                :placeholder="L.optional"
+              />
+            </label>
+            <button
+              v-if="hasVoiceSample || pendingSampleFile"
+              type="button"
+              class="nexus-btn-link"
+              :disabled="saving || uploadingSample"
+              @click="clearSampleDraft"
+            >
+              {{ L.clearVoiceSample }}
             </button>
           </div>
-          <p v-if="settingsError" class="nexus-speak-widget__error">{{ settingsError }}</p>
-        </template>
+        </div>
+        <div class="nexus-speak-widget__popover-actions">
+          <button
+            type="button"
+            class="nexus-btn"
+            :disabled="saving || uploadingSample || (!canConfigureAgent && !draftModelId)"
+            @click="saveOverride"
+          >
+            {{ saving || uploadingSample ? L.saving : L.save }}
+          </button>
+          <button
+            v-if="!canConfigureAgent"
+            type="button"
+            class="nexus-btn-link"
+            :disabled="saving"
+            @click="clearOverride"
+          >
+            {{ L.reset }}
+          </button>
+        </div>
+        <p v-if="settingsError" class="nexus-speak-widget__error">{{ settingsError }}</p>
       </div>
     </div>
   </div>
@@ -113,11 +173,17 @@
 import {
   createSpeakTurnController,
   listAudioModels,
+  listTtsVoices,
+  ttsVoicesForPicker,
   getContactTts,
   setContactTts,
   clearContactTts,
+  contactTtsNeedsSetup,
+  uploadAttachment,
 } from '@nexus/chat-core';
 import { DEFAULT_PANEL_LABELS } from './labels';
+
+const VOICE_SAMPLE_MAX_BYTES = 1 * 1024 * 1024;
 
 export default {
   name: 'SpeakTurnWidget',
@@ -128,7 +194,6 @@ export default {
     agentId: { type: String, default: null },
     virtualAgentId: { type: String, default: null },
     canConfigureAgent: { type: Boolean, default: false },
-    /** When true, auto-start speak once for this turnId. */
     autoSpeak: { type: Boolean, default: false },
     fallbackModelId: { type: String, default: null },
     labels: { type: Object, default: null },
@@ -142,27 +207,43 @@ export default {
       ttsModels: [],
       draftModelId: '',
       draftVoicePreset: '',
+      customVoicePreset: '',
+      voiceOptions: [],
+      voicesLoading: false,
+      allowCustomVoice: true,
       saving: false,
       settingsError: null,
       controller: null,
       unsubscribe: null,
       autoSpokenTurnId: null,
+      hasVoiceSample: false,
+      sampleLabel: '',
+      draftSampleTranscript: '',
+      pendingSampleFile: null,
+      clearSampleOnSave: false,
+      uploadingSample: false,
+      canSetVoiceSample: true,
     };
   },
   computed: {
     L() {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
     },
+    showCustomVoiceInput() {
+      const id = this.draftVoicePreset;
+      if (!id || id === '__custom__') return id === '__custom__';
+      return !this.voiceOptions.some((v) => v.id === id);
+    },
     mainLabel() {
       if (this.phase === 'processing') return '…';
       if (this.phase === 'playing') return '♪';
       if (this.phase === 'done') return '♪';
-      if (this.phase === 'error') return '!';
+      if (this.phase === 'error' || this.phase === 'needs_setup') return '!';
       return this.L.speak;
     },
     mainIcon() {
       if (this.phase === 'done') return '♪';
-      if (this.phase === 'error') return '!';
+      if (this.phase === 'error' || this.phase === 'needs_setup') return '!';
       return '▶';
     },
     mainTitle() {
@@ -170,6 +251,7 @@ export default {
       if (this.phase === 'processing') return this.L.generatingVoice;
       if (this.phase === 'playing') return this.L.playing;
       if (this.phase === 'done') return this.L.playAgain;
+      if (this.phase === 'needs_setup') return this.L.voiceSettings;
       return this.L.speak;
     },
   },
@@ -195,6 +277,9 @@ export default {
     },
     text() {
       if (this.autoSpeak) this.maybeAutoSpeak();
+    },
+    draftModelId(val) {
+      if (this.settingsOpen && val && !this.canConfigureAgent) void this.refreshVoices(val);
     },
   },
   beforeDestroy() {
@@ -226,6 +311,9 @@ export default {
       this.unsubscribe = this.controller.subscribe((state) => {
         this.phase = state.phase;
         this.errorMessage = state.errorMessage;
+        if (state.phase === 'needs_setup') {
+          void this.openSettings();
+        }
       });
       if (this.autoSpeak) this.maybeAutoSpeak();
     },
@@ -236,14 +324,39 @@ export default {
       this.autoSpokenTurnId = this.turnId;
       void this.controller.speak(this.text);
     },
-    onMainClick() {
+    async onMainClick() {
       if (!this.controller) return;
       if (this.phase === 'done') {
         void this.controller.replay();
         return;
       }
       if (this.phase === 'processing' || this.phase === 'playing') return;
-      void this.controller.speak(this.text, { forceRecreate: this.phase === 'error' });
+      if (await this.ensureTtsConfiguredOrOpenSetup()) {
+        void this.controller.speak(this.text, { forceRecreate: this.phase === 'error' });
+      }
+    },
+    async ensureTtsConfiguredOrOpenSetup() {
+      if (!this.agentId || !this.commandClient) {
+        if (!this.fallbackModelId) {
+          await this.openSettings();
+          return false;
+        }
+        return true;
+      }
+      try {
+        const view = await getContactTts(this.commandClient, {
+          agentId: this.agentId,
+          virtualAgentId: this.virtualAgentId,
+        });
+        if (contactTtsNeedsSetup(view)) {
+          await this.openSettings();
+          return false;
+        }
+        return true;
+      } catch (_) {
+        await this.openSettings();
+        return false;
+      }
     },
     onCancel() {
       if (this.controller) void this.controller.cancel();
@@ -262,14 +375,46 @@ export default {
       }
       return name;
     },
-    async onGear() {
-      if (this.canConfigureAgent) {
-        this.settingsOpen = !this.settingsOpen;
+    async refreshVoices(modelId) {
+      if (!this.commandClient || !modelId) {
+        this.voiceOptions = [];
         return;
       }
-      this.settingsOpen = !this.settingsOpen;
-      if (!this.settingsOpen || !this.commandClient) return;
+      this.voicesLoading = true;
+      try {
+        const listed = await listTtsVoices(this.commandClient, { modelId });
+        const picker = ttsVoicesForPicker({
+          voices: listed.voices,
+          currentVoiceId:
+            this.draftVoicePreset && this.draftVoicePreset !== '__custom__'
+              ? this.draftVoicePreset
+              : this.customVoicePreset || null,
+        });
+        this.voiceOptions = picker.options;
+        this.allowCustomVoice = picker.allowCustom;
+        if (picker.selectedId && !this.draftVoicePreset) {
+          this.draftVoicePreset = picker.selectedId;
+        }
+      } catch (err) {
+        this.voiceOptions = [];
+        this.settingsError = err instanceof Error ? err.message : String(err);
+      } finally {
+        this.voicesLoading = false;
+      }
+    },
+    async onGear() {
+      if (this.settingsOpen) {
+        this.settingsOpen = false;
+        return;
+      }
+      await this.openSettings();
+    },
+    async openSettings() {
+      this.settingsOpen = true;
+      if (!this.commandClient) return;
       this.settingsError = null;
+      this.pendingSampleFile = null;
+      this.clearSampleOnSave = false;
       try {
         this.ttsModels = await listAudioModels(this.commandClient, 'tts');
         const view = this.agentId
@@ -278,11 +423,23 @@ export default {
               virtualAgentId: this.virtualAgentId,
             })
           : null;
+        this.canSetVoiceSample = !view || view.canSetVoiceSample !== false;
         this.draftModelId =
           (view && view.effectiveTtsModelId) ||
           (this.ttsModels[0] && this.ttsModels[0].id) ||
           '';
-        this.draftVoicePreset = (view && view.effectiveVoicePreset) || '';
+        const preset = (view && view.effectiveVoicePreset) || '';
+        this.draftVoicePreset = preset;
+        this.customVoicePreset = '';
+        this.hasVoiceSample = Boolean(view && view.effectiveVoiceSampleRef);
+        this.sampleLabel = this.hasVoiceSample
+          ? (view.effectiveVoiceSampleRef.objectKey.split('/').pop() || 'voice sample')
+          : '';
+        this.draftSampleTranscript =
+          (view && (view.voiceSampleTranscript || view.effectiveVoiceSampleTranscript)) || '';
+        if (this.draftModelId && !this.canConfigureAgent) {
+          await this.refreshVoices(this.draftModelId);
+        }
       } catch (err) {
         this.settingsError = err instanceof Error ? err.message : String(err);
       }
@@ -294,17 +451,96 @@ export default {
         virtualAgentId: this.virtualAgentId,
       });
     },
+    resolvedVoicePreset() {
+      if (this.draftVoicePreset === '__custom__') {
+        return this.customVoicePreset.trim() || null;
+      }
+      return this.draftVoicePreset ? String(this.draftVoicePreset).trim() : null;
+    },
+    onSampleFilePicked(ev) {
+      const file = ev && ev.target && ev.target.files && ev.target.files[0];
+      this.settingsError = null;
+      if (!file) {
+        this.pendingSampleFile = null;
+        return;
+      }
+      if (file.size > VOICE_SAMPLE_MAX_BYTES) {
+        this.settingsError = this.L.voiceSampleTooLarge;
+        this.pendingSampleFile = null;
+        if (this.$refs.sampleFile) this.$refs.sampleFile.value = '';
+        return;
+      }
+      this.pendingSampleFile = file;
+      this.clearSampleOnSave = false;
+      this.sampleLabel = file.name || 'voice-sample.wav';
+    },
+    clearSampleDraft() {
+      this.pendingSampleFile = null;
+      this.clearSampleOnSave = this.hasVoiceSample;
+      this.sampleLabel = '';
+      this.draftSampleTranscript = '';
+      if (this.$refs.sampleFile) this.$refs.sampleFile.value = '';
+    },
+    async uploadPendingSample() {
+      if (!this.pendingSampleFile || !this.commandClient) return null;
+      this.uploadingSample = true;
+      try {
+        const uploaded = await uploadAttachment(this.commandClient, this.pendingSampleFile, {
+          module: 'contact-tts-voice',
+          originalName: this.pendingSampleFile.name || 'voice-sample.wav',
+          encryptionTier: 'user-known',
+        });
+        return {
+          bucketId: uploaded.workspaceId,
+          objectKey: uploaded.storageKey,
+        };
+      } finally {
+        this.uploadingSample = false;
+      }
+    },
     async saveOverride() {
-      if (!this.commandClient || !this.agentId || !this.draftModelId) return;
+      if (!this.commandClient || !this.agentId) return;
+      if (!this.canConfigureAgent && !this.draftModelId) return;
       this.saving = true;
       this.settingsError = null;
       try {
-        await setContactTts(this.commandClient, {
+        let voiceSampleRef;
+        let clearVoiceSample = false;
+        if (this.clearSampleOnSave) {
+          voiceSampleRef = null;
+          clearVoiceSample = true;
+        } else if (this.pendingSampleFile) {
+          voiceSampleRef = await this.uploadPendingSample();
+        }
+        const modelId =
+          this.draftModelId ||
+          (this.ttsModels[0] && this.ttsModels[0].id) ||
+          this.fallbackModelId;
+        if (!modelId) {
+          throw new Error(this.L.noTtsModel);
+        }
+        const payload = {
           agentId: this.agentId,
-          ttsModelId: this.draftModelId,
+          ttsModelId: modelId,
           virtualAgentId: this.virtualAgentId,
-        });
+        };
+        if (!this.canConfigureAgent) {
+          payload.ttsVoicePreset = this.resolvedVoicePreset();
+        }
+        if (clearVoiceSample) {
+          payload.clearVoiceSample = true;
+          payload.voiceSampleRef = null;
+          payload.voiceSampleTranscript = null;
+        } else if (voiceSampleRef) {
+          payload.voiceSampleRef = voiceSampleRef;
+          payload.voiceSampleTranscript = this.draftSampleTranscript.trim() || null;
+        } else if (this.draftSampleTranscript.trim()) {
+          payload.voiceSampleTranscript = this.draftSampleTranscript.trim();
+        }
+        await setContactTts(this.commandClient, payload);
         this.settingsOpen = false;
+        this.pendingSampleFile = null;
+        this.clearSampleOnSave = false;
         this.rebuildController();
       } catch (err) {
         this.settingsError = err instanceof Error ? err.message : String(err);
@@ -412,8 +648,8 @@ export default {
   right: 0;
   top: 100%;
   z-index: 20;
-  min-width: 200px;
-  max-width: 260px;
+  min-width: 220px;
+  max-width: 280px;
   padding: 10px;
   background: #fff;
   border: 1px solid #e9ecef;
@@ -439,12 +675,18 @@ export default {
   margin-bottom: 8px;
 }
 .nexus-speak-widget__select,
-.nexus-speak-widget__input {
+.nexus-speak-widget__input,
+.nexus-speak-widget__file {
   font: inherit;
   font-size: 12px;
   padding: 4px 6px;
   border: 1px solid #e9ecef;
   border-radius: 4px;
+}
+.nexus-speak-widget__sample-label {
+  font-size: 11px;
+  margin: 4px 0 0;
+  opacity: 0.85;
 }
 .nexus-speak-widget__popover-actions {
   display: flex;

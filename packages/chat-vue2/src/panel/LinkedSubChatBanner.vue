@@ -1,13 +1,14 @@
 <template>
   <div v-if="visible" class="nexus-linked-subchat-banner" role="navigation" aria-label="Subagent conversation">
     <div class="nexus-linked-subchat-banner__row">
+      <span class="nexus-linked-subchat-banner__badge">Subagent</span>
       <button
         v-if="parentConversationId"
         type="button"
         class="nexus-linked-subchat-banner__return"
         @click="$emit('open-parent', { parentConversationId, runId })"
       >
-        ← Return
+        ← Return to parent
       </button>
       <span class="nexus-linked-subchat-banner__parent" :title="parentDisplayName">
         {{ parentDisplayName }}

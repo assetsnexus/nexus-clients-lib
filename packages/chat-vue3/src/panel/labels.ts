@@ -167,6 +167,12 @@ export type NexusChatPanelLabels = {
   save?: string;
   saving?: string;
   reset?: string;
+  customVoiceSample?: string;
+  customVoiceSampleHint?: string;
+  sampleTranscript?: string;
+  clearVoiceSample?: string;
+  voiceSampleTooLarge?: string;
+  noTtsModel?: string;
   transportBatch?: string;
   transportStream?: string;
   /** Billing popover */
@@ -247,6 +253,12 @@ export const DEFAULT_PANEL_LABELS: Required<NexusChatPanelLabels> = {
   save: 'Save',
   saving: 'Saving…',
   reset: 'Reset',
+  customVoiceSample: 'Custom WAV sample',
+  customVoiceSampleHint: 'Saved on your contact with this agent (not agent defaults).',
+  sampleTranscript: 'Sample transcript (optional)',
+  clearVoiceSample: 'Remove sample',
+  voiceSampleTooLarge: 'Voice sample must be 1 MB or smaller.',
+  noTtsModel: 'Select a TTS model',
   transportBatch: 'batch',
   transportStream: 'streaming',
   billingTitle: 'Conversation usage',

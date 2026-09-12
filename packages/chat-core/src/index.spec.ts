@@ -51,9 +51,73 @@ describe('chat-core', () => {
     expect(chat.getState().messages.length).toBe(2);
     expect(chat.getState().messages[1].content).toContain('pong');
     expect(
+      sentPayloads.find((entry) => entry.command === 'anx.communicate.message.send')?.payload,
+    ).toMatchObject({
+      text: 'ping',
+      conversationId: 'c1',
+      attachments: [
+        { kind: 'entity', entityType: 'conversation_attachment', ref: 'att-1', mimeType: 'image/png' },
+      ],
+    })
+    expect(
       sentPayloads.find((entry) => entry.command === 'anx.communicate.message.send')?.payload?.pageContext,
-    ).toEqual({ tempFileIds: ['att-1'] });
+    ).toBeUndefined()
     expect(chat.getState().panels[0]?.conversationId).toBe('c1');
+    expect(
+      sentPayloads.find((entry) => entry.command === 'anx.workspace.items.add')?.payload,
+    ).toMatchObject({
+      conversationId: 'c1',
+      fileId: 'att-1',
+      source: 'conversation_media',
+      mimeType: 'image/png',
+    });
+  });
+
+  it('keeps previewUrl on the optimistic turn and strips it from the command', async () => {
+    const sentPayloads: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sentPayloads.push({ command, payload });
+          if (command === 'anx.communicate.stream-init') {
+            return { ok: true, data: { endpoints: [], token: null, resourceId: 'c1' } };
+          }
+          if (command === 'anx.communicate.message.send') {
+            return { ok: true, data: { conversationId: 'c1' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.sendMessage('see this', {
+      conversationId: 'c1',
+      attachments: [
+        {
+          kind: 'entity',
+          entityType: 'conversation_attachment',
+          ref: 'file-1',
+          mimeType: 'image/png',
+          filename: 'a.png',
+          previewUrl: 'blob:http://localhost/keep',
+        },
+      ],
+    });
+    const userTurn = chat.getState().turns.find((t) => t.role === 'user');
+    expect(userTurn?.attachments?.[0]).toMatchObject({
+      ref: 'file-1',
+      previewUrl: 'blob:http://localhost/keep',
+    });
+    const sendPayload = sentPayloads.find((e) => e.command === 'anx.communicate.message.send')?.payload;
+    expect(sendPayload?.attachments).toEqual([
+      {
+        kind: 'entity',
+        entityType: 'conversation_attachment',
+        ref: 'file-1',
+        mimeType: 'image/png',
+        filename: 'a.png',
+      },
+    ]);
+    expect(sendPayload?.pageContext).toBeUndefined();
   });
 
   it('surfaces soft-fail sendMessage results to the host', async () => {
@@ -519,6 +583,42 @@ describe('chat-core', () => {
     expect(chat.getState().turns[1]?.attachments).toBeUndefined();
   });
 
+  it('rehydrateTurns keeps local previewUrl for the same file ref', () => {
+    const chat = createNexusChat({
+      client: { send: async () => ({ ok: true, data: {} }) },
+    });
+    chat.rehydrateTurns([
+      {
+        id: 'm1',
+        role: 'user',
+        content: 'see image',
+        attachments: [
+          {
+            kind: 'entity',
+            entityType: 'conversation_attachment',
+            ref: 'file-1',
+            previewUrl: 'blob:http://localhost/keep',
+          },
+        ],
+      },
+    ]);
+    chat.rehydrateTurns([
+      {
+        id: 'm1',
+        role: 'user',
+        content: 'see image',
+        attachments: [
+          { kind: 'entity', entityType: 'conversation_attachment', ref: 'file-1', filename: 'a.png' },
+        ],
+      },
+    ]);
+    expect(chat.getState().turns[0]?.attachments?.[0]).toMatchObject({
+      ref: 'file-1',
+      filename: 'a.png',
+      previewUrl: 'blob:http://localhost/keep',
+    });
+  });
+
   it('applyUsage hydrates panel context snapshot from conversations.get', () => {
     const chat = createNexusChat({
       client: { send: async () => ({ ok: true, data: {} }) },
@@ -668,6 +768,58 @@ describe('chat-core', () => {
         contentLength: 4,
       });
       expect(putBodies.length).toBe(1);
+      expect(sent.some((s) => s.command === 'anx.workspace.items.add')).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uploadAttachment links the file into the conversation workspace', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(null, { status: 200 })) as typeof fetch;
+    try {
+      const chat = createNexusChat({
+        client: {
+          send: async (command: string, payload?: Record<string, unknown>) => {
+            sent.push({ command, payload });
+            if (command === 'anx.file.upload-init') {
+              return {
+                ok: true,
+                data: { fileId: 'f-ws', storageKey: 'chat/f-ws.bin', workspaceId: 'storage-ws' },
+              };
+            }
+            if (command === 'anx.storage.presign.put') {
+              return { ok: true, data: { url: 'https://storage.test/put', expiresInSeconds: 60 } };
+            }
+            if (command === 'anx.file.upload-complete-presign') {
+              return { ok: true, data: { fileId: 'f-ws' } };
+            }
+            if (command === 'anx.workspace.items.add') {
+              return { ok: true, data: { created: true } };
+            }
+            return { ok: true, data: {} };
+          },
+        },
+      });
+
+      await chat.uploadAttachment(
+        {
+          name: 'shot.png',
+          type: 'image/png',
+          size: 4,
+          body: new Uint8Array([1, 2, 3, 4]),
+        },
+        { conversationId: 'c-ws' },
+      );
+
+      expect(sent.find((s) => s.command === 'anx.workspace.items.add')?.payload).toMatchObject({
+        conversationId: 'c-ws',
+        fileId: 'f-ws',
+        source: 'conversation_media',
+        label: 'shot.png',
+        mimeType: 'image/png',
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -945,6 +1097,8 @@ describe('chat-core', () => {
       compactBeforeReply: true,
     });
     expect(detail.participants[1].aiConfig).toBeNull();
+    expect(detail.viewerCanManage).toBe(true);
+    expect(detail.viewerIsModerator).toBe(false);
   });
 
   it('sends flat ai-participant.upsert payload', async () => {

@@ -22,13 +22,16 @@ type StreamEv = { type: string; data?: Record<string, unknown> };
 function subAgentEventsForCall(
   toolEvents: StreamEv[] | undefined,
   parentCallId: string,
+  subAgentRunId?: string | null,
 ): StreamEv[] {
   if (!toolEvents) return [];
   return toolEvents
     .filter((e) => e.type.startsWith('sub_agent_'))
     .filter((e) => {
       const d = (e.data || {}) as Record<string, unknown>;
-      return d.parentCallId === parentCallId;
+      if (d.parentCallId === parentCallId) return true;
+      if (!subAgentRunId) return false;
+      return d.subAgentRunId === subAgentRunId || d.runId === subAgentRunId;
     });
 }
 
@@ -133,9 +136,17 @@ export const ToolCallTimeline = {
         return h(StorageFileToolWidget, { key: run.id, props: { run } });
       }
       if (run.tool === 'run_sub_agent' || run.kind === 'sub_agent') {
+        const subAgentRunId =
+          run.subAgentRunId ||
+          (typeof run.result === 'object' &&
+          run.result &&
+          typeof (run.result as { runId?: unknown }).runId === 'string'
+            ? String((run.result as { runId: string }).runId)
+            : null);
         const subEvents = subAgentEventsForCall(
           this.toolEvents as StreamEv[],
           run.id,
+          subAgentRunId,
         );
         const mission =
           typeof run.args?.mission === 'string' ? run.args.mission : '';

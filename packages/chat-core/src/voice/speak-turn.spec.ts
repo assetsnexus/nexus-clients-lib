@@ -6,7 +6,10 @@ vi.mock('./stt-tts.js', () => ({
 }));
 
 import { createAndPollTts, playAudioUrl } from './stt-tts.js';
-import { createSpeakTurnController } from './speak-turn.js';
+import {
+  contactTtsNeedsSetup,
+  createSpeakTurnController,
+} from './speak-turn.js';
 
 function makeAudioEl(): HTMLAudioElement {
   const listeners = new Map<string, Set<() => void>>();
@@ -31,6 +34,74 @@ describe('createSpeakTurnController', () => {
     vi.clearAllMocks();
   });
 
+  it('contactTtsNeedsSetup when effective model missing', () => {
+    expect(contactTtsNeedsSetup(null)).toBe(true);
+    expect(
+      contactTtsNeedsSetup({
+        agentId: 'a1',
+        virtualAgentId: null,
+        isOwner: false,
+        canAdjust: true,
+        canSetVoiceSample: true,
+        ttsModelId: null,
+        ttsVoiceConfigId: null,
+        ttsVoicePreset: null,
+        voiceSampleRef: null,
+        voiceSampleTranscript: null,
+        effectiveTtsModelId: null,
+        effectiveTtsVoiceConfigId: null,
+        effectiveVoicePreset: null,
+        effectiveVoiceSampleRef: null,
+        effectiveVoiceSampleTranscript: null,
+      }),
+    ).toBe(true);
+    expect(
+      contactTtsNeedsSetup({
+        agentId: 'a1',
+        virtualAgentId: null,
+        isOwner: false,
+        canAdjust: true,
+        canSetVoiceSample: true,
+        ttsModelId: 'tts-1',
+        ttsVoiceConfigId: null,
+        ttsVoicePreset: null,
+        voiceSampleRef: null,
+        voiceSampleTranscript: null,
+        effectiveTtsModelId: 'tts-1',
+        effectiveTtsVoiceConfigId: null,
+        effectiveVoicePreset: null,
+        effectiveVoiceSampleRef: null,
+        effectiveVoiceSampleTranscript: null,
+      }),
+    ).toBe(false);
+  });
+
+  it('emits needs_setup when no model and no fallback', async () => {
+    const send = vi.fn(async (command: string) => {
+      if (command === 'anx.agents.contact-tts.get') {
+        return {
+          ok: true,
+          data: {
+            agentId: 'a1',
+            canAdjust: true,
+            canSetVoiceSample: true,
+            effectiveTtsModelId: null,
+          },
+        };
+      }
+      return { ok: true };
+    });
+    const ctrl = createSpeakTurnController({
+      client: { send },
+      agentId: 'a1',
+      fallbackModelId: null,
+    });
+    await ctrl.speak('hello');
+    expect(ctrl.getState().phase).toBe('needs_setup');
+    expect(createAndPollTts).not.toHaveBeenCalled();
+    ctrl.dispose();
+  });
+
   it('cancels playing TTS and cancels workload', async () => {
     const send = vi.fn(async (command: string) => {
       if (command === 'anx.agents.contact-tts.get') {
@@ -40,6 +111,7 @@ describe('createSpeakTurnController', () => {
             agentId: 'a1',
             isOwner: false,
             canAdjust: true,
+            canSetVoiceSample: true,
             effectiveTtsModelId: 'tts-1',
             effectiveVoicePreset: 'alloy',
           },
@@ -85,6 +157,7 @@ describe('createSpeakTurnController', () => {
       ok: true,
       data: {
         agentId: 'a1',
+        canSetVoiceSample: true,
         effectiveTtsModelId: 'tts-1',
         effectiveVoicePreset: 'alloy',
       },
@@ -110,6 +183,43 @@ describe('createSpeakTurnController', () => {
     expect(createAndPollTts).not.toHaveBeenCalled();
     expect(playAudioUrl).toHaveBeenCalledWith('https://example/cached.mp3');
     expect(ctrl.getState().phase).toBe('done');
+    ctrl.dispose();
+  });
+
+  it('passes contact voice sample to createAndPollTts', async () => {
+    const send = vi.fn(async () => ({
+      ok: true,
+      data: {
+        agentId: 'a1',
+        canSetVoiceSample: true,
+        effectiveTtsModelId: 'tts-1',
+        effectiveVoicePreset: 'preset-1',
+        effectiveVoiceSampleRef: { bucketId: 'ws', objectKey: 'a.wav' },
+        effectiveVoiceSampleTranscript: 'sample words',
+      },
+    }));
+    vi.mocked(createAndPollTts).mockResolvedValue({
+      ok: true,
+      audioUrl: 'data:audio/mpeg;base64,AQID',
+      workloadId: 'w2',
+    } as never);
+    vi.mocked(playAudioUrl).mockImplementation(async () => makeAudioEl());
+
+    const ctrl = createSpeakTurnController({
+      client: { send },
+      agentId: 'a1',
+    });
+    await ctrl.speak('hello');
+    expect(createAndPollTts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        model: 'tts-1',
+        voice: 'preset-1',
+        voiceSampleRef: { bucketId: 'ws', objectKey: 'a.wav' },
+        voiceSampleTranscript: 'sample words',
+      }),
+      expect.anything(),
+    );
     ctrl.dispose();
   });
 });

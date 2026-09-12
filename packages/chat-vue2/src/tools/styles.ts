@@ -231,6 +231,82 @@ export const TOOL_WIDGET_CSS = `
 .nexus-sub-agent__tasks li { display: flex; align-items: center; gap: 6px; min-height: 22px; }
 .nexus-sub-agent__check { margin: 0; }
 .nexus-sub-agent__task-title { flex: 1; min-width: 0; font-size: 12px; color: #334155; }
+.nexus-sub-agent__tool-rows { display: flex; flex-direction: column; gap: 4px; }
+.nexus-sub-agent__tool-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 22px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.025);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+}
+.nexus-sub-agent__engine-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #334155;
+  background: rgba(100, 116, 139, 0.14);
+}
+.nexus-sub-agent__engine-icon.is-fetch { color: #0f766e; background: rgba(42, 157, 143, 0.16); }
+.nexus-sub-agent__engine-icon.is-marketplace { color: #7c3aed; background: rgba(124, 58, 237, 0.12); }
+.nexus-sub-agent__engine-icon.is-engine-brave { color: #fb542b; background: rgba(251, 84, 43, 0.12); }
+.nexus-sub-agent__engine-icon.is-engine-google { color: #2563eb; background: rgba(37, 99, 235, 0.12); }
+.nexus-sub-agent__engine-icon.is-engine-bing { color: #0284c7; background: rgba(2, 132, 199, 0.12); }
+.nexus-sub-agent__engine-icon.is-engine-tavily { color: #059669; background: rgba(5, 150, 105, 0.12); }
+.nexus-sub-agent__engine-icon.is-engine-exa { color: #9333ea; background: rgba(147, 51, 234, 0.12); }
+.nexus-sub-agent__engine-icon.is-engine-duckduckgo { color: #ea580c; background: rgba(234, 88, 12, 0.12); }
+.nexus-sub-agent__tool-name {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #475569;
+}
+.nexus-sub-agent__engine-id {
+  font-size: 10px;
+  font-weight: 600;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.nexus-sub-agent__tool-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nexus-sub-agent__http { font-variant-numeric: tabular-nums; }
+.nexus-sub-agent__outcome { text-transform: lowercase; }
+.nexus-sub-agent__summary-md {
+  max-height: 12rem;
+  overflow: auto;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid rgba(15, 23, 42, 0.05);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.nexus-sub-agent__summary-md .nexus-chat-markdown-table-wrap { margin-top: 4px; }
+.nexus-sub-agent__summary-md table { font-size: 10px; border-collapse: collapse; width: 100%; }
+.nexus-sub-agent__summary-md th,
+.nexus-sub-agent__summary-md td {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  padding: 3px 5px;
+  text-align: left;
+  vertical-align: top;
+}
 .nexus-sub-agent__trail { display: flex; flex-wrap: wrap; gap: 4px; }
 .nexus-sub-agent__trail-chip {
   font-size: 10px;
@@ -380,6 +456,21 @@ export const TOOL_WIDGET_CSS = `
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
+}
+.nexus-linked-subchat-banner__badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #0f766e;
+  background: rgba(13, 148, 136, 0.12);
+  border: 1px solid rgba(13, 148, 136, 0.28);
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
 }
 .nexus-linked-subchat-banner__return {
   appearance: none;
@@ -448,7 +539,7 @@ export const TOOL_WIDGET_CSS = `
 `;
 
 let injectedVersion: string | null = null;
-const STYLE_VERSION = 'compact-v3';
+const STYLE_VERSION = 'search-preset-v1';
 
 export function ensureToolWidgetStyles(): void {
   if (typeof document === 'undefined') return;

@@ -61,6 +61,11 @@ export type IoDescriptor =
       ref: string;
       mimeType?: string;
       filename?: string;
+      /** Client-only blob/object URL for the sent bubble. Stripped before the command. */
+      previewUrl?: string;
+      thumbnailUrl?: string;
+      url?: string;
+      downloadUrl?: string;
     };
 
 export type ChatUsageSnapshot = {
@@ -138,6 +143,8 @@ export type ChatModelOverride = {
     | 'managed_cloud'
     | 'private_cloud'
     | 'edge_processing';
+  /** Picker catalog hint so IV is not skipped when sidecar I/O types are empty. */
+  visionSupported?: boolean;
 };
 
 export type ChatRoomLeaveAction = 'leave' | 'archive' | 'transfer_and_leave';
@@ -154,6 +161,7 @@ export type ChatRoomParticipant = {
   role?: string | null;
   displayName?: string | null;
   username?: string | null;
+  avatarUrl?: string | null;
   /** Per-agent orchestration overrides from `orchestration.aiParticipants`. */
   aiConfig?: ChatRoomParticipantAiConfig | null;
 };
@@ -184,6 +192,8 @@ export type ChatRoomDetail = {
   ownerUserId?: string | null;
   viewerUserId?: string | null;
   viewerIsOwner?: boolean;
+  viewerIsModerator?: boolean;
+  viewerCanManage?: boolean;
   participants: ChatRoomParticipant[];
   encryptionMode?: string | null;
   /** Disappearing-message TTL (seconds); null = retain indefinitely. */
@@ -253,6 +263,11 @@ export type ChatHooks = {
     reason?: string | null;
     requiredOnboardingType?: string | null;
     onboardingSatisfied?: boolean;
+    /** Present when a subagent (not the parent turn) requested elevation. */
+    runId?: string | null;
+    subAgentRunId?: string | null;
+    linkedConversationId?: string | null;
+    parentConversationId?: string | null;
   }) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolApprovalRequired?: (run: {

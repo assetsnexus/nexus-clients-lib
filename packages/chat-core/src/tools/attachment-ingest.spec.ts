@@ -86,6 +86,12 @@ describe('attachment-ingest', () => {
       module: 'storage-browser',
       workspaceId: 'ws-1',
     });
+    expect(
+      uploadOptsForChatFileDestination('conversation', { conversationId: 'c1' }),
+    ).toEqual({
+      module: 'chat-attachment',
+      conversationId: 'c1',
+    });
   });
 
   it('snapshotChatFiles copies bytes so later reads stay valid', async () => {

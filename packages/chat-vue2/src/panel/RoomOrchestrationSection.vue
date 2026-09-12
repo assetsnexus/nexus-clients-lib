@@ -124,7 +124,11 @@ export default {
       return this.aiCount > 0
     },
     canEdit() {
-      return Boolean(this.detail && this.detail.viewerIsOwner && this.updateRoomOrchestration)
+      return Boolean(
+        this.detail &&
+          (this.detail.viewerCanManage || this.detail.viewerIsOwner) &&
+          this.updateRoomOrchestration,
+      )
     },
     defaultMode() {
       return this.orchestration.defaultAiResponseMode || 'mention_only'

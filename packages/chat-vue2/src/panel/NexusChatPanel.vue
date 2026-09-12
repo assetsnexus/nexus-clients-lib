@@ -20,27 +20,34 @@
       @pointerdown="onHeaderPointerDown"
     >
       <div class="nexus-chat-panel__header-left">
-        <div class="nexus-chat-panel__avatar" aria-hidden="true">
-          <img
-            v-if="contactAvatarUrl && !avatarImgFailed"
-            :src="contactAvatarUrl"
-            alt=""
-            @error="avatarImgFailed = true"
-          />
-          <span v-else>{{ contactInitials }}</span>
-          <span
-            v-if="contactType === 'agent'"
-            class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--ai"
-          >AI</span>
-          <span
-            v-else-if="contactType === 'group'"
-            class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--group"
-          >G</span>
-        </div>
-        <div class="nexus-chat-panel__header-titles">
-          <span class="nexus-chat-panel__title">{{ contactName }}</span>
-          <span v-if="contactTypeBadge" class="nexus-chat-panel__type-badge">{{ contactTypeBadge }}</span>
-        </div>
+        <button
+          type="button"
+          class="nexus-chat-panel__identity"
+          :title="contactName"
+          @click.stop="$emit('open-details')"
+        >
+          <div class="nexus-chat-panel__avatar" aria-hidden="true">
+            <img
+              v-if="contactAvatarUrl && !avatarImgFailed"
+              :src="contactAvatarUrl"
+              alt=""
+              @error="avatarImgFailed = true"
+            />
+            <span v-else>{{ contactInitials }}</span>
+            <span
+              v-if="contactType === 'agent'"
+              class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--ai"
+            >AI</span>
+            <span
+              v-else-if="contactType === 'group'"
+              class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--group"
+            >G</span>
+          </div>
+          <div class="nexus-chat-panel__header-titles">
+            <span class="nexus-chat-panel__title">{{ contactName }}</span>
+            <span v-if="contactTypeBadge" class="nexus-chat-panel__type-badge">{{ contactTypeBadge }}</span>
+          </div>
+        </button>
         <span v-if="resolvedPanel.unreadCount" class="nexus-badge">{{ resolvedPanel.unreadCount }}</span>
       </div>
       <div class="nexus-chat-panel__header-actions" @pointerdown.stop>
@@ -332,14 +339,26 @@
               </div>
               <div class="nexus-chat-markdown" v-html="renderMarkdown(turn.text)" />
               <div v-if="turnAttachments(turn).length" class="nexus-attachment-chips">
-                <span
+                <button
                   v-for="attachment in turnAttachments(turn)"
                   :key="attachment.ref || attachment.filename"
-                  class="nexus-chip"
-                  :title="attachment.ref"
+                  type="button"
+                  class="nexus-chip nexus-chip--attachment"
+                  :class="{ 'nexus-chip--with-thumb': shouldRenderImageThumb(attachment) }"
+                  :title="attachmentChipLabel(attachment)"
+                  @click="$emit('preview-attachment', attachment)"
                 >
-                  {{ attachment.filename || attachment.ref }}
-                </span>
+                  <img
+                    v-if="shouldRenderImageThumb(attachment)"
+                    class="nexus-chip__thumb"
+                    :src="attachmentThumbUrl(attachment)"
+                    :alt="attachmentChipLabel(attachment)"
+                  />
+                  <span v-else class="nexus-chip__fallback">
+                    <span class="nexus-chip__badge">{{ attachmentTypeIcon(attachment) }}</span>
+                    <span class="nexus-chip__name">{{ attachmentChipLabel(attachment) }}</span>
+                  </span>
+                </button>
               </div>
               <tool-call-timeline
                 v-if="timelineEvents(turn).length"
@@ -394,28 +413,29 @@
                 </div>
               </div>
             </div>
-            <button
-              v-if="turn.text && turn.role !== 'user'"
-              type="button"
-              class="nexus-btn-link"
-              :title="resolvedLabels.copy"
-              @click="copyMessage(turn.text)"
-            >
-              ⎘
-            </button>
-            <speak-turn-widget
-              v-if="turn.role === 'assistant' && turn.text && commandClient"
-              :text="turn.text"
-              :turn-id="turn.id"
-              :command-client="commandClient"
-              :agent-id="resolvedAgentId"
-              :virtual-agent-id="virtualAgentId"
-              :can-configure-agent="canConfigureAgent"
-              :auto-speak="autoVoice && isLastAssistantTurn(turn)"
-              :fallback-model-id="fallbackTtsModelId"
-              :labels="resolvedLabels"
-              @open-agent-voice-config="$emit('open-agent-voice-config', $event)"
-            />
+            <div v-if="turn.text" class="nexus-message-actions">
+              <button
+                type="button"
+                class="nexus-btn-link nexus-message-actions__btn"
+                :title="resolvedLabels.copy"
+                @click="copyMessage(turn.text)"
+              >
+                ⎘
+              </button>
+              <speak-turn-widget
+                v-if="commandClient"
+                :text="turn.text"
+                :turn-id="turn.id"
+                :command-client="commandClient"
+                :agent-id="resolvedAgentId"
+                :virtual-agent-id="virtualAgentId"
+                :can-configure-agent="canConfigureAgent"
+                :auto-speak="autoVoice && isLastAssistantTurn(turn)"
+                :fallback-model-id="fallbackTtsModelId"
+                :labels="resolvedLabels"
+                @open-agent-voice-config="$emit('open-agent-voice-config', $event)"
+              />
+            </div>
             <slot name="message-actions" :turn="turn" :panel="resolvedPanel" />
           </div>
           <div v-if="resolvedPanel.streaming" class="nexus-muted">
@@ -547,6 +567,15 @@ import SpeakTurnWidget from './SpeakTurnWidget.vue';
 import ConversationBillingPopover from './ConversationBillingPopover.vue';
 import { DEFAULT_PANEL_LABELS, formatMoneyMinor, spendLabelForCurrency } from './labels';
 import { createMessageListAutoScroll } from './message-list-scroll';
+import {
+  applyDraftRestore,
+  attachmentChipLabel,
+  attachmentThumbUrl,
+  attachmentTypeIcon,
+  isImageAttachment,
+  shouldRenderImageThumb,
+  turnAttachmentsFromPending,
+} from './attachment-render.util';
 
 function emptyPanel() {
   return {
@@ -630,6 +659,7 @@ export default {
     return {
       draft: '',
       pendingItems: [],
+      sentTurnPreviewUrls: [],
       uploadPumpRunning: false,
       dragDepth: 0,
       embedState: null,
@@ -737,8 +767,9 @@ export default {
       return name.slice(0, 2).toUpperCase() || '?';
     },
     contactTypeBadge() {
-      // Agent identity is shown as an avatar overlay (Art. 50 visual signal).
       if (this.contactType === 'group') return 'Group';
+      if (this.contactType === 'agent') return 'Agent';
+      if (this.contactType === 'user') return 'Direct message';
       return '';
     },
     contactType() {
@@ -748,6 +779,7 @@ export default {
     },
     sendBlockedHint() {
       if (this.resolvedPanel.streaming) return 'Waiting for response…';
+      if (this.uploadInFlight) return this.resolvedLabels.uploading || 'Uploading…';
       if (this.creditsInsufficient) return 'Insufficient credits';
       if (this.throttled) return `Throttled — ${this.panelThrottleRemainingSec}s`;
       return '';
@@ -833,7 +865,11 @@ export default {
       };
     },
     canSend() {
-      return (this.draft.trim().length > 0 || this.pendingAttachments.length > 0) && !this.isComposerDisabled;
+      return (
+        (this.draft.trim().length > 0 || this.pendingAttachments.length > 0) &&
+        !this.isComposerDisabled &&
+        !this.uploadInFlight
+      );
     },
     displayCurrency() {
       return (
@@ -1123,6 +1159,8 @@ export default {
     },
     revokeAllPreviews() {
       this.pendingItems.forEach((item) => this.revokePreviewUrl(item && item.previewUrl));
+      this.revokeUrlList(this.sentTurnPreviewUrls);
+      this.sentTurnPreviewUrls = [];
     },
     newLocalId() {
       return `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1164,6 +1202,7 @@ export default {
         folderId: destOpts.folderId,
         withExpiry: destOpts.withExpiry,
         retentionPolicy: destOpts.retentionPolicy,
+        conversationId: destOpts.conversationId || this.resolvedPanel.conversationId || undefined,
       });
       accepted.forEach((file) => {
         this.pendingItems.push({
@@ -1238,6 +1277,10 @@ export default {
         item.status = 'ready';
         item.progress = 100;
         item.abort = null;
+        this.$emit('attachment-ready', {
+          fileId: descriptor.ref,
+          conversationId: this.resolvedPanel.conversationId || null,
+        });
       } catch (err) {
         if (isUploadAbortError(err) || item.status === 'cancelling') {
           this.dropPendingItem(item.localId, { silent: true });
@@ -1356,7 +1399,7 @@ export default {
       }
       const readyItems = this.pendingItems.filter((item) => item && item.status === 'ready');
       const leftover = this.pendingItems.filter((item) => item && item.status !== 'ready');
-      const attachments = readyItems.map((item) => item.descriptor).filter(Boolean);
+      const attachments = turnAttachmentsFromPending(readyItems);
       const payload = {
         text: this.draft.trim(),
         panelIndex: this.panelIndex,
@@ -1369,6 +1412,7 @@ export default {
       const previewUrls = readyItems.map((item) => item.previewUrl).filter(Boolean);
       this.draft = '';
       this.pendingItems = leftover;
+      this.sentTurnPreviewUrls = (this.sentTurnPreviewUrls || []).concat(previewUrls);
       const hostHandlesSend = Boolean(this.$listeners && this.$listeners.send);
       try {
         if (
@@ -1378,6 +1422,7 @@ export default {
           !hostHandlesSend
         ) {
           const result = await this.chat.sendMessage(payload.text, {
+            conversationId: this.resolvedPanel.conversationId || undefined,
             contactId: this.resolvedPanel.contactId || undefined,
             roomId: this.resolvedPanel.roomId || undefined,
             attachments: payload.attachments,
@@ -1385,18 +1430,19 @@ export default {
           if (result && result.ok === false) {
             this.restoreDraft(snapshot);
             this.$emit('send-failed', { ...result, panelIndex: this.panelIndex, snapshot });
-          } else {
-            this.revokeUrlList(previewUrls);
+            return;
+          }
+          if (payload.attachments && payload.attachments.length) {
+            this.$emit('attachment-ready', {
+              conversationId: this.resolvedPanel.conversationId || null,
+            });
           }
           return;
         }
         this.$emit('send', {
           ...payload,
           _draftSnapshot: snapshot,
-          restoreDraft: () => this.restoreDraft(snapshot),
-        });
-        this.$nextTick(() => {
-          this.revokeUrlList(previewUrls);
+          restoreDraft: (opts) => this.restoreDraft(snapshot, opts),
         });
       } catch (err) {
         this.restoreDraft(snapshot);
@@ -1419,15 +1465,20 @@ export default {
       }
       return this.send();
     },
-    restoreDraft(snapshot) {
-      if (!snapshot) return;
-      this.draft = snapshot.text == null ? '' : String(snapshot.text);
-      const restored = Array.isArray(snapshot.pendingItems)
-        ? snapshot.pendingItems.map((item) => ({ ...item, abort: null }))
+    isImageAttachment,
+    shouldRenderImageThumb,
+    attachmentChipLabel,
+    attachmentTypeIcon,
+    attachmentThumbUrl,
+    restoreDraft(snapshot, opts) {
+      const next = applyDraftRestore(this, snapshot, opts);
+      this.draft = next.draft;
+      this.pendingItems = Array.isArray(next.pendingItems)
+        ? next.pendingItems.map((item) => ({ ...item, abort: null }))
         : [];
-      if (restored.length) {
-        this.pendingItems = restored.concat(this.pendingItems);
-      }
+    },
+    clearReadyAttachments() {
+      this.pendingItems = this.pendingItems.filter((item) => item && item.status !== 'ready');
     },
     revokeUrlList(urls) {
       if (!urls || !urls.length || typeof URL === 'undefined' || !URL.revokeObjectURL) return;
@@ -1522,6 +1573,20 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.nexus-chat-panel__identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.nexus-chat-panel__identity:hover .nexus-chat-panel__title {
+  color: #51cbce;
 }
 .nexus-chat-panel__avatar {
   position: relative;
@@ -1685,10 +1750,25 @@ export default {
 .nexus-message-row {
   display: flex;
   align-items: flex-start;
+  gap: 0.35rem;
   margin-bottom: 8px;
 }
 .nexus-message-row--user {
   justify-content: flex-end;
+}
+.nexus-message-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+}
+.nexus-message-actions__btn {
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.15rem;
+  min-width: 1.4rem;
 }
 .nexus-message-bubble {
   padding: 6px 10px;
@@ -1845,6 +1925,18 @@ export default {
   font-size: 11px;
   max-width: 160px;
 }
+.nexus-chip--attachment {
+  padding: 0;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+}
+.nexus-chip-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  display: block;
+}
 .nexus-chip--with-thumb {
   flex-direction: column;
   align-items: flex-start;
@@ -1858,6 +1950,13 @@ export default {
   border-radius: 3px;
   background: #111;
   display: block;
+}
+.nexus-chip__fallback {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  max-width: 180px;
 }
 .nexus-chip__name {
   overflow: hidden;
