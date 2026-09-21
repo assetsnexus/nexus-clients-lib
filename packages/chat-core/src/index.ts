@@ -48,6 +48,12 @@ import {
 } from './tools/upload-attachment.js';
 import {
   findChatContact,
+  chatContactIdentityKeys,
+  chatContactsAreSameIdentity,
+  mergeContactAvatarUrl,
+  applyPanelAvatarOnContactSwitch,
+  resolveConversationAvatarUrl,
+  indexChatContactsById,
 } from './contact-identity.js';
 import {
   attachmentsForCommand,
@@ -212,7 +218,7 @@ export {
   applyPanelAvatarOnContactSwitch,
   resolveConversationAvatarUrl,
   indexChatContactsById,
-} from './contact-identity.js';
+};
 export type { TurnSenderLineOpts } from './turn-meta.js';
 export {
   waitForIceGatheringComplete,
