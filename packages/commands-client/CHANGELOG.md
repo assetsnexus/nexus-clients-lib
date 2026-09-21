@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+- `CommandConnectivityController`: transport disconnect classifier, 3-attempt/10s retry queue, degraded→down state (20s authenticated / 10s anonymous), health probe, coalesce for identical reads.
+- `isTransportDisconnect` — long command timeouts are not "region down"; short health timeouts may be.
+- `NexusClient` transport retries now spread over ~10s (same schedule); circuit open shortened to 5s.
+
 ## 0.2.1
 
 - `403 PERMISSION_ELEVATION_REQUIRED` maps to `kind: 'permission_elevation_required'` with typed `permissionElevation` (elevationId, pack, command / commandNames, onboarding flags).

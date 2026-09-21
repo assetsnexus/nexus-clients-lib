@@ -424,12 +424,25 @@ export const TOOL_WIDGET_CSS = `
 }
 .nexus-subagents-strip__item {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 4px 6px;
   border-radius: 8px;
   font-size: 12px;
   background: rgba(255, 255, 255, 0.7);
+}
+.nexus-subagents-strip__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.nexus-subagents-strip__error {
+  margin: 0 0 0 14px;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
 }
 .nexus-subagents-strip__mission {
   flex: 1;

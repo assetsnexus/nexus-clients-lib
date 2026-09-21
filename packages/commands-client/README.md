@@ -41,6 +41,7 @@ if (result.ok) {
 - SCA/2FA (`202`), data-access approval, permission elevation (`403`), and long-running (`102`) typed results; `client.longRunning` follow/cancel/wait
 - Auto `idempotencyKey` for non-read commands
 - Rate-limit / `Retry-After` aware backoff
+- **Command connectivity**: `CommandConnectivityController` — strict transport-disconnect classifier, 3 attempts over ~10s, degraded/down state (portal overlay after 20s authenticated / 10s anonymous), read coalesce, `formatConnectivityTooltip`
 - OAuth PKCE helpers, JWKS cache, introspection
 - Region resolvers (static / country / gateway stub)
 - `grant` and `subscriptions` namespaces

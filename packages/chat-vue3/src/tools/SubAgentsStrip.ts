@@ -1,9 +1,16 @@
-import { h as vueH } from 'vue';
-import { createCompatH } from './hCompat';
-const h = createCompatH(vueH);
-
 import type { SubAgentStripItem } from '@nexus/chat-core';
 import { toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
+
+function isActiveStatus(status: string | null | undefined): boolean {
+  const s = String(status || '').toLowerCase();
+  return (
+    s === 'running' ||
+    s === 'paused' ||
+    s === 'queued' ||
+    s === 'pending' ||
+    s === 'awaiting_approval'
+  );
+}
 
 /**
  * Compact strip: count badge + expandable active subagent list.
@@ -43,12 +50,27 @@ export const SubAgentsStrip = {
     emitCancel(run: SubAgentStripItem) {
       this.$emit('cancel-run', { runId: run.runId || run.parentCallId });
     },
+    emitDismiss(run: SubAgentStripItem) {
+      this.$emit('dismiss-run', {
+        runId: run.runId || null,
+        id: run.id,
+        parentCallId: run.parentCallId,
+      });
+    },
     isActive(run: SubAgentStripItem): boolean {
+      return isActiveStatus(run.status);
+    },
+    isError(run: SubAgentStripItem): boolean {
       const s = String(run.status || '').toLowerCase();
-      return s === 'running' || s === 'paused' || s === 'queued' || s === 'pending';
+      return s === 'error' || s === 'failed' || s === 'timeout' || s === 'cost_limit';
+    },
+    errorText(run: SubAgentStripItem): string | null {
+      if (!this.isError(run)) return null;
+      const msg = typeof run.error === 'string' ? run.error.trim() : '';
+      return msg || null;
     },
   },
-  render() {
+  render(h: any) {
     if (!this.items.length) return null;
 
     const header = h(
@@ -98,61 +120,91 @@ export const SubAgentsStrip = {
       ? h(
           'ul',
           { class: 'nexus-subagents-strip__list', attrs: { role: 'list' } },
-          this.items.map((run: SubAgentStripItem) =>
-            h('li', { key: run.id, class: 'nexus-subagents-strip__item' }, [
-              h('span', {
-                class: ['nexus-tool-run__dot', toolStatusClass(String(run.status || ''))],
-                attrs: { 'aria-hidden': 'true' },
-              }),
-              h(
-                'span',
-                { class: 'nexus-subagents-strip__mission', attrs: { title: run.mission } },
-                truncateLabel(run.mission || 'Subagent', 56),
-              ),
-              h(
-                'span',
-                { class: ['nexus-tool-run__chip', toolStatusClass(String(run.status || ''))] },
-                toolStatusLabel(String(run.status || '')),
-              ),
-              this.canControl
-                ? h('span', { class: 'nexus-subagents-strip__actions' }, [
-                    run.linkedConversationId || run.runId
-                      ? h(
-                          'button',
-                          {
-                            class: 'nexus-tool-run__btn nexus-tool-run__btn--ghost',
-                            attrs: { type: 'button' },
-                            on: { click: () => this.emitOpen(run) },
-                          },
-                          'View chat',
-                        )
-                      : null,
-                    this.isActive(run)
-                      ? h(
-                          'button',
-                          {
-                            class: 'nexus-tool-run__btn nexus-tool-run__btn--ghost',
-                            attrs: { type: 'button' },
-                            on: { click: () => this.emitPause(run) },
-                          },
-                          'Pause',
-                        )
-                      : null,
-                    this.isActive(run)
-                      ? h(
-                          'button',
-                          {
-                            class: 'nexus-tool-run__btn nexus-tool-run__btn--danger',
-                            attrs: { type: 'button' },
-                            on: { click: () => this.emitCancel(run) },
-                          },
-                          'Cancel',
-                        )
-                      : null,
-                  ])
-                : null,
-            ]),
-          ),
+          this.items.map((run: SubAgentStripItem) => {
+            const err = this.errorText(run);
+            return h(
+              'li',
+              { key: run.id, class: 'nexus-subagents-strip__item' },
+              [
+                h('div', { class: 'nexus-subagents-strip__row' }, [
+                  h('span', {
+                    class: ['nexus-tool-run__dot', toolStatusClass(String(run.status || ''))],
+                    attrs: { 'aria-hidden': 'true' },
+                  }),
+                  h(
+                    'span',
+                    { class: 'nexus-subagents-strip__mission', attrs: { title: run.mission } },
+                    truncateLabel(run.mission || 'Subagent', 56),
+                  ),
+                  h(
+                    'span',
+                    {
+                      class: ['nexus-tool-run__chip', toolStatusClass(String(run.status || ''))],
+                    },
+                    toolStatusLabel(String(run.status || '')),
+                  ),
+                  this.canControl
+                    ? h('span', { class: 'nexus-subagents-strip__actions' }, [
+                        run.linkedConversationId || run.runId
+                          ? h(
+                              'button',
+                              {
+                                class: 'nexus-tool-run__btn nexus-tool-run__btn--ghost',
+                                attrs: { type: 'button' },
+                                on: { click: () => this.emitOpen(run) },
+                              },
+                              'View chat',
+                            )
+                          : null,
+                        this.isActive(run)
+                          ? h(
+                              'button',
+                              {
+                                class: 'nexus-tool-run__btn nexus-tool-run__btn--ghost',
+                                attrs: { type: 'button' },
+                                on: { click: () => this.emitPause(run) },
+                              },
+                              'Pause',
+                            )
+                          : null,
+                        this.isActive(run)
+                          ? h(
+                              'button',
+                              {
+                                class: 'nexus-tool-run__btn nexus-tool-run__btn--danger',
+                                attrs: { type: 'button' },
+                                on: { click: () => this.emitCancel(run) },
+                              },
+                              'Cancel',
+                            )
+                          : null,
+                        !this.isActive(run)
+                          ? h(
+                              'button',
+                              {
+                                class: 'nexus-tool-run__btn nexus-tool-run__btn--ghost',
+                                attrs: { type: 'button', title: 'Dismiss' },
+                                on: { click: () => this.emitDismiss(run) },
+                              },
+                              'Close',
+                            )
+                          : null,
+                      ])
+                    : null,
+                ]),
+                err
+                  ? h(
+                      'p',
+                      {
+                        class: 'nexus-tool-run__error nexus-subagents-strip__error',
+                        attrs: { title: err },
+                      },
+                      err,
+                    )
+                  : null,
+              ],
+            );
+          }),
         )
       : null;
 

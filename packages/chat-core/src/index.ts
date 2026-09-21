@@ -47,6 +47,9 @@ import {
   type UploadAttachmentOpts,
 } from './tools/upload-attachment.js';
 import {
+  findChatContact,
+} from './contact-identity.js';
+import {
   attachmentsForCommand,
   mergeAttachmentDisplay,
 } from './attachments.js';
@@ -98,10 +101,12 @@ export {
   modelSupportsToolCalling,
   isChatAgentPickerModel,
   formatCatalogModelLabel,
+  resolveReasoningEffortLevels,
   NON_CHAT_AGENT_CAPABILITIES,
   NON_CHAT_AGENT_CATEGORIES,
+  ALL_REASONING_EFFORT_LEVELS,
 } from './model-capabilities.js';
-export type { ChatPickerModelFields } from './model-capabilities.js';
+export type { ChatPickerModelFields, ReasoningEffortLevel } from './model-capabilities.js';
 export { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 export { parseStreamMessage, applyStreamEventToTurns } from './stream/stream-events.js';
 export type { StreamEvent } from './stream/stream-events.js';
@@ -123,7 +128,7 @@ export {
   updateAgentRunTask,
   mapAgentRunRow,
 } from './agent-runs/api.js';
-export { collectSubAgentRuns, activeSubAgentCountFromTurns } from './agent-runs/collect-runs.js';
+export { collectSubAgentRuns, activeSubAgentCountFromTurns, visibleSubAgentStripRuns, isActiveSubAgentStripStatus } from './agent-runs/collect-runs.js';
 export type {
   AgentRunOrigin,
   AgentRunStatus,
@@ -199,6 +204,15 @@ export type {
   SpeakTurnController,
 } from './voice/speak-turn.js';
 export { formatTurnSenderLine, formatTurnTime } from './turn-meta.js';
+export {
+  findChatContact,
+  chatContactIdentityKeys,
+  chatContactsAreSameIdentity,
+  mergeContactAvatarUrl,
+  applyPanelAvatarOnContactSwitch,
+  resolveConversationAvatarUrl,
+  indexChatContactsById,
+} from './contact-identity.js';
 export type { TurnSenderLineOpts } from './turn-meta.js';
 export {
   waitForIceGatheringComplete,
@@ -369,6 +383,8 @@ export type ChatState = {
   roomPresence: Record<string, ChatRoomPresence[]>;
   calls: ChatVoiceCallSession[];
   streaming: boolean;
+  /** Pending client_tool_request callId (page tools); keep WS open until resume. */
+  pausedCallId?: string | null;
   selectedAgentId: string | null;
   conversationId: string | null;
   features: ChatFeatures;
@@ -731,24 +747,6 @@ async function hydrateAgentAvatars(
   return contacts.map((c) => (srcById.has(c.id) ? { ...c, avatarUrl: srcById.get(c.id) || null } : c));
 }
 
-/** Resolve a contact by canonical id, alias, virtualEmployeeId, or agentId. */
-export function findChatContact(
-  contacts: ChatContact[] | undefined | null,
-  contactId: string | null | undefined,
-): ChatContact | null {
-  const id = contactId == null ? '' : String(contactId).trim();
-  if (!id || !Array.isArray(contacts)) return null;
-  return (
-    contacts.find(
-      (c) =>
-        c.id === id ||
-        c.virtualEmployeeId === id ||
-        c.agentId === id ||
-        (Array.isArray(c.aliases) && c.aliases.includes(id)),
-    ) || null
-  );
-}
-
 export type SendMessageResult =
   | { ok: true }
   | { ok: false; code: string; message: string; kind?: string };
@@ -798,7 +796,7 @@ export type NexusChat = {
       roomId?: string;
       attachments?: IoDescriptor[];
       modelOverride?: import('./types').ChatModelOverride;
-      reasoningEffort?: 'low' | 'medium' | 'high';
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
       uiLocale?: string;
     },
   ) => Promise<SendMessageResult>;
@@ -1002,6 +1000,15 @@ export type NexusChat = {
     opts?: UploadAttachmentOpts,
   ) => Promise<UploadAttachmentResult>;
   registerTool: (descriptor: ChatToolDescriptor, handler: (args: unknown) => Promise<unknown> | unknown) => void;
+  /**
+   * Resume after `onClientToolRequest`. Sends `anx.communicate.client-tool.result`
+   * and streams the continued turn over the conversation WebSocket.
+   */
+  resumeClientTool: (opts: {
+    callId: string;
+    result: unknown;
+    conversationId?: string;
+  }) => Promise<{ ok: boolean; message?: string }>;
   features: ChatFeatures;
   streamResolver: StreamEndpointResolver;
 };
@@ -1255,12 +1262,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           : c,
       ),
     });
+    // New conversation always starts empty; keep prior turns and the list
+    // selection will stay on the previous thread after create.
+    syncMessagesFromTurns([]);
     patchCurrentPanel({
       contactId: canonicalId,
       contactType: contact?.type || 'agent',
       conversationId: conversationId || store.getState().conversationId,
       roomId: null,
       roomPurpose: 'conversation',
+      turns: [],
     });
     return { conversationId, agentId: resolvedAgentId };
   };
@@ -1882,11 +1893,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         };
       });
       syncMessagesFromTurns(turns);
-      const conversationId =
-        typeof rehydrateOpts?.conversationId === 'string' && rehydrateOpts.conversationId.trim()
-          ? rehydrateOpts.conversationId.trim()
-          : null;
-      if (conversationId) {
+      if (rehydrateOpts && Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId')) {
+        const conversationId =
+          typeof rehydrateOpts.conversationId === 'string' && rehydrateOpts.conversationId.trim()
+            ? rehydrateOpts.conversationId.trim()
+            : null;
         store.setState({ conversationId });
         patchCurrentPanel({ conversationId, roomId: null, roomPurpose: 'conversation' });
       }
@@ -1977,8 +1988,31 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         roomId?: string;
         attachments?: IoDescriptor[];
         modelOverride?: ChatModelOverride;
-        reasoningEffort?: 'low' | 'medium' | 'high';
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
         uiLocale?: string;
+        /** Current portal route — used with tinyPagePointer for page_context. */
+        currentPagePath?: string;
+        /**
+         * Tiny page pointer prompt string(s). Prefer over pageInstructions/pageData.
+         * Inference tags these as page_context.
+         */
+        injectedSystemPrompts?: string[];
+        /** @deprecated Prefer understand tool; kept for OAuth copilots. */
+        pageInstructions?: string;
+        /** @deprecated Prefer understand tool; never dump large form state. */
+        pageData?: Record<string, unknown>;
+        browserContext?: Record<string, unknown>;
+        /** Client-executed tools (anx.page.* + mapped page commands). */
+        browserFunctionCalls?: Array<{
+          name: string;
+          description: string;
+          parameters: {
+            type: string;
+            properties?: Record<string, unknown>;
+            required?: string[];
+          };
+        }>;
+        pageFunctionCalls?: string[];
       } = {},
     ): Promise<SendMessageResult> {
       const id = `m_${Date.now()}`;
@@ -2130,6 +2164,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                       callId: run.id,
                       tool: run.tool,
                       approvalId: run.approvalId,
+                      conversationId: store.getState().conversationId || null,
                     });
                   }
                   const toolResult =
@@ -2225,8 +2260,44 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                   });
                   finishPausedTurn();
                 }
+                let clientToolPause = false;
+                if (parsed.type === 'client_tool_request') {
+                  const data = (parsed.data || {}) as {
+                    callId?: string;
+                    name?: string;
+                    arguments?: Record<string, unknown>;
+                  };
+                  const callId = String(data.callId || '');
+                  const name = String(data.name || '');
+                  if (callId && name) {
+                    clientToolPause = true;
+                    store.setState({
+                      streaming: false,
+                      pausedCallId: callId,
+                    });
+                    patchCurrentPanel({ streaming: false });
+                    opts.hooks?.onStreamState?.('paused');
+                    void Promise.resolve(
+                      opts.hooks?.onClientToolRequest?.({
+                        callId,
+                        name,
+                        arguments:
+                          data.arguments && typeof data.arguments === 'object'
+                            ? data.arguments
+                            : {},
+                        conversationId: store.getState().conversationId || null,
+                      }),
+                    ).catch((err) => {
+                      log('client_tool_hook_failed', { message: String(err), callId, name });
+                      opts.hooks?.onError?.(err);
+                    });
+                  }
+                }
                 if (parsed.type === 'paused') {
-                  finishPausedTurn();
+                  // Keep WS open for client-tool resume; other pauses finish the turn.
+                  if (!clientToolPause && !store.getState().pausedCallId) {
+                    finishPausedTurn();
+                  }
                 }
                 if (
                   parsed.type === 'done' ||
@@ -2282,6 +2353,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.modelOverride ? { modelOverride: sendOpts.modelOverride } : {}),
           ...(sendOpts.reasoningEffort ? { reasoningEffort: sendOpts.reasoningEffort } : {}),
           ...(sendOpts.uiLocale ? { uiLocale: sendOpts.uiLocale } : {}),
+          ...(sendOpts.currentPagePath ? { currentPagePath: sendOpts.currentPagePath } : {}),
+          ...(sendOpts.injectedSystemPrompts?.length
+            ? { injectedSystemPrompts: sendOpts.injectedSystemPrompts }
+            : {}),
+          ...(sendOpts.pageInstructions ? { pageInstructions: sendOpts.pageInstructions } : {}),
+          ...(sendOpts.pageData ? { pageData: sendOpts.pageData } : {}),
+          ...(sendOpts.browserContext ? { browserContext: sendOpts.browserContext } : {}),
+          ...(sendOpts.browserFunctionCalls?.length
+            ? { browserFunctionCalls: sendOpts.browserFunctionCalls }
+            : {}),
+          ...(sendOpts.pageFunctionCalls?.length
+            ? { pageFunctionCalls: sendOpts.pageFunctionCalls }
+            : {}),
         })) as SendResult;
 
         if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -2471,6 +2555,174 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         cancelled: Boolean((data as { cancelled?: boolean })?.cancelled),
         generationInProgress: Boolean((data as { generationInProgress?: boolean })?.generationInProgress),
       };
+    },
+    async resumeClientTool(resumeOpts: {
+      callId: string;
+      result: unknown;
+      conversationId?: string;
+    }) {
+      const conversationId =
+        resumeOpts.conversationId || store.getState().conversationId || undefined;
+      if (!conversationId) {
+        return { ok: false, message: 'conversationId required' };
+      }
+      const callId = String(resumeOpts.callId || '').trim();
+      if (!callId) return { ok: false, message: 'callId required' };
+
+      const panel = currentPanel(store.getState());
+      const panelId = panel?.id;
+      const assistantId = `a_resume_${Date.now()}`;
+      let turns: ChatTurn[] = [
+        ...store.getState().turns,
+        {
+          id: assistantId,
+          role: 'assistant',
+          text: '',
+          toolEvents: [],
+          rawToolStream: [],
+          createdAt: new Date().toISOString(),
+        },
+      ];
+      syncMessagesFromTurns(turns);
+      store.setState({ streaming: true, pausedCallId: null });
+      patchCurrentPanel({ streaming: true });
+      opts.hooks?.onStreamState?.('streaming');
+
+      try {
+        closeSocket();
+        let acceptStreamTokens = false;
+        const wsConnected = await streamResolver
+          .connectWebSocket({
+            onMessage: (ev) => {
+              const parsed = parseStreamMessage(ev.data);
+              if (!parsed) return;
+              let clientToolPause = false;
+              if (
+                parsed.type === 'conversation' &&
+                parsed.data &&
+                typeof parsed.data === 'object' &&
+                (parsed.data as { generationStart?: unknown }).generationStart === true
+              ) {
+                acceptStreamTokens = true;
+              } else if (
+                (parsed.type === 'token' || parsed.type === 'sub_agent_token') &&
+                !acceptStreamTokens
+              ) {
+                return;
+              }
+              turns = applyStreamEventToTurns(store.getState().turns, assistantId, parsed);
+              syncMessagesFromTurns(turns);
+              if (panelId && parsed.type === 'usage') {
+                const turnUsage = turns.find((t) => t.id === assistantId)?.usage || null;
+                applyUsageToPanel(panelId, turnUsage);
+              }
+              if (parsed.type === 'client_tool_request') {
+                const data = (parsed.data || {}) as {
+                  callId?: string;
+                  name?: string;
+                  arguments?: Record<string, unknown>;
+                };
+                const nextCallId = String(data.callId || '');
+                const name = String(data.name || '');
+                if (nextCallId && name) {
+                  clientToolPause = true;
+                  store.setState({ pausedCallId: nextCallId, streaming: false });
+                  patchCurrentPanel({ streaming: false });
+                  opts.hooks?.onStreamState?.('paused');
+                  void Promise.resolve(
+                    opts.hooks?.onClientToolRequest?.({
+                      callId: nextCallId,
+                      name,
+                      arguments:
+                        data.arguments && typeof data.arguments === 'object'
+                          ? data.arguments
+                          : {},
+                      conversationId,
+                    }),
+                  ).catch((err) => opts.hooks?.onError?.(err));
+                }
+              }
+              if (parsed.type === 'paused') {
+                if (!clientToolPause && !store.getState().pausedCallId) {
+                  store.setState({ streaming: false });
+                  patchCurrentPanel({ streaming: false });
+                  opts.hooks?.onStreamState?.('paused');
+                  closeSocket();
+                }
+              }
+              if (
+                parsed.type === 'done' ||
+                parsed.type === 'complete' ||
+                parsed.type === 'finished' ||
+                parsed.type === 'error'
+              ) {
+                if (parsed.type === 'error') {
+                  const errData =
+                    parsed.data && typeof parsed.data === 'object'
+                      ? (parsed.data as Record<string, unknown>)
+                      : {};
+                  const errMsg =
+                    (typeof parsed.data === 'string' && parsed.data) ||
+                    (typeof errData.message === 'string' && errData.message) ||
+                    'Stream error';
+                  const billing = classifyChatBillingIssue({
+                    code: errData.code,
+                    message: errMsg,
+                  });
+                  if (!billing) {
+                    opts.hooks?.onError?.(new Error(errMsg));
+                  } else if (typeof billing.message === 'string' && billing.message) {
+                    opts.hooks?.onError?.(new Error(billing.message));
+                  }
+                }
+                store.setState({ streaming: false });
+                patchCurrentPanel({ streaming: false });
+                opts.hooks?.onStreamState?.(parsed.type === 'error' ? 'error' : 'idle');
+                closeSocket();
+              }
+            },
+          })
+          .then((ws) => {
+            activeSocket = ws as unknown as WebSocket;
+            return true;
+          })
+          .catch(() => false);
+
+        await streamInit({ conversationId });
+
+        const result = (await opts.client.send('anx.communicate.client-tool.result', {
+          conversationId,
+          callId,
+          result: resumeOpts.result,
+        })) as SendResult;
+
+        if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+          const failMsg = result.message || 'client-tool resume failed';
+          turns = applyStreamEventToTurns(store.getState().turns, assistantId, {
+            type: 'error',
+            data: { message: failMsg },
+          });
+          syncMessagesFromTurns(turns);
+          store.setState({ streaming: false });
+          patchCurrentPanel({ streaming: false });
+          closeSocket();
+          opts.hooks?.onError?.(new Error(failMsg));
+          return { ok: false, message: failMsg };
+        }
+
+        if (!wsConnected) {
+          store.setState({ streaming: false });
+          patchCurrentPanel({ streaming: false });
+        }
+        return { ok: true };
+      } catch (err) {
+        store.setState({ streaming: false });
+        patchCurrentPanel({ streaming: false });
+        closeSocket();
+        const message = err instanceof Error ? err.message : String(err);
+        opts.hooks?.onError?.(err);
+        return { ok: false, message };
+      }
     },
   };
 }

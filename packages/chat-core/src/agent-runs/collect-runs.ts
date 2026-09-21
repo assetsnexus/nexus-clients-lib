@@ -1,6 +1,14 @@
 import type { ChatToolRun, ChatTurn } from '../state.js';
 import type { SubAgentStripItem } from './types.js';
 
+const ACTIVE_STRIP_STATUSES = new Set([
+  'running',
+  'paused',
+  'queued',
+  'pending',
+  'awaiting_approval',
+]);
+
 function isSubAgentRun(run: ChatToolRun): boolean {
   return (
     run.kind === 'sub_agent' ||
@@ -26,6 +34,32 @@ function statusFrom(run: ChatToolRun): string {
   if (run.status === 'error') return 'error';
   if (run.status === 'success') return 'completed';
   return run.status || 'running';
+}
+
+function errorFrom(run: ChatToolRun): string | null {
+  if (typeof run.error === 'string' && run.error.trim()) return run.error.trim();
+  if (
+    run.result &&
+    typeof run.result === 'object' &&
+    typeof (run.result as { error?: unknown }).error === 'string'
+  ) {
+    const msg = String((run.result as { error: string }).error).trim();
+    return msg || null;
+  }
+  if (
+    run.result &&
+    typeof run.result === 'object' &&
+    typeof (run.result as { message?: unknown }).message === 'string' &&
+    (statusFrom(run) === 'error' || statusFrom(run) === 'failed')
+  ) {
+    const msg = String((run.result as { message: string }).message).trim();
+    return msg || null;
+  }
+  return null;
+}
+
+export function isActiveSubAgentStripStatus(status: string | null | undefined): boolean {
+  return ACTIVE_STRIP_STATUSES.has(String(status || '').toLowerCase());
 }
 
 /** Collect unique subagent tool runs across turns for the compact strip. */
@@ -67,15 +101,32 @@ export function collectSubAgentRuns(turns: ChatTurn[] | null | undefined): SubAg
         startedAtMs: typeof run.startedAtMs === 'number' ? run.startedAtMs : null,
         plan: run.plan || null,
         tasks: run.tasks || [],
+        error: errorFrom(run),
       });
     }
   }
   return [...byId.values()];
 }
 
+/**
+ * Strip visibility:
+ * - If any run is active → show active only (hide prior completed).
+ * - Else → show non-dismissed completed/error/cancelled.
+ */
+export function visibleSubAgentStripRuns(
+  runs: SubAgentStripItem[] | null | undefined,
+  dismissedIds?: Iterable<string> | null,
+): SubAgentStripItem[] {
+  const list = Array.isArray(runs) ? runs : [];
+  if (!list.length) return [];
+  const dismissed = new Set(
+    [...(dismissedIds || [])].map((id) => String(id)).filter(Boolean),
+  );
+  const active = list.filter((r) => isActiveSubAgentStripStatus(r.status));
+  if (active.length) return active;
+  return list.filter((r) => !dismissed.has(String(r.id)) && !dismissed.has(String(r.runId || '')));
+}
+
 export function activeSubAgentCountFromTurns(turns: ChatTurn[] | null | undefined): number {
-  return collectSubAgentRuns(turns).filter((r) => {
-    const s = String(r.status || '').toLowerCase();
-    return s === 'running' || s === 'paused' || s === 'queued' || s === 'pending';
-  }).length;
+  return collectSubAgentRuns(turns).filter((r) => isActiveSubAgentStripStatus(r.status)).length;
 }

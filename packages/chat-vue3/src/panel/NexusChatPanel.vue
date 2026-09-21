@@ -209,6 +209,7 @@
           @open-run="$emit('subagent-open', $event)"
           @pause-run="$emit('subagent-pause', $event)"
           @cancel-run="$emit('subagent-cancel', $event)"
+          @dismiss-run="onDismissSubAgentRun"
         />
 
         <div ref="messagesEl" class="nexus-chat-panel__messages">
@@ -358,7 +359,7 @@
 </template>
 
 <script>
-import { collectSubAgentRuns, formatTurnSenderLine } from '@nexus/chat-core';
+import { collectSubAgentRuns, visibleSubAgentStripRuns, formatTurnSenderLine } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
 import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
@@ -439,6 +440,7 @@ export default {
       embedUnsubscribe: null,
       subchatDelivery: 'queue',
       billingOpen: false,
+      dismissedSubAgentIds: [],
     };
   },
   computed: {
@@ -446,7 +448,10 @@ export default {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
     },
     subAgentStripRuns() {
-      return collectSubAgentRuns(this.resolvedPanel?.turns || []);
+      return visibleSubAgentStripRuns(
+        collectSubAgentRuns(this.resolvedPanel?.turns || []),
+        this.dismissedSubAgentIds,
+      );
     },
     isSubagentConversation() {
       const panel = this.resolvedPanel || {};
@@ -624,6 +629,9 @@ export default {
     },
   },
   watch: {
+    'resolvedPanel.conversationId'() {
+      this.dismissedSubAgentIds = [];
+    },
     chat: {
       immediate: true,
       handler(chat) {
@@ -649,6 +657,12 @@ export default {
     if (this.embedUnsubscribe) this.embedUnsubscribe();
   },
   methods: {
+    onDismissSubAgentRun(ev) {
+      const id = String(ev?.id || ev?.runId || '').trim();
+      if (!id) return;
+      if (this.dismissedSubAgentIds.includes(id)) return;
+      this.dismissedSubAgentIds = [...this.dismissedSubAgentIds, id];
+    },
     setDraft(value) {
       this.draft = value == null ? '' : String(value);
     },

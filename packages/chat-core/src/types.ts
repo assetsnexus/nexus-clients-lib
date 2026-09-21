@@ -274,7 +274,18 @@ export type ChatHooks = {
     callId: string;
     tool: string;
     approvalId?: string | null;
+    conversationId?: string | null;
   }) => void;
+  /**
+   * Portal/page client tool: model called an injected `anx.page.*` (or mapped) schema.
+   * Host must execute and call `resumeClientTool({ callId, result })`.
+   */
+  onClientToolRequest?: (req: {
+    callId: string;
+    name: string;
+    arguments: Record<string, unknown>;
+    conversationId: string | null;
+  }) => void | Promise<void>;
   onStreamState?: (state: string) => void;
   onUsage?: (usage: ChatUsageSnapshot) => void;
   /** Fired once per `sendMessage` attempt with the terminal outcome code. */

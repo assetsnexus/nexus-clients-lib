@@ -75,4 +75,6 @@ export type SubAgentStripItem = {
   startedAtMs?: number | null;
   plan?: AgentRunPlan | null;
   tasks?: AgentRunTask[];
+  /** Failure message for error/failed runs (strip body, not just chip). */
+  error?: string | null;
 };

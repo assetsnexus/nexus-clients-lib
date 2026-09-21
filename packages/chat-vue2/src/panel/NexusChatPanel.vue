@@ -29,6 +29,7 @@
           <div class="nexus-chat-panel__avatar" aria-hidden="true">
             <img
               v-if="contactAvatarUrl && !avatarImgFailed"
+              :key="avatarImgKey"
               :src="contactAvatarUrl"
               alt=""
               @error="avatarImgFailed = true"
@@ -74,7 +75,22 @@
         >
           {{ sidebarOpen ? '◫' : '◻' }}
         </button>
-        <button type="button" class="nexus-btn-link" @click="$emit('toggle-collapse')">
+        <button
+          v-if="showSplitButton"
+          type="button"
+          class="nexus-btn-link nexus-btn-link--split"
+          :class="{ 'is-active': windowMode === 'split' }"
+          :title="splitButtonTitle"
+          @click="$emit('toggle-split')"
+        >
+          <span class="nexus-split-icon" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="nexus-btn-link"
+          :title="resolvedLabels.minimize || 'Minimize'"
+          @click="$emit('toggle-collapse')"
+        >
           {{ collapsed ? '▴' : '▾' }}
         </button>
         <button type="button" class="nexus-btn-link nexus-btn-link--danger" @click="$emit('close')">
@@ -210,17 +226,22 @@
         </div>
 
         <div class="nexus-chat-panel__meta">
-          <button
-            type="button"
-            class="nexus-chat-panel__meta-btn"
-            :title="resolvedLabels.usageDetails"
-            @click="billingOpen = true"
-          >
-            <span>{{ resolvedLabels.usage }}: {{ usageSummary }}</span>
-            <span v-if="showSpendChrome">
-              {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
-            </span>
-          </button>
+          <div class="nexus-chat-panel__meta-left">
+            <button
+              type="button"
+              class="nexus-chat-panel__meta-btn"
+              :title="resolvedLabels.usageDetails"
+              @click="billingOpen = true"
+            >
+              <span>{{ resolvedLabels.usage }}: {{ usageSummary }}</span>
+              <span v-if="showSpendChrome">
+                {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
+              </span>
+            </button>
+          </div>
+          <div class="nexus-chat-panel__meta-extra">
+            <slot name="meta-extra" :panel="resolvedPanel" />
+          </div>
           <span v-if="modeBadgeVisible" class="nexus-mode-badge">
             <span class="nexus-mode-badge__label">{{ resolvedLabels.mode }}</span>
             <span v-if="modeTransitionState.phase === 'transitioning'" class="nexus-mode-transition">
@@ -311,6 +332,7 @@
           @open-run="$emit('subagent-open', $event)"
           @pause-run="$emit('subagent-pause', $event)"
           @cancel-run="$emit('subagent-cancel', $event)"
+          @dismiss-run="onDismissSubAgentRun"
         />
 
         <div
@@ -456,6 +478,10 @@
           <slot name="data-access" :panel="resolvedPanel" />
         </div>
 
+        <div class="nexus-chat-panel__composer-prefix">
+          <slot name="composer-prefix" :panel="resolvedPanel" />
+        </div>
+
         <div class="nexus-chat-panel__composer">
           <composer-attachment-rail
             :items="railItems"
@@ -541,6 +567,7 @@
 <script>
 import {
   findChatContact,
+  resolveConversationAvatarUrl,
   collectFilesFromClipboard,
   collectFilesFromDataTransfer,
   dataTransferHasFiles,
@@ -551,6 +578,7 @@ import {
   MAX_CHAT_ATTACHMENTS_PER_MESSAGE,
   isUploadAbortError,
   collectSubAgentRuns,
+  visibleSubAgentStripRuns,
   useModeTransition,
   formatModeTransitionCountdown,
   modeLabel,
@@ -625,6 +653,10 @@ export default {
     sidebarOpen: { type: Boolean, default: true },
     /** When false, host provides its own context % / History / Compact cluster in header-actions. */
     showDefaultContextButton: { type: Boolean, default: true },
+    /** Host chrome: split-screen toggle between sidebar collapse and minimize. */
+    showSplitButton: { type: Boolean, default: false },
+    /** @type {'floating'|'split'|'popout'} */
+    windowMode: { type: String, default: 'floating' },
     /** Allow parent floating shell to drag via the header. */
     headerDraggable: { type: Boolean, default: false },
     pendingApprovalsCount: { type: Number, default: 0 },
@@ -675,14 +707,24 @@ export default {
       avatarImgFailed: false,
       subchatDelivery: 'queue',
       billingOpen: false,
+      dismissedSubAgentIds: [],
     };
   },
   computed: {
     resolvedLabels() {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
     },
+    splitButtonTitle() {
+      if (this.windowMode === 'split') {
+        return this.resolvedLabels.exitSplitScreen || 'Exit split screen';
+      }
+      return this.resolvedLabels.splitScreen || 'Split screen';
+    },
     subAgentStripRuns() {
-      return collectSubAgentRuns(this.resolvedPanel?.turns || []);
+      return visibleSubAgentStripRuns(
+        collectSubAgentRuns(this.resolvedPanel?.turns || []),
+        this.dismissedSubAgentIds,
+      );
     },
     isSubagentConversation() {
       const panel = this.resolvedPanel || {};
@@ -754,11 +796,11 @@ export default {
       );
     },
     contactAvatarUrl() {
-      return (
-        (this.contactRecord && this.contactRecord.avatarUrl) ||
-        this.resolvedPanel.avatarUrl ||
-        null
-      );
+      return resolveConversationAvatarUrl(this.contactRecord, this.resolvedPanel);
+    },
+    avatarImgKey() {
+      const contactId = (this.contactRecord && this.contactRecord.id) || this.resolvedPanel.contactId || '';
+      return `${contactId}|${this.contactAvatarUrl || ''}`;
     },
     contactInitials() {
       const name = String(this.contactName || '?').trim();
@@ -983,10 +1025,14 @@ export default {
     contactAvatarUrl() {
       this.avatarImgFailed = false;
     },
+    avatarImgKey() {
+      this.avatarImgFailed = false;
+    },
     collapsed(val) {
       if (!val) this.pinAndScrollMessages();
     },
     'resolvedPanel.conversationId'() {
+      this.dismissedSubAgentIds = [];
       this.pinAndScrollMessages();
     },
     'resolvedPanel.roomId'() {
@@ -1036,6 +1082,12 @@ export default {
     this.revokeAllPreviews();
   },
   methods: {
+    onDismissSubAgentRun(ev) {
+      const id = String(ev?.id || ev?.runId || '').trim();
+      if (!id) return;
+      if (this.dismissedSubAgentIds.includes(id)) return;
+      this.dismissedSubAgentIds = [...this.dismissedSubAgentIds, id];
+    },
     messageListEl() {
       return this.$refs.messagesEl || null;
     },
@@ -1658,9 +1710,17 @@ export default {
 .nexus-chat-panel__sidebar {
   width: 168px;
   flex-shrink: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   border-right: 1px solid #e9ecef;
   background: #fff;
+}
+.nexus-chat-panel__sidebar > :first-child {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 .nexus-sidebar-title {
   padding: 6px 8px;
@@ -1696,6 +1756,7 @@ export default {
 }
 .nexus-sidebar-footer {
   padding: 4px 8px;
+  flex-shrink: 0;
 }
 .nexus-chat-panel__main {
   flex: 1;
@@ -1714,13 +1775,28 @@ export default {
 }
 .nexus-chat-panel__meta {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   padding: 4px 8px;
   border-bottom: 1px solid #e9ecef;
   color: #6c757d;
   font-size: 12px;
+}
+.nexus-chat-panel__meta-left {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.nexus-chat-panel__meta-extra {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .nexus-chat-panel__meta-btn {
   display: inline-flex;
@@ -1859,6 +1935,13 @@ export default {
   overflow-y: auto;
 }
 .nexus-chat-panel__approvals:empty {
+  display: none;
+}
+.nexus-chat-panel__composer-prefix {
+  flex-shrink: 0;
+  min-width: 0;
+}
+.nexus-chat-panel__composer-prefix:empty {
   display: none;
 }
 .nexus-chat-panel__composer {
@@ -2031,6 +2114,37 @@ export default {
 }
 .nexus-btn-link--danger {
   color: #dc3545;
+}
+.nexus-btn-link--split {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: #66615b;
+}
+.nexus-btn-link--split.is-active {
+  color: #51cbce;
+}
+.nexus-split-icon {
+  display: block;
+  width: 12px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  position: relative;
+  box-sizing: border-box;
+}
+.nexus-split-icon::after {
+  content: '';
+  position: absolute;
+  top: -1.5px;
+  bottom: -1.5px;
+  left: 50%;
+  width: 1.5px;
+  background: currentColor;
+  transform: translateX(-50%);
 }
 .nexus-muted {
   color: #6c757d;

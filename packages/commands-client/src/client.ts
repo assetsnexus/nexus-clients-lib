@@ -20,6 +20,12 @@ import {
   noopLogger,
   redactForLog,
 } from './utils.js';
+import {
+  computeRetryDelaysMs,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_RETRY_WINDOW_MS,
+  sleepMs as connectivitySleep,
+} from './connectivity/retry-schedule.js';
 
 export type Transport = {
   request(input: {
@@ -61,22 +67,12 @@ function parseRateLimit(headers: Headers): RateLimitInfo | undefined {
   };
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new NexusError('TIMEOUT', 'Aborted'));
-      return;
-    }
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(t);
-        reject(new NexusError('TIMEOUT', 'Aborted'));
-      },
-      { once: true },
-    );
-  });
+async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  try {
+    await connectivitySleep(ms, signal);
+  } catch {
+    throw new NexusError('TIMEOUT', 'Aborted');
+  }
 }
 
 export class NexusClient {
@@ -105,7 +101,8 @@ export class NexusClient {
     this.transport = opts.transport;
     this.logger = opts.logger || noopLogger;
     this.defaultTimeoutMs = opts.defaultTimeoutMs ?? 30_000;
-    this.maxRetries = opts.maxRetries ?? 2;
+    // maxRetries = extra attempts after the first → total attempts = maxRetries + 1 (default 3).
+    this.maxRetries = opts.maxRetries ?? DEFAULT_MAX_ATTEMPTS - 1;
     this.docsBaseUrl = opts.docsBaseUrl;
     this.grant = new GrantNamespace(this);
     this.subscriptions = new SubscriptionsNamespace(this);
@@ -375,6 +372,12 @@ export class NexusClient {
 
     let attempt = 0;
     let lastErr: unknown;
+    // Spread retries over ~10s (3 attempts → ~3.3s gaps), not 200ms bursts.
+    const retryDelays = computeRetryDelaysMs({
+      maxAttempts: this.maxRetries + 1,
+      windowMs: DEFAULT_RETRY_WINDOW_MS,
+      jitterFactor: 0.1,
+    });
     while (attempt <= this.maxRetries) {
       attempt += 1;
       const controller = new AbortController();
@@ -421,7 +424,8 @@ export class NexusClient {
         }
 
         if (result.status >= 500 && attempt <= this.maxRetries) {
-          await sleep(2 ** (attempt - 1) * 200, signal);
+          const delay = retryDelays[attempt - 1] ?? retryDelays[retryDelays.length - 1] ?? 3_333;
+          await sleep(delay, signal);
           continue;
         }
 
@@ -432,13 +436,15 @@ export class NexusClient {
         lastErr = err;
         if (err instanceof NexusError && !err.retryable) throw err;
         if (attempt > this.maxRetries) break;
-        await sleep(2 ** (attempt - 1) * 200, options.signal);
+        const delay = retryDelays[attempt - 1] ?? retryDelays[retryDelays.length - 1] ?? 3_333;
+        await sleep(delay, options.signal);
       }
     }
 
     this.consecutiveFailures += 1;
+    // Soft circuit: brief pause after repeated total failures (does not block overlay UX).
     if (this.consecutiveFailures >= 5) {
-      this.circuitOpenUntil = Date.now() + 15_000;
+      this.circuitOpenUntil = Date.now() + 5_000;
     }
     if (lastErr instanceof NexusError) throw lastErr;
     throw new NexusError(

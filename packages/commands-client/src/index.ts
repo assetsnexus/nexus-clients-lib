@@ -71,3 +71,20 @@ export {
   redactForLog,
   type Logger,
 } from './utils.js';
+export {
+  isTransportDisconnect,
+  isTransportDisconnectFromAxios,
+  SHORT_TIMEOUT_DISCONNECT_MS,
+  computeRetryDelaysMs,
+  sleepMs,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_RETRY_WINDOW_MS,
+  CommandConnectivityController,
+  formatConnectivityTooltip,
+  type TransportDisconnectInput,
+  type RetryScheduleOptions,
+  type CommandConnectivityOptions,
+  type ConnectivitySnapshot,
+  type ConnectivityState,
+  type WrapOptions,
+} from './connectivity/index.js';
