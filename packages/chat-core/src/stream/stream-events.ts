@@ -23,6 +23,66 @@ function isToolish(type: string): boolean {
   );
 }
 
+function eventCallId(ev: StreamEvent): string | null {
+  if (!ev.data || typeof ev.data !== 'object') return null;
+  const id = (ev.data as { callId?: unknown }).callId;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * Tool events / pause markers for a call that already lives in an earlier turn
+ * (resume, server-side data-access retry) must update that turn's row instead of
+ * adding a duplicate row to the new streaming turn.
+ */
+function owningTurnIndex(turns: ChatTurn[], assistantTurnId: string, ev: StreamEvent): number {
+  const ownIdx = turns.findIndex((t) => t.id === assistantTurnId);
+  if (!isToolish(ev.type) && ev.type !== 'paused') return ownIdx;
+  const callId = eventCallId(ev);
+  if (!callId) return ownIdx;
+  if (ownIdx >= 0 && (turns[ownIdx].toolEvents || []).some((r) => r.id === callId)) return ownIdx;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (i === ownIdx) continue;
+    if ((turns[i].toolEvents || []).some((r) => r.id === callId)) return i;
+  }
+  return ownIdx;
+}
+
+/**
+ * Patch only the addressed row of an earlier turn. Earlier turns may be rehydrated
+ * from history (rows without rawToolStream), so re-merging the raw stream would drop rows.
+ */
+function patchForeignTurnRow(turn: ChatTurn, ev: StreamEvent): ChatTurn {
+  const callId = eventCallId(ev);
+  const rows = turn.toolEvents || [];
+  const existing = rows.find((r) => r.id === callId);
+  if (!callId || !existing) return turn;
+  const event: ToolStreamEvent =
+    ev.type === 'paused'
+      ? {
+          type: 'tool_result',
+          data: {
+            callId,
+            status: 'paused',
+            name: existing.tool,
+            ...((ev.data as { reason?: string }).reason
+              ? { reason: (ev.data as { reason?: string }).reason }
+              : {}),
+          },
+        }
+      : ({ type: ev.type, data: ev.data } as ToolStreamEvent);
+  const [patched] = mergeToolStreamEvents([event], [existing]);
+  return {
+    ...turn,
+    toolEvents: rows.map((r) => (r.id === callId && patched ? patched : r)),
+  };
+}
+
+/** A streaming assistant turn that received nothing renderable. */
+export function isEmptyAssistantTurn(turn: ChatTurn | undefined): boolean {
+  if (!turn || turn.role !== 'assistant') return false;
+  return !(turn.text || '').trim() && !(turn.toolEvents || []).length;
+}
+
 /**
  * Apply one stream event onto the assistant turn (tokens, tools, usage, compaction, pause).
  */
@@ -31,10 +91,15 @@ export function applyStreamEventToTurns(
   assistantTurnId: string,
   ev: StreamEvent,
 ): ChatTurn[] {
-  const idx = turns.findIndex((t) => t.id === assistantTurnId);
+  const idx = owningTurnIndex(turns, assistantTurnId, ev);
   if (idx < 0) return turns;
   const turn = { ...turns[idx] };
   const next = [...turns];
+
+  if (turns[idx].id !== assistantTurnId) {
+    next[idx] = patchForeignTurnRow(turn, ev);
+    return next;
+  }
 
   if (ev.type === 'token') {
     const text =
@@ -129,6 +194,16 @@ export function applyStreamEventToTurns(
       turn.text = `${turn.text || ''}\n[Error: ${msg}]`;
     } else if (!(turn.text || '').trim()) {
       turn.text = '';
+    }
+  } else if (ev.type === 'assistant_final') {
+    // Non-streamed continuations (async follow-ups, data-access retry) publish the
+    // whole answer at once; streamed turns already hold it via tokens.
+    const content =
+      ev.data && typeof ev.data === 'object'
+        ? (ev.data as { content?: unknown }).content
+        : undefined;
+    if (typeof content === 'string' && content.trim() && !(turn.text || '').trim()) {
+      turn.text = content;
     }
   } else if (ev.type === 'activity') {
     // Session/panel-level; hosts patch session list via subscribeConversationActivity.

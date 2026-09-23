@@ -78,6 +78,10 @@ function approvalIdFrom(data: ToolResultPayload): string | null {
   if (result && typeof result === 'object') {
     const id = (result as { approvalId?: unknown }).approvalId;
     if (typeof id === 'string' && id) return id;
+    const grantId = (result as { grantId?: unknown }).grantId;
+    if (typeof grantId === 'string' && grantId) return grantId;
+    const details = (result as { details?: { grantId?: unknown } }).details;
+    if (details && typeof details.grantId === 'string' && details.grantId) return details.grantId;
   }
   return null;
 }
@@ -170,8 +174,12 @@ function pickRunMeta(d: Record<string, unknown>): Partial<ChatToolRun> {
 }
 
 /** Merge raw stream tool events into callId-keyed runs. */
-export function mergeToolStreamEvents(events: ToolStreamEvent[]): ChatToolRun[] {
+export function mergeToolStreamEvents(
+  events: ToolStreamEvent[],
+  seed: ChatToolRun[] = [],
+): ChatToolRun[] {
   const byId = new Map<string, ChatToolRun>();
+  for (const run of seed) byId.set(run.id, { ...run });
 
   for (const ev of events) {
     if (!ev?.type) continue;

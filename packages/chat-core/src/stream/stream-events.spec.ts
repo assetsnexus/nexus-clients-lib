@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyStreamEventToTurns, parseStreamMessage } from './stream-events.js';
+import { applyStreamEventToTurns, isEmptyAssistantTurn, parseStreamMessage } from './stream-events.js';
 import { mergeToolStreamEvents, rehydrateToolRunsFromHistory, patchToolRunStatus } from './tool-events.js';
 import type { ChatTurn } from '../state.js';
 
@@ -177,5 +177,76 @@ describe('tool-events', () => {
     ]);
     const patched = patchToolRunStatus(runs, 'c1', { status: 'approved', approvalRequired: false });
     expect(patched[0].status).toBe('approved');
+  });
+
+  describe('continuation events for calls owned by an earlier turn', () => {
+    const rehydrated = (): ChatTurn[] => [
+      { id: 'u1', role: 'user', text: 'read it' },
+      {
+        id: 'a1',
+        role: 'assistant',
+        text: 'Needs approval',
+        // Rehydrated from history: rows without rawToolStream.
+        toolEvents: [
+          { id: 'other', tool: 'search', label: 'search', status: 'success', args: {} },
+          {
+            id: 'c1',
+            tool: 'anx_command',
+            label: 'anx_command',
+            status: 'needs_approval',
+            args: { command: 'anx.crm.lead.get' },
+          },
+        ],
+      },
+      { id: 'a_resume', role: 'assistant', text: '', toolEvents: [], rawToolStream: [] },
+    ];
+
+    it('patches the original row in place instead of duplicating it on the resume turn', () => {
+      const turns = applyStreamEventToTurns(rehydrated(), 'a_resume', {
+        type: 'tool_result',
+        data: { callId: 'c1', name: 'anx_command', status: 'reverted', result: { approved: false } },
+      });
+      expect(turns[1].toolEvents).toHaveLength(2);
+      expect(turns[1].toolEvents?.[0].id).toBe('other');
+      expect(turns[1].toolEvents?.[1]).toMatchObject({
+        id: 'c1',
+        status: 'reverted',
+        args: { command: 'anx.crm.lead.get' },
+      });
+      expect(turns[2].toolEvents).toEqual([]);
+      expect(isEmptyAssistantTurn(turns[2])).toBe(true);
+    });
+
+    it('marks an earlier-turn row paused without touching the resume turn', () => {
+      const turns = applyStreamEventToTurns(rehydrated(), 'a_resume', {
+        type: 'paused',
+        data: { callId: 'c1' },
+      });
+      expect(turns[1].toolEvents?.[1].status).toBe('paused');
+      expect(turns[2].toolEvents).toEqual([]);
+    });
+
+    it('still adds new calls to the streaming turn', () => {
+      const turns = applyStreamEventToTurns(rehydrated(), 'a_resume', {
+        type: 'tool_result',
+        data: { callId: 'new', name: 'search', status: 'success', result: {} },
+      });
+      expect(turns[2].toolEvents?.map((r) => r.id)).toEqual(['new']);
+      expect(turns[1].toolEvents).toHaveLength(2);
+    });
+  });
+
+  it('assistant_final fills a non-streamed continuation but never duplicates streamed text', () => {
+    let turns: ChatTurn[] = [{ id: 'a1', role: 'assistant', text: '', toolEvents: [] }];
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'assistant_final',
+      data: { content: 'Here is the lead.' },
+    });
+    expect(turns[0].text).toBe('Here is the lead.');
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'assistant_final',
+      data: { content: 'Here is the lead.' },
+    });
+    expect(turns[0].text).toBe('Here is the lead.');
   });
 });

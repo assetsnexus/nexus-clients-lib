@@ -25,7 +25,16 @@ import type {
 } from './types.js';
 import { DEFAULT_FEATURES } from './types.js';
 import { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
-import { parseStreamMessage, applyStreamEventToTurns } from './stream/stream-events.js';
+import {
+  parseStreamMessage,
+  applyStreamEventToTurns,
+  isEmptyAssistantTurn,
+} from './stream/stream-events.js';
+import {
+  dataAccessApprovalInfoFrom,
+  type DataAccessApprovalInfo,
+} from './stream/data-access-approval.js';
+import { collapseRepeatedToolRows } from './stream/rehydrate-collapse.js';
 import { classifyChatBillingIssue } from './billing/classify-billing-issue.js';
 import {
   rehydrateToolRunsFromHistory,
@@ -116,6 +125,16 @@ export type { ChatPickerModelFields, ReasoningEffortLevel } from './model-capabi
 export { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 export { parseStreamMessage, applyStreamEventToTurns } from './stream/stream-events.js';
 export type { StreamEvent } from './stream/stream-events.js';
+export { isEmptyAssistantTurn } from './stream/stream-events.js';
+export {
+  collapseRepeatedToolRows,
+  isToolOnlyPlaceholderText,
+} from './stream/rehydrate-collapse.js';
+export {
+  dataAccessApprovalInfoFrom,
+  isDataAccessApprovalResult,
+  type DataAccessApprovalInfo,
+} from './stream/data-access-approval.js';
 export {
   classifyChatBillingIssue,
   isChatBillingIssueCode,
@@ -1188,6 +1207,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     closeSocket();
   };
 
+  // The backend emits both a needs_approval tool_result and a data_access_approval_request
+  // for one pause; a re-prompt always carries a fresh grantId, so it is never suppressed.
+  let lastDataAccessApprovalKey: string | null = null;
+  const emitDataAccessApprovalOnce = (info: DataAccessApprovalInfo) => {
+    const key = info.callId && info.grantId ? `${info.callId}:${info.grantId}` : null;
+    if (key && key === lastDataAccessApprovalKey) return;
+    lastDataAccessApprovalKey = key;
+    opts.hooks?.onDataAccessApproval?.(info);
+  };
+
   const streamInit = async (initOpts: {
     conversationId?: string;
     contactId?: string;
@@ -1898,7 +1927,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(senderName ? { senderName } : {}),
         };
       });
-      syncMessagesFromTurns(turns);
+      syncMessagesFromTurns(collapseRepeatedToolRows(turns));
       if (rehydrateOpts && Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId')) {
         const conversationId =
           typeof rehydrateOpts.conversationId === 'string' && rehydrateOpts.conversationId.trim()
@@ -2003,6 +2032,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
          * Inference tags these as page_context.
          */
         injectedSystemPrompts?: string[];
+        /** Structured page entity for anx.* idParam fill (cluster, blueprint, …). */
+        pageEntityRef?: {
+          type: string;
+          id?: string | null;
+          name?: string | null;
+          saved?: boolean;
+        };
         /** @deprecated Prefer understand tool; kept for OAuth copilots. */
         pageInstructions?: string;
         /** @deprecated Prefer understand tool; never dump large form state. */
@@ -2210,6 +2246,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                     });
                     finishPausedTurn();
                   }
+                  if (
+                    toolResult &&
+                    typeof toolResult === 'object' &&
+                    (toolResult as { needsApproval?: unknown }).needsApproval === true &&
+                    ((toolResult as { approvalKind?: unknown }).approvalKind === 'data_access' ||
+                      (toolResult as { status?: unknown }).status ===
+                        'data_access_approval_required')
+                  ) {
+                    emitDataAccessApprovalOnce(
+                      dataAccessApprovalInfoFrom(toolResult, run?.id ?? null),
+                    );
+                    finishPausedTurn();
+                  }
                 }
                 if (parsed.type === 'permission_elevation_request') {
                   const elev =
@@ -2264,6 +2313,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                           ? elev.conversationId
                           : null,
                   });
+                  finishPausedTurn();
+                }
+                if (parsed.type === 'data_access_approval_request') {
+                  emitDataAccessApprovalOnce(dataAccessApprovalInfoFrom(parsed.data));
                   finishPausedTurn();
                 }
                 let clientToolPause = false;
@@ -2362,6 +2415,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.currentPagePath ? { currentPagePath: sendOpts.currentPagePath } : {}),
           ...(sendOpts.injectedSystemPrompts?.length
             ? { injectedSystemPrompts: sendOpts.injectedSystemPrompts }
+            : {}),
+          ...(sendOpts.pageEntityRef?.type
+            ? { pageEntityRef: sendOpts.pageEntityRef }
             : {}),
           ...(sendOpts.pageInstructions ? { pageInstructions: sendOpts.pageInstructions } : {}),
           ...(sendOpts.pageData ? { pageData: sendOpts.pageData } : {}),
@@ -2648,6 +2704,24 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                   ).catch((err) => opts.hooks?.onError?.(err));
                 }
               }
+              if (parsed.type === 'data_access_approval_request') {
+                emitDataAccessApprovalOnce(dataAccessApprovalInfoFrom(parsed.data));
+              }
+              if (
+                parsed.type === 'paused' ||
+                parsed.type === 'done' ||
+                parsed.type === 'complete' ||
+                parsed.type === 'finished' ||
+                parsed.type === 'error'
+              ) {
+                // Deny / re-prompt / tool-row-only outcomes land on the original turn;
+                // drop the placeholder resume bubble when nothing reached it.
+                const current = store.getState().turns;
+                const placeholder = current.find((t) => t.id === assistantId);
+                if (isEmptyAssistantTurn(placeholder)) {
+                  syncMessagesFromTurns(current.filter((t) => t.id !== assistantId));
+                }
+              }
               if (parsed.type === 'paused') {
                 if (!clientToolPause && !store.getState().pausedCallId) {
                   store.setState({ streaming: false });
@@ -2703,7 +2777,34 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         })) as SendResult;
 
         if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
-          const failMsg = result.message || 'client-tool resume failed';
+          const fail = result as {
+            message?: string;
+            code?: string;
+            kind?: string;
+            error?: { code?: string; message?: string };
+          };
+          const failMsg = fail.message || fail.error?.message || 'client-tool resume failed';
+          const failCode = fail.code || fail.error?.code || fail.kind || null;
+          const noPending =
+            failCode === 'NO_PENDING_CLIENT_TOOL' ||
+            /no pending client tool/i.test(failMsg);
+          // Expected when approving a data-access grant from a turn that
+          // finished before pause was recorded — host falls back to follow-up.
+          if (noPending) {
+            store.setState({ streaming: false, pausedCallId: null });
+            patchCurrentPanel({ streaming: false });
+            closeSocket();
+            // Drop the empty resume assistant turn we just appended.
+            const withoutEmpty = store
+              .getState()
+              .turns.filter((t) => t.id !== assistantId);
+            syncMessagesFromTurns(withoutEmpty);
+            return {
+              ok: false,
+              code: 'NO_PENDING_CLIENT_TOOL',
+              message: failMsg,
+            };
+          }
           turns = applyStreamEventToTurns(store.getState().turns, assistantId, {
             type: 'error',
             data: { message: failMsg },
@@ -2713,7 +2814,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           patchCurrentPanel({ streaming: false });
           closeSocket();
           opts.hooks?.onError?.(new Error(failMsg));
-          return { ok: false, message: failMsg };
+          return { ok: false, message: failMsg, code: failCode || undefined };
         }
 
         if (!wsConnected) {

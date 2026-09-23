@@ -42,7 +42,7 @@ export function buildTinyPagePointerPrompt(pointer: TinyPagePointer): string {
     lines.push(`Entity: type=${e.type}${idPart}${namePart}${e.saved === false ? ' saved=false' : ''}.`);
     if (e.type === 'cluster') {
       lines.push(
-        'Cluster reads: anx.cluster.get, anx.cluster.infrastructure.history, anx.cluster.get-metrics.',
+        'Cluster capacity (solar / battery / power): call anx.cluster.get-metrics with clusterId above via anx_command. Prefer get-metrics over anx.cluster.get for capacity (get returns full infrastructure). Do not call anx.ai-agents.commands.get-metadata without a non-empty commandNames list.',
       );
     }
     if (e.saved === false) {
