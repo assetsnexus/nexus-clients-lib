@@ -269,6 +269,12 @@ export type ChatHooks = {
     linkedConversationId?: string | null;
     parentConversationId?: string | null;
   }) => void;
+  /**
+   * The idle sub-agent observer saw a new parent generation start (e.g. the
+   * follow-up turn after a background sub-agent settled). Hosts route this to
+   * their live-attach path; without the hook the controller attaches itself.
+   */
+  onObservedGenerationStart?: (info: { conversationId: string }) => void;
   onToolCall?: (name: string, args: unknown) => void;
   onToolApprovalRequired?: (run: {
     callId: string;

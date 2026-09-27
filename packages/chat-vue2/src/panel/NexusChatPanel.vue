@@ -402,6 +402,7 @@
                 @subagent-open="$emit('subagent-open', $event)"
                 @subagent-message="$emit('subagent-message', $event)"
                 @subagent-task-toggle="$emit('subagent-task-toggle', $event)"
+                @subagent-review-approval="$emit('subagent-review-approval', $event)"
               />
               <div
                 v-if="turn.role === 'user' && turn.deliveryStatus"

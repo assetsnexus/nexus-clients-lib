@@ -67,6 +67,22 @@ export type ChatToolRun = {
   plan?: import('./agent-runs/types.js').AgentRunPlan | null;
   tasks?: import('./agent-runs/types.js').AgentRunTask[];
   costLimitMinor?: number | null;
+  /** Live sub-agent phase from progress / run status (`awaiting_approval` = paused on the user). */
+  subAgentPhase?: 'running' | 'awaiting_approval' | 'paused' | null;
+  /** Approval the sub-agent waits on (safe metadata only; drives the in-chat prompt). */
+  subAgentPendingApproval?: SubAgentPendingApproval | null;
+};
+
+export type SubAgentPendingApproval = {
+  approvalKind: 'permission_elevation' | 'sca' | 'data_access' | string;
+  elevationId?: string | null;
+  pack?: string | null;
+  command?: string | null;
+  reason?: string | null;
+  resourceRef?: Record<string, unknown> | null;
+  authRequestId?: string | null;
+  requiredOnboardingType?: string | null;
+  onboardingSatisfied?: boolean;
 };
 
 export type ChatDeliveryStatus = 'sending' | 'sent' | 'failed';

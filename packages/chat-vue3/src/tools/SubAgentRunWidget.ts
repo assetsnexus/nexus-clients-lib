@@ -8,23 +8,71 @@ import type {
   ChatToolRun,
   MessageDelivery,
   SubAgentFinalStatus,
+  SubAgentPendingApproval,
 } from '@nexus/chat-core';
 import { renderChatMarkdown, CHAT_MARKDOWN_ROOT_CLASS } from '../markdown';
 import DeliveryModePicker from './DeliveryModePicker';
 import {
-  engineChipClass,
-  engineIconLabel,
   extractNestedSearchToolRow,
-  httpStatusChipClass,
   isSearchPresetNestedTool,
-  outcomeChipClass,
   pairSubAgentToolEvents,
+  parseToolArguments,
   summaryMarkdownText,
-  type NestedSearchToolRow,
 } from './search-preset-tool-ui';
-import { formatElapsedMs, toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
+import { displayAnxCommandName, formatElapsedMs, resolveToolAccessKind, toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
 
 type SubEvent = { type: string; data?: Record<string, unknown> };
+
+type LiveToolRow = {
+  callId: string;
+  label: string;
+  status: 'running' | 'success' | 'error';
+  hint: string | null;
+  accessKind: 'read' | 'write' | null;
+};
+
+const LIVE_TOOL_LIMIT = 6;
+const LIVE_OUTPUT_CHARS = 480;
+
+function textTail(text: string, maxChars = LIVE_OUTPUT_CHARS): string {
+  const t = String(text || '');
+  if (!t) return '';
+  if (t.length <= maxChars) return t;
+  const slice = t.slice(-maxChars);
+  const nl = slice.indexOf('\n');
+  // Prefer starting on a line boundary when the cut is near the start of the window.
+  return (nl >= 0 && nl < 96 ? slice.slice(nl + 1) : slice).replace(/^\s+/, '');
+}
+
+function shortActivityLabel(name: string, args: Record<string, unknown>): string {
+  const commandish = displayAnxCommandName({ tool: name, args } as ChatToolRun);
+  if (commandish.startsWith('anx.')) {
+    const parts = commandish.split('.');
+    return parts.slice(-2).join('.') || commandish;
+  }
+  if (name.startsWith('anx_')) {
+    const dotted = name.replace(/_/g, '.');
+    const parts = dotted.split('.');
+    return parts.slice(-2).join('.') || dotted;
+  }
+  return truncateLabel(name || 'tool', 28);
+}
+
+function hintFromArgs(args: Record<string, unknown>): string | null {
+  for (const key of ['query', 'q', 'url', 'mission', 'task', 'prompt', 'command']) {
+    const v = args[key];
+    if (typeof v === 'string' && v.trim()) return truncateLabel(v.trim(), 48);
+  }
+  return null;
+}
+
+const APPROVAL_CHIP = { label: 'needs approval', cls: 'is-approval' };
+
+const APPROVAL_KIND_LABEL: Record<string, string> = {
+  permission_elevation: 'Permission needed',
+  sca: 'Confirmation needed',
+  data_access: 'Data access needed',
+};
 
 const STATUS_CHIP: Record<SubAgentFinalStatus, { label: string; cls: string }> = {
   completed: { label: 'done', cls: 'is-success' },
@@ -135,12 +183,30 @@ export const SubAgentRunWidget = {
       return this.typedRun?.subAgentSummary || null;
     },
     isRunning(): boolean {
-      return this.status === 'running' || this.status === 'paused';
+      return this.status === 'running' || this.status === 'paused' || this.awaitingApproval;
+    },
+    awaitingApproval(): boolean {
+      return this.status === 'awaiting_approval';
+    },
+    pendingApproval(): SubAgentPendingApproval | null {
+      return this.awaitingApproval ? this.typedRun?.subAgentPendingApproval || null : null;
+    },
+    approvalTitle(): string {
+      const kind = this.pendingApproval?.approvalKind || 'permission_elevation';
+      return APPROVAL_KIND_LABEL[kind] || 'Approval needed';
+    },
+    approvalDetail(): string {
+      const p = this.pendingApproval;
+      if (!p) return 'The subagent is waiting for your approval to continue.';
+      const target = p.command || p.pack || '';
+      const reason = p.reason ? truncateLabel(p.reason, 140) : '';
+      return [target, reason].filter(Boolean).join(' — ') || 'The subagent is waiting for your approval.';
     },
     isDone(): boolean {
       return !this.isRunning && this.finalStatus != null;
     },
     chipInfo(): { label: string; cls: string } {
+      if (this.awaitingApproval) return APPROVAL_CHIP;
       if (this.status === 'paused') return STATUS_CHIP.paused;
       if (this.status === 'running') return { label: 'running', cls: 'is-running' };
       if (this.finalStatus && STATUS_CHIP[this.finalStatus]) return STATUS_CHIP[this.finalStatus];
@@ -166,26 +232,46 @@ export const SubAgentRunWidget = {
       if (!this.isRunning) return '';
       return formatElapsedMs(this.nowMs - this.startedAtMs);
     },
-    nestedSearchToolRows(): NestedSearchToolRow[] {
-      return pairSubAgentToolEvents(this.toolCalls, this.toolResults)
-        .filter(({ call }) => isSearchPresetNestedTool(String(call.data?.name || '')))
-        .map(({ call, result }) => {
-          const name = String(call.data?.name || '');
-          const row = extractNestedSearchToolRow(
+    /** Compact recent tool activity for the expanded live strip. */
+    liveToolRows(): LiveToolRow[] {
+      const paired = pairSubAgentToolEvents(this.toolCalls, this.toolResults);
+      return paired.slice(-LIVE_TOOL_LIMIT).map(({ call, result }) => {
+        const name = String(call.data?.name || 'tool');
+        const args = parseToolArguments(call.data?.arguments);
+        const err =
+          result?.data?.error != null
+            ? String(result.data.error)
+            : result?.data?.result &&
+                typeof result.data.result === 'object' &&
+                (result.data.result as { error?: unknown }).error != null
+              ? String((result.data.result as { error: unknown }).error)
+              : null;
+        const status: LiveToolRow['status'] = !result
+          ? 'running'
+          : err
+            ? 'error'
+            : 'success';
+        let hint = hintFromArgs(args);
+        if (isSearchPresetNestedTool(name)) {
+          const searchRow = extractNestedSearchToolRow(
             name,
             call.data?.arguments,
             result?.data?.result,
             Boolean(result),
           );
-          row.callId = String(call.data?.callId || name);
-          return row;
-        });
+          hint = searchRow.hint || searchRow.blockedReason || hint;
+        }
+        return {
+          callId: String(call.data?.callId || name),
+          label: shortActivityLabel(name, args),
+          status,
+          hint,
+          accessKind: resolveToolAccessKind({ tool: name, args } as ChatToolRun),
+        };
+      });
     },
-    otherRecentTools(): string[] {
-      const names = this.toolCalls
-        .map((ev) => String(ev.data?.name || '').trim())
-        .filter((name) => name && !isSearchPresetNestedTool(name));
-      return names.slice(-4);
+    liveOutputTail(): string {
+      return textTail(this.subAgentText || '');
     },
     summaryText(): string {
       return summaryMarkdownText(this.summary);
@@ -202,7 +288,7 @@ export const SubAgentRunWidget = {
   mounted() {
     this.syncElapsedTimer(this.isRunning);
   },
-  beforeUnmount() {
+  beforeDestroy() {
     this.clearElapsedTimer();
   },
   methods: {
@@ -219,6 +305,18 @@ export const SubAgentRunWidget = {
       this._elapsedTimer = setInterval(() => {
         this.nowMs = Date.now();
       }, 1000);
+    },
+    emitReviewApproval(ev?: Event) {
+      if (ev) {
+        ev.stopPropagation?.();
+        ev.preventDefault?.();
+      }
+      this.$emit('review-approval', {
+        runId: this.resolvedRunId,
+        linkedConversationId: this.resolvedLinkedId,
+        parentCallId: this.parentCallId,
+        pendingApproval: this.pendingApproval,
+      });
     },
     emitPause() {
       this.$emit('pause', { runId: this.resolvedRunId || this.parentCallId });
@@ -257,7 +355,30 @@ export const SubAgentRunWidget = {
     },
   },
   render(h: any) {
-    const ring = this.isRunning && this.status !== 'paused' ? progressRingAttrs(28) : null;
+    const ring =
+      this.isRunning && this.status !== 'paused' && !this.awaitingApproval ? progressRingAttrs(28) : null;
+
+    const reviewBtn = this.awaitingApproval
+      ? h(
+          'button',
+          {
+            class: 'nexus-tool-run__btn nexus-tool-run__btn--ok nexus-sub-agent__review-btn',
+            attrs: { type: 'button', title: 'Review what the subagent needs approval for' },
+            on: { click: (ev: Event) => this.emitReviewApproval(ev) },
+          },
+          'Review',
+        )
+      : null;
+
+    const approvalBlock = this.awaitingApproval
+      ? h('div', { class: 'nexus-sub-agent__approval', attrs: { role: 'status' } }, [
+          h('div', { class: 'nexus-sub-agent__approval-text' }, [
+            h('div', { class: 'nexus-tool-run__kicker' }, this.approvalTitle),
+            h('div', { class: 'nexus-sub-agent__muted' }, this.approvalDetail),
+          ]),
+          reviewBtn,
+        ])
+      : null;
 
     const openBtn = this.canOpenChat
       ? h(
@@ -275,7 +396,7 @@ export const SubAgentRunWidget = {
 
     const controls = h('div', { class: 'nexus-sub-agent__controls' }, [
       openBtn,
-      this.isRunning && this.canPause
+      this.isRunning && this.canPause && !this.awaitingApproval
         ? h(
             'button',
             {
@@ -357,10 +478,25 @@ export const SubAgentRunWidget = {
     const messageBox =
       this.showMessageBox && this.isRunning
         ? h('div', { class: 'nexus-sub-agent__message' }, [
-            h(DeliveryModePicker, {
-              props: { value: this.delivery, compact: true },
-              on: { input: (v: MessageDelivery) => (this.delivery = v) },
-            }),
+            h('div', { class: 'nexus-sub-agent__delivery-row' }, [
+              h(DeliveryModePicker, {
+                props: { value: this.delivery, compact: true },
+                on: { input: (v: MessageDelivery) => (this.delivery = v) },
+              }),
+              this.canOpenChat
+                ? h(
+                    'button',
+                    {
+                      class: 'nexus-tool-run__btn nexus-tool-run__btn--ok',
+                      attrs: { type: 'button', title: 'Open subagent conversation' },
+                      on: {
+                        click: (ev: Event) => this.emitOpen(ev),
+                      },
+                    },
+                    'View chat',
+                  )
+                : null,
+            ]),
             h('div', { class: 'nexus-sub-agent__compose' }, [
               h('input', {
                 class: 'nexus-sub-agent__input',
@@ -485,6 +621,7 @@ export const SubAgentRunWidget = {
               truncateLabel(this.currentTool, 24),
             )
           : null,
+        !this.open ? reviewBtn : null,
         !this.open ? openBtn : null,
         h(
           'span',
@@ -494,74 +631,69 @@ export const SubAgentRunWidget = {
       ],
     );
 
-    const nestedToolsBlock =
-      this.nestedSearchToolRows.length
+    const liveBlock =
+      this.liveToolRows.length || this.liveOutputTail
         ? h(
             'div',
-            { class: 'nexus-sub-agent__tool-rows', attrs: { 'aria-label': 'Search tool calls' } },
-            this.nestedSearchToolRows.map((row: NestedSearchToolRow) =>
-              h('div', { key: row.callId, class: 'nexus-sub-agent__tool-row' }, [
-                h(
-                  'span',
-                  {
-                    class: ['nexus-sub-agent__engine-icon', engineChipClass(row.engineId)],
-                    attrs: { title: row.engineId || 'engine', 'aria-hidden': 'true' },
-                  },
-                  engineIconLabel(row.engineId),
-                ),
-                h('span', { class: 'nexus-sub-agent__tool-name' }, row.shortName),
-                row.engineId && row.engineId !== 'fetch' && row.engineId !== 'marketplace'
-                  ? h('span', { class: 'nexus-sub-agent__engine-id' }, row.engineId)
-                  : null,
-                row.hint
-                  ? h(
-                      'span',
-                      { class: 'nexus-sub-agent__tool-hint', attrs: { title: row.hint } },
-                      row.hint,
-                    )
-                  : null,
-                row.httpStatus != null
-                  ? h(
-                      'span',
-                      {
-                        class: [
-                          'nexus-tool-run__chip',
-                          'nexus-sub-agent__http',
-                          httpStatusChipClass(row.httpStatus),
-                        ],
-                      },
-                      String(row.httpStatus),
-                    )
-                  : row.status === 'running'
-                    ? h('span', { class: ['nexus-tool-run__chip', 'is-running'] }, '…')
-                    : null,
-                row.outcome || row.blockedReason
-                  ? h(
-                      'span',
-                      {
-                        class: [
-                          'nexus-tool-run__chip',
-                          'nexus-sub-agent__outcome',
-                          outcomeChipClass(row.outcome, row.blockedReason),
-                        ],
-                        attrs: row.blockedReason ? { title: row.blockedReason } : undefined,
-                      },
-                      row.blockedReason || row.outcome,
-                    )
-                  : null,
-              ]),
-            ),
-          )
-        : null;
-
-    const toolTrail =
-      this.otherRecentTools.length
-        ? h(
-            'div',
-            { class: 'nexus-sub-agent__trail' },
-            this.otherRecentTools.map((name: string, i: number) =>
-              h('span', { key: `${name}-${i}`, class: 'nexus-sub-agent__trail-chip' }, name),
-            ),
+            {
+              class: 'nexus-sub-agent__live',
+              attrs: { 'aria-label': 'Subagent live activity', 'aria-live': 'polite' },
+            },
+            [
+              this.liveToolRows.length
+                ? h(
+                    'div',
+                    { class: 'nexus-sub-agent__live-tools' },
+                    this.liveToolRows.map((row: LiveToolRow) =>
+                      h('div', { key: row.callId, class: 'nexus-sub-agent__live-row' }, [
+                        h('span', {
+                          class: ['nexus-tool-run__dot', toolStatusClass(row.status)],
+                          attrs: { 'aria-hidden': 'true' },
+                        }),
+                        h(
+                          'span',
+                          {
+                            class: [
+                              'nexus-sub-agent__live-label',
+                              row.accessKind === 'write' ? 'nexus-sub-agent__live-label--write' : '',
+                            ],
+                            attrs: { title: row.label },
+                          },
+                          row.label,
+                        ),
+                        row.hint
+                          ? h(
+                              'span',
+                              {
+                                class: 'nexus-sub-agent__live-hint',
+                                attrs: { title: row.hint },
+                              },
+                              row.hint,
+                            )
+                          : null,
+                        h(
+                          'span',
+                          { class: ['nexus-tool-run__chip', toolStatusClass(row.status)] },
+                          toolStatusLabel(row.status),
+                        ),
+                      ]),
+                    ),
+                  )
+                : null,
+              this.liveOutputTail
+                ? h(
+                    'div',
+                    {
+                      class: [
+                        'nexus-sub-agent__live-out',
+                        this.isRunning ? 'nexus-sub-agent__live-out--streaming' : '',
+                      ],
+                      attrs: { title: 'Recent reasoning / output' },
+                    },
+                    this.liveOutputTail,
+                  )
+                : null,
+            ],
           )
         : null;
 
@@ -582,21 +714,11 @@ export const SubAgentRunWidget = {
             attrs: { role: 'region', 'aria-label': 'Subagent details' },
           },
           [
+            approvalBlock,
             controls,
+            liveBlock,
             planBlock,
             tasksBlock,
-            nestedToolsBlock,
-            toolTrail,
-            this.subAgentText
-              ? h(
-                  'div',
-                  {
-                    class: 'nexus-sub-agent__answer',
-                    attrs: { 'aria-live': 'polite' },
-                  },
-                  this.subAgentText.slice(0, 2000),
-                )
-              : null,
             summaryBlock,
             this.canViewToolDetails && this.summary && !this.summaryText
               ? h('div', { class: 'nexus-sub-agent__details' }, [

@@ -1,4 +1,9 @@
-import type { ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus } from '../state.js';
+import type {
+  ChatToolRun,
+  ChatToolRunStatus,
+  SubAgentFinalStatus,
+  SubAgentPendingApproval,
+} from '../state.js';
 
 export type ToolStreamEvent = { type: string; data?: unknown };
 
@@ -63,6 +68,21 @@ function parseArgs(raw: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+/** Pull anx.* command from tool_result payload / resume metadata. */
+function commandFromToolPayload(result: unknown): string {
+  if (!result || typeof result !== 'object') return '';
+  const r = result as Record<string, unknown>;
+  if (typeof r.command === 'string' && r.command.trim().startsWith('anx.')) {
+    return r.command.trim();
+  }
+  const resume = r.resume;
+  if (resume && typeof resume === 'object') {
+    const c = (resume as { command?: unknown }).command;
+    if (typeof c === 'string' && c.trim().startsWith('anx.')) return c.trim();
+  }
+  return '';
 }
 
 function approvalFromResult(result: unknown, data: ToolResultPayload): boolean {
@@ -173,6 +193,80 @@ function pickRunMeta(d: Record<string, unknown>): Partial<ChatToolRun> {
   };
 }
 
+function subAgentRunIdOf(d: Record<string, unknown>): string | null {
+  if (typeof d.subAgentRunId === 'string' && d.subAgentRunId) return d.subAgentRunId;
+  if (typeof d.runId === 'string' && d.runId) return d.runId;
+  return null;
+}
+
+/** The `run_sub_agent` row an AgentRun belongs to (engine events carry only the run id). */
+function findSubAgentOwnerId(byId: Map<string, ChatToolRun>, runId: string | null): string | null {
+  if (!runId) return null;
+  for (const [id, row] of byId) {
+    if (row.subAgentRunId === runId && (row.tool === 'run_sub_agent' || row.kind === 'sub_agent')) {
+      return id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Tool calls made *by* a sub-agent render inside its widget (from the raw
+ * stream), never as top-level rows — otherwise every child call became its
+ * own empty "Subagent" card.
+ */
+function isNestedSubAgentToolEvent(d: Record<string, unknown>, name: string): boolean {
+  if (name === 'run_sub_agent' || d.topLevel === true) return false;
+  return Boolean(d.parentCallId) || Boolean(subAgentRunIdOf(d));
+}
+
+function resolveSubAgentRowId(byId: Map<string, ChatToolRun>, d: Record<string, unknown>): string {
+  const own = String(d.callId || d.id || '').trim();
+  if (own && byId.has(own)) return own;
+  const parent = typeof d.parentCallId === 'string' ? d.parentCallId.trim() : '';
+  if (parent && byId.has(parent)) return parent;
+  return findSubAgentOwnerId(byId, subAgentRunIdOf(d)) || own || parent;
+}
+
+/** Safe approval metadata from a sub-agent progress / activity payload. */
+export function pendingApprovalFromPayload(
+  d: Record<string, unknown>,
+): SubAgentPendingApproval | null {
+  if (d.status !== 'awaiting_approval') return null;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const approvalKind = str(d.approvalKind) || (d.elevationId ? 'permission_elevation' : null);
+  if (!approvalKind && !d.elevationId && !d.authRequestId) return null;
+  return {
+    approvalKind: approvalKind || 'permission_elevation',
+    elevationId: d.elevationId != null ? String(d.elevationId) : null,
+    pack: str(d.pack),
+    command: str(d.command),
+    reason: str(d.reason),
+    resourceRef:
+      d.resourceRef && typeof d.resourceRef === 'object'
+        ? (d.resourceRef as Record<string, unknown>)
+        : null,
+    authRequestId: str(d.authRequestId),
+    requiredOnboardingType: str(d.requiredOnboardingType),
+    ...(typeof d.onboardingSatisfied === 'boolean'
+      ? { onboardingSatisfied: d.onboardingSatisfied }
+      : {}),
+  };
+}
+
+function applySubAgentPhase(row: ChatToolRun, d: Record<string, unknown>): void {
+  if (d.status === 'awaiting_approval') {
+    row.subAgentPhase = 'awaiting_approval';
+    const pending = pendingApprovalFromPayload(d);
+    if (pending) row.subAgentPendingApproval = pending;
+  } else if (d.status === 'paused') {
+    row.subAgentPhase = 'paused';
+  } else if (d.status === 'running' || d.status == null) {
+    row.subAgentPhase = 'running';
+    row.subAgentPendingApproval = null;
+  }
+}
+
 /** Merge raw stream tool events into callId-keyed runs. */
 export function mergeToolStreamEvents(
   events: ToolStreamEvent[],
@@ -187,14 +281,23 @@ export function mergeToolStreamEvents(
     if (ev.type === 'tool_call' || ev.type === 'sub_agent_tool_call') {
       const d = (ev.data || {}) as ToolCallPayload & Record<string, unknown>;
       const name = String(d.name || d.tool || 'tool');
+      if (ev.type === 'sub_agent_tool_call' && isNestedSubAgentToolEvent(d, name)) continue;
       const callId = String(d.callId || d.id || '').trim() || `call-${byId.size}-${name}`;
       const meta = pickRunMeta(d as Record<string, unknown>);
+      const args = parseArgs(d.arguments);
+      if (
+        typeof d.command === 'string' &&
+        d.command.trim().startsWith('anx.') &&
+        typeof args.command !== 'string'
+      ) {
+        args.command = d.command.trim();
+      }
       byId.set(callId, {
         id: callId,
         tool: name,
         label: name,
         status: 'running',
-        args: parseArgs(d.arguments),
+        args,
         round: d.round,
         approvalRequired: !!d.approvalRequired,
         approvalId: d.approvalId || null,
@@ -208,6 +311,12 @@ export function mergeToolStreamEvents(
 
     if (ev.type === 'tool_result' || ev.type === 'sub_agent_tool_result') {
       const d = (ev.data || {}) as ToolResultPayload & Record<string, unknown>;
+      if (
+        ev.type === 'sub_agent_tool_result' &&
+        isNestedSubAgentToolEvent(d, String(d.name || d.tool || ''))
+      ) {
+        continue;
+      }
       const callId = String(d.callId || d.id || '').trim() || `call-${byId.size}-tool`;
       const existing = byId.get(callId);
       const incomingName =
@@ -219,12 +328,23 @@ export function mergeToolStreamEvents(
       const status = statusFromToolResult(d, existing);
       const approvalRequired = status === 'needs_approval' || approvalFromResult(d.result, d);
       const meta = pickRunMeta(d as Record<string, unknown>);
+      // Promote a denormalized `command` onto args so chip labels work when the
+      // tool_call args were redacted (or never arrived / not persisted).
+      const existingArgs = { ...(existing?.args || {}) };
+      const commandFromResult = commandFromToolPayload(d.result);
+      const promotedCommand =
+        (typeof d.command === 'string' && d.command.trim().startsWith('anx.')
+          ? d.command.trim()
+          : '') || commandFromResult;
+      if (promotedCommand && typeof existingArgs.command !== 'string') {
+        existingArgs.command = promotedCommand;
+      }
       const patch: ChatToolRun = {
         id: callId,
         tool: name,
         label: existing?.label && !incomingName ? existing.label : name,
         status,
-        args: existing?.args || {},
+        args: existingArgs,
         result: d.result !== undefined ? d.result : existing?.result,
         error: formatError(d.error) ?? existing?.error ?? null,
         round: d.round ?? existing?.round,
@@ -237,7 +357,7 @@ export function mergeToolStreamEvents(
             : 'tool',
         ...meta,
       };
-      byId.set(callId, existing ? { ...existing, ...patch, args: existing.args } : patch);
+      byId.set(callId, existing ? { ...existing, ...patch, args: existingArgs } : patch);
       continue;
     }
 
@@ -247,7 +367,7 @@ export function mergeToolStreamEvents(
         tokensUsed?: number;
         currentTool?: string;
       } & Record<string, unknown>;
-      const callId = String(d.callId || d.id || d.parentCallId || '').trim();
+      const callId = resolveSubAgentRowId(byId, d);
       if (!callId) continue;
       const existing = byId.get(callId);
       const meta = pickRunMeta(d);
@@ -255,6 +375,7 @@ export function mergeToolStreamEvents(
         existing.status = 'running';
         existing.kind = 'sub_agent';
         Object.assign(existing, meta);
+        if (ev.type === 'sub_agent_progress') applySubAgentPhase(existing, d);
         if (ev.type === 'sub_agent_token' && d.text) {
           existing.subAgentText = (existing.subAgentText || '') + d.text;
         }
@@ -278,6 +399,8 @@ export function mergeToolStreamEvents(
           subAgentCurrentTool: typeof d.currentTool === 'string' ? d.currentTool : undefined,
           ...meta,
         });
+        const created = byId.get(callId);
+        if (created && ev.type === 'sub_agent_progress') applySubAgentPhase(created, d);
       }
       continue;
     }
@@ -287,7 +410,7 @@ export function mergeToolStreamEvents(
         summary?: unknown;
         finalStatus?: string;
       } & Record<string, unknown>;
-      const callId = String(d.callId || d.id || '').trim();
+      const callId = resolveSubAgentRowId(byId, d);
       if (!callId) continue;
       const existing = byId.get(callId);
       const status: ChatToolRunStatus = ev.type.endsWith('error') ? 'error' : 'success';
@@ -299,6 +422,8 @@ export function mergeToolStreamEvents(
         existing.kind = 'sub_agent';
         existing.subAgentSummary = d.summary ?? d.result;
         existing.subAgentFinalStatus = finalStatus;
+        existing.subAgentPhase = null;
+        existing.subAgentPendingApproval = null;
         Object.assign(existing, meta);
       } else {
         byId.set(callId, {
@@ -327,13 +452,9 @@ export function mergeToolStreamEvents(
 
 function isSubAgentHistoryRow(row: Record<string, unknown>): boolean {
   const name = String(row.name || row.tool || '');
-  return (
-    row.kind === 'sub_agent' ||
-    name === 'run_sub_agent' ||
-    row.subAgentRunId != null ||
-    row.subAgentFinalStatus != null ||
-    row.linkedConversationId != null
-  );
+  // `subAgentRunId` alone is not enough: e.g. `get_agent_run` rows carry the
+  // id of the run they inspected and must stay plain tool rows.
+  return row.kind === 'sub_agent' || name === 'run_sub_agent' || row.subAgentFinalStatus != null;
 }
 
 /** Rehydrate tool runs from persisted conversation toolCalls rows. */
@@ -363,10 +484,20 @@ export function rehydrateToolRunsFromHistory(
         name,
         arguments: row.arguments ?? row.args ?? {},
         round: row.round,
+        topLevel: true,
         ...meta,
       },
     });
     if (row.result != null || row.error != null || row.status || row.subAgentFinalStatus) {
+      const argsObj = parseArgs(row.arguments ?? row.args ?? {});
+      const commandHint =
+        (typeof row.command === 'string' && row.command.trim().startsWith('anx.')
+          ? row.command.trim()
+          : '') ||
+        (typeof argsObj.command === 'string' && argsObj.command.trim().startsWith('anx.')
+          ? argsObj.command.trim()
+          : '') ||
+        commandFromToolPayload(row.result);
       events.push({
         type: resultType,
         data: {
@@ -379,6 +510,8 @@ export function rehydrateToolRunsFromHistory(
           approvalRequired: row.approvalRequired,
           summary: row.subAgentSummary ?? row.summary,
           finalStatus: row.subAgentFinalStatus,
+          topLevel: true,
+          ...(commandHint ? { command: commandHint } : {}),
           ...meta,
         },
       });

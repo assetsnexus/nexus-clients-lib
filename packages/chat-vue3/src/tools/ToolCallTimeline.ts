@@ -15,9 +15,16 @@ import ModeRefusalChipWidget from './ModeRefusalChipWidget';
 import ScheduleCheckBackToolWidget from './ScheduleCheckBackToolWidget';
 import StorageFileToolWidget from './StorageFileToolWidget';
 import SubAgentRunWidget from './SubAgentRunWidget';
-import { normalizeToolRun, toolStatusClass } from './shared';
+import {
+  normalizeToolRun,
+  resolveSubAgentWidgetStatus,
+  resolveToolAccessKind,
+  toolStatusClass,
+} from './shared';
 
 type StreamEv = { type: string; data?: Record<string, unknown> };
+
+const COMPACT_VISIBLE = 3;
 
 function subAgentEventsForCall(
   toolEvents: StreamEv[] | undefined,
@@ -35,18 +42,20 @@ function subAgentEventsForCall(
     });
 }
 
-function subAgentStatus(events: StreamEv[]): string {
-  const done = events.find((e) => e.type === 'sub_agent_done');
-  if (!done) return 'running';
-  const st = String((done.data as Record<string, unknown>)?.status ?? 'completed');
-  if (st === 'completed') return 'completed';
-  if (st === 'timeout') return 'timeout';
-  if (st === 'cancelled') return 'cancelled';
-  return 'error';
+function isErrorStatus(status: string | undefined): boolean {
+  return status === 'error' || status === 'reverted';
+}
+
+function formatToolsSummary(total: number, errors: number): string {
+  const tools = total === 1 ? '1 tool called' : `${total} tools called`;
+  if (errors <= 0) return tools;
+  return `${tools} · ${errors === 1 ? '1 error' : `${errors} errors`}`;
 }
 
 /**
  * Specialized tool timeline — routes to media / choice / check-back / storage / sub-agent / default.
+ * While streaming, collapses to the current call + previous two (fading) unless expanded.
+ * When finished, shows a compact summary (expandable to the full list) — never auto-expands.
  */
 export const ToolCallTimeline = {
   name: 'NexusToolCallTimeline',
@@ -71,9 +80,50 @@ export const ToolCallTimeline = {
     /** P8-8: shared `useModeTransition` state, owned by the panel — drives the refusal chip's ring. */
     modeTransition: { type: Object, default: null },
   },
+  data() {
+    return { expandedAll: false };
+  },
+  watch: {
+    streaming(next: boolean) {
+      // Live compact on start; finished summary when the turn ends (never stay expanded).
+      this.expandedAll = false;
+      void next;
+    },
+  },
   computed: {
     normalized(): ChatToolRun[] {
       return (this.events || []).map((ev: any) => normalizeToolRun(ev));
+    },
+    errorCount(): number {
+      return this.normalized.filter((r) => isErrorStatus(r.status)).length;
+    },
+    /** Live strip: last 3 with fade, unless the user expanded mid-stream. */
+    useLiveCompact(): boolean {
+      return !!this.streaming && !this.expandedAll && this.normalized.length > COMPACT_VISIBLE;
+    },
+    /** Finished turn: one summary row until the user expands. */
+    useFinishedSummary(): boolean {
+      return !this.streaming && !this.expandedAll && this.normalized.length > 0;
+    },
+    visibleRuns(): Array<{ run: ChatToolRun; fadeLevel: number }> {
+      const all = this.normalized;
+      if (this.useFinishedSummary) return [];
+      if (!this.useLiveCompact) {
+        return all.map((run) => ({ run, fadeLevel: 0 }));
+      }
+      const slice = all.slice(-COMPACT_VISIBLE);
+      // Oldest of the three is most faded; newest (current) is full opacity.
+      return slice.map((run, i) => ({
+        run,
+        fadeLevel: slice.length - 1 - i,
+      }));
+    },
+    hiddenCount(): number {
+      if (!this.useLiveCompact) return 0;
+      return Math.max(0, this.normalized.length - COMPACT_VISIBLE);
+    },
+    summaryLabel(): string {
+      return formatToolsSummary(this.normalized.length, this.errorCount);
     },
   },
   methods: {
@@ -92,7 +142,7 @@ export const ToolCallTimeline = {
     onSwitchMode(payload: { required: string; mode: string; callId: string }) {
       this.$emit('switch-mode', payload);
     },
-    renderRun(_h: any, run: ChatToolRun) {
+    renderRun(h: any, run: ChatToolRun, fadeLevel = 0) {
       // P8-8: a mode refusal is a terminal, distinct state — check status first,
       // ahead of every tool-name branch (including DefaultToolRunWidget), so a
       // blocked call never renders as "done" regardless of which tool it was.
@@ -155,11 +205,7 @@ export const ToolCallTimeline = {
           props: {
             mission,
             events: subEvents,
-            status: subEvents.length
-              ? subAgentStatus(subEvents)
-              : run.status === 'running' || run.status === 'paused'
-                ? run.status
-                : run.subAgentFinalStatus || (run.status === 'success' ? 'completed' : 'completed'),
+            status: resolveSubAgentWidgetStatus(run, subEvents),
             parentCallId: run.id,
             canViewToolDetails: this.canViewToolDetails,
             run,
@@ -174,29 +220,123 @@ export const ToolCallTimeline = {
             open: (p: unknown) => this.$emit('subagent-open', p),
             'message-delivery': (p: unknown) => this.$emit('subagent-message', p),
             'task-toggle': (p: unknown) => this.$emit('subagent-task-toggle', p),
+            'review-approval': (p: unknown) => this.$emit('subagent-review-approval', p),
           },
         });
       }
       return h(DefaultToolRunWidget, {
         key: run.id,
-        props: { run, canViewToolDetails: this.canViewToolDetails },
+        props: { run, canViewToolDetails: this.canViewToolDetails, fadeLevel },
         on: { approve: this.onApprove, revert: this.onRevert },
       });
     },
   },
-  render(_h: any) {
+  render(h: any) {
     if (!this.normalized.length) return null;
+
+    if (this.useFinishedSummary) {
+      return h(
+        'div',
+        { class: ['anx-tool-call-timeline', 'nexus-tool-timeline', 'nexus-tool-timeline--summary'] },
+        [
+          h(
+            'button',
+            {
+              class: [
+                'nexus-tool-timeline__summary',
+                this.errorCount > 0 ? 'nexus-tool-timeline__summary--errors' : '',
+              ],
+              attrs: {
+                type: 'button',
+                title: 'Show tool calls',
+                'aria-expanded': 'false',
+              },
+              on: { click: () => { this.expandedAll = true; } },
+            },
+            [
+              h('span', { class: 'nexus-tool-timeline__summary-label' }, this.summaryLabel),
+              h('span', { class: 'nexus-tool-run__chev', attrs: { 'aria-hidden': 'true' } }, '▸'),
+            ],
+          ),
+        ],
+      );
+    }
+
+    const items = this.visibleRuns.map(({ run, fadeLevel }) => {
+      const access = resolveToolAccessKind(run);
+      return h(
+        'div',
+        {
+          key: run.id || run.tool,
+          class: [
+            'timeline-item',
+            fadeLevel === 1 ? 'timeline-item--fade-1' : '',
+            fadeLevel === 2 ? 'timeline-item--fade-2' : '',
+          ],
+        },
+        [
+          h('div', {
+            class: [
+              'timeline-marker',
+              toolStatusClass(run.status),
+              access === 'write' ? 'is-write' : '',
+              access === 'read' ? 'is-read' : '',
+            ],
+          }),
+          h('div', { class: 'timeline-body' }, [this.renderRun(h, run, fadeLevel)]),
+        ],
+      );
+    });
+
+    const controls: unknown[] = [];
+    if (this.useLiveCompact && this.hiddenCount > 0) {
+      controls.push(
+        h(
+          'button',
+          {
+            class: 'nexus-tool-timeline__expand',
+            attrs: { type: 'button' },
+            on: { click: () => { this.expandedAll = true; } },
+          },
+          `Show all ${this.normalized.length} tools`,
+        ),
+      );
+    } else if (this.streaming && this.expandedAll && this.normalized.length > COMPACT_VISIBLE) {
+      controls.push(
+        h(
+          'button',
+          {
+            class: 'nexus-tool-timeline__expand',
+            attrs: { type: 'button' },
+            on: { click: () => { this.expandedAll = false; } },
+          },
+          'Show compact',
+        ),
+      );
+    } else if (!this.streaming && this.expandedAll) {
+      controls.unshift(
+        h(
+          'button',
+          {
+            class: 'nexus-tool-timeline__expand',
+            attrs: { type: 'button', 'aria-expanded': 'true' },
+            on: { click: () => { this.expandedAll = false; } },
+          },
+          this.summaryLabel,
+        ),
+      );
+    }
+
     return h(
       'div',
-      { class: 'anx-tool-call-timeline nexus-tool-timeline' },
-      this.normalized.map((run: ChatToolRun) =>
-        h('div', { key: run.id || run.tool, class: 'timeline-item' }, [
-          h('div', {
-            class: ['timeline-marker', toolStatusClass(run.status)],
-          }),
-          h('div', { class: 'timeline-body' }, [this.renderRun(h, run)]),
-        ]),
-      ),
+      {
+        class: [
+          'anx-tool-call-timeline',
+          'nexus-tool-timeline',
+          this.useLiveCompact ? 'nexus-tool-timeline--compact' : '',
+        ],
+      },
+      [...controls, ...items],
     );
   },
 };

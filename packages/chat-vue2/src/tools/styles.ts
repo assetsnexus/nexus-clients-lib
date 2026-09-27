@@ -1,7 +1,42 @@
 /** Inject once into the document for package tool widgets (Vue hosts without SFC CSS). */
 export const TOOL_WIDGET_CSS = `
 .nexus-tool-timeline { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
-.nexus-tool-timeline .timeline-item { display: flex; gap: 8px; margin: 0; align-items: flex-start; }
+.nexus-tool-timeline .timeline-item { display: flex; gap: 8px; margin: 0; align-items: flex-start; transition: opacity .35s ease, transform .35s ease; }
+.nexus-tool-timeline .timeline-item--fade-1 { opacity: 0.55; transform: scale(0.985); }
+.nexus-tool-timeline .timeline-item--fade-2 { opacity: 0.32; transform: scale(0.97); }
+.nexus-tool-timeline--compact .timeline-item:last-of-type { opacity: 1; transform: none; }
+.nexus-tool-timeline__expand {
+  align-self: flex-start;
+  margin: 2px 0 0 14px;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nexus-tool-timeline__expand:hover { color: #334155; text-decoration: underline; }
+.nexus-tool-timeline__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.92);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  text-align: left;
+}
+.nexus-tool-timeline__summary:hover { background: #fff; color: #334155; }
+.nexus-tool-timeline__summary--errors .nexus-tool-timeline__summary-label { color: #b91c1c; }
+.nexus-tool-timeline__summary-label { flex: 1; min-width: 0; }
 .nexus-tool-timeline .timeline-marker { width: 6px; height: 6px; border-radius: 50%; margin-top: 9px; background: #c5cbd3; flex-shrink: 0; box-shadow: 0 0 0 2px rgba(197,203,211,.25); }
 .nexus-tool-timeline .timeline-marker.is-running { background: #2a9d8f; box-shadow: 0 0 0 3px rgba(42,157,143,.18); animation: nexus-tool-pulse 1.2s ease-in-out infinite; }
 .nexus-tool-timeline .timeline-marker.is-paused { background: #e9a825; box-shadow: 0 0 0 3px rgba(233,168,37,.16); }
@@ -9,6 +44,7 @@ export const TOOL_WIDGET_CSS = `
 .nexus-tool-timeline .timeline-marker.is-error { background: #d65a3a; }
 .nexus-tool-timeline .timeline-marker.is-approval { background: #e9a825; }
 .nexus-tool-timeline .timeline-marker.is-mode-blocked { background: #c47b2b; }
+.nexus-tool-timeline .timeline-marker.is-write:not(.is-running):not(.is-error):not(.is-approval):not(.is-mode-blocked) { background: #8b5cf6; box-shadow: 0 0 0 2px rgba(139,92,246,.2); }
 .nexus-tool-timeline .timeline-body { flex: 1; min-width: 0; }
 @keyframes nexus-tool-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
@@ -87,6 +123,31 @@ export const TOOL_WIDGET_CSS = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.nexus-tool-run__titles {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.nexus-tool-run__titles .nexus-tool-run__title { flex: 0 1 auto; }
+.nexus-tool-run__subtitle {
+  font-size: 10px;
+  font-weight: 500;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nexus-tool-run--fade-1 { opacity: 0.55; }
+.nexus-tool-run--fade-2 { opacity: 0.32; }
+.nexus-tool-run--write .nexus-tool-run__title { color: #6d28d9; }
+.nexus-tool-run--write .nexus-tool-run__dot:not(.is-running):not(.is-error):not(.is-approval):not(.is-mode-blocked) {
+  background: #8b5cf6;
+}
+.nexus-tool-run__dot.is-write:not(.is-running):not(.is-error):not(.is-approval):not(.is-mode-blocked) {
+  background: #8b5cf6;
 }
 .nexus-tool-run__chip {
   flex-shrink: 0;
@@ -220,6 +281,80 @@ export const TOOL_WIDGET_CSS = `
 }
 .nexus-sub-agent__meta--mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; max-width: 7.5rem; overflow: hidden; text-overflow: ellipsis; }
 .nexus-sub-agent__body { display: flex; flex-direction: column; gap: 8px; padding: 0 8px 8px; }
+.nexus-sub-agent__approval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(233, 168, 37, 0.1);
+  border: 1px solid rgba(233, 168, 37, 0.35);
+}
+.nexus-sub-agent__approval-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nexus-sub-agent__review-btn { flex-shrink: 0; }
+.nexus-sub-agent__live {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+.nexus-sub-agent__live-tools { display: flex; flex-direction: column; gap: 3px; }
+.nexus-sub-agent__live-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  font-size: 11px;
+  color: #334155;
+}
+.nexus-sub-agent__live-label {
+  flex: 0 0 auto;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  color: #0f172a;
+}
+.nexus-sub-agent__live-label--write { color: #6d28d9; }
+.nexus-sub-agent__live-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 11px;
+}
+.nexus-sub-agent__live-out {
+  max-height: 4.8em;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #475569;
+  white-space: pre-wrap;
+  word-break: break-word;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 100%);
+}
+.nexus-sub-agent__live-out--streaming::after {
+  content: '';
+  display: inline-block;
+  width: 0.45em;
+  height: 0.9em;
+  margin-left: 2px;
+  vertical-align: -0.1em;
+  background: currentColor;
+  animation: nexus-sub-agent-caret 1s steps(1) infinite;
+  color: #2a9d8f;
+}
+@keyframes nexus-sub-agent-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
 .nexus-sub-agent__controls { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
 .nexus-sub-agent__plan,
 .nexus-sub-agent__tasks,
@@ -334,6 +469,7 @@ export const TOOL_WIDGET_CSS = `
   white-space: pre-wrap;
 }
 .nexus-sub-agent__message { display: flex; flex-direction: column; gap: 6px; }
+.nexus-sub-agent__delivery-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .nexus-sub-agent__compose { display: flex; gap: 6px; align-items: center; }
 .nexus-sub-agent__input {
   flex: 1;

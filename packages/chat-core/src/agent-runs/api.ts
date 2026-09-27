@@ -1,4 +1,5 @@
 import type { CommandClient, SendResult } from '../index.js';
+import type { SubAgentPendingApproval } from '../state.js';
 import type {
   AgentRunPlan,
   AgentRunSummary,
@@ -39,6 +40,28 @@ function runIdPayload(id: { runId?: string | null; workloadId?: string | null })
   return { workloadId: resolved, runId: runId || resolved };
 }
 
+function mapPendingApproval(raw: unknown): SubAgentPendingApproval | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const approvalKind = str(r.approvalKind);
+  if (!approvalKind) return null;
+  return {
+    approvalKind,
+    elevationId: str(r.elevationId),
+    pack: str(r.pack),
+    command: str(r.command),
+    reason: str(r.reason),
+    resourceRef:
+      r.resourceRef && typeof r.resourceRef === 'object' && !Array.isArray(r.resourceRef)
+        ? (r.resourceRef as Record<string, unknown>)
+        : null,
+    authRequestId: str(r.authRequestId),
+    requiredOnboardingType: str(r.requiredOnboardingType),
+    ...(typeof r.onboardingSatisfied === 'boolean' ? { onboardingSatisfied: r.onboardingSatisfied } : {}),
+  };
+}
+
 export function mapAgentRunRow(row: Record<string, unknown> | null | undefined): AgentRunSummary | null {
   if (!row || typeof row !== 'object') return null;
   const runId = String(row.runId || row.workloadId || row._id || row.id || '').trim();
@@ -76,6 +99,9 @@ export function mapAgentRunRow(row: Record<string, unknown> | null | undefined):
     plan,
     tasks,
     toolCallsSummary: row.toolCallsSummary ?? null,
+    parentCallId:
+      typeof row.parentCallId === 'string' && row.parentCallId.trim() ? row.parentCallId.trim() : null,
+    pendingApproval: mapPendingApproval(row.pendingApproval),
     createdAt: row.createdAt != null ? String(row.createdAt) : null,
     updatedAt: row.updatedAt != null ? String(row.updatedAt) : null,
   };

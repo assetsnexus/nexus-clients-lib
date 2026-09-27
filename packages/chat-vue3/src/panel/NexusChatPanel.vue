@@ -260,6 +260,7 @@
                 @subagent-open="$emit('subagent-open', $event)"
                 @subagent-message="$emit('subagent-message', $event)"
                 @subagent-task-toggle="$emit('subagent-task-toggle', $event)"
+                @subagent-review-approval="$emit('subagent-review-approval', $event)"
               />
             </div>
             <div v-if="turn.text" class="nexus-message-actions">

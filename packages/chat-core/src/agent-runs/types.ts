@@ -1,5 +1,7 @@
 /** AgentRun / subagent control types (portal + shared UI). */
 
+import type { SubAgentPendingApproval } from '../state.js';
+
 export type AgentRunOrigin =
   | 'chat_agent'
   | 'agent_task'
@@ -60,6 +62,10 @@ export type AgentRunSummary = {
   plan?: AgentRunPlan | null;
   tasks?: AgentRunTask[];
   toolCallsSummary?: unknown;
+  /** Spawning `run_sub_agent` call id (chat-spawned runs, while live). */
+  parentCallId?: string | null;
+  /** Client-safe pause reason when `status === 'awaiting_approval'`. */
+  pendingApproval?: SubAgentPendingApproval | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

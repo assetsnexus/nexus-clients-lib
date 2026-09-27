@@ -1,5 +1,6 @@
 import type { ChatToolRun } from '@nexus/chat-core';
-import { toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
+import { formatToolRunDisplay } from './tool-run-display';
+import { resolveToolAccessKind, toolStatusClass, toolStatusLabel } from './shared';
 
 /**
  * Compact expandable tool run row with approve/revert actions.
@@ -9,6 +10,8 @@ export const DefaultToolRunWidget = {
   props: {
     run: { type: Object, required: true },
     canViewToolDetails: { type: Boolean, default: true },
+    /** When set, dims completed rows in the live compact strip. */
+    fadeLevel: { type: Number, default: 0 },
   },
   data() {
     const run = this.run as ChatToolRun;
@@ -21,16 +24,20 @@ export const DefaultToolRunWidget = {
       const run = this.run as ChatToolRun;
       return !!(run.approvalRequired || run.status === 'needs_approval');
     },
-    title(): string {
-      const run = this.run as ChatToolRun;
-      return truncateLabel(run.label || run.tool || 'tool', 64);
+    display(): ReturnType<typeof formatToolRunDisplay> {
+      return formatToolRunDisplay(this.run as ChatToolRun);
     },
     statusText(): string {
       return toolStatusLabel((this.run as ChatToolRun).status);
     },
+    accessKind(): ReturnType<typeof resolveToolAccessKind> {
+      return resolveToolAccessKind(this.run as ChatToolRun);
+    },
   },
   render(h: any) {
     const run = this.run as ChatToolRun;
+    const fade = Math.min(2, Math.max(0, Number(this.fadeLevel) || 0));
+    const access = this.accessKind;
     return h(
       'div',
       {
@@ -38,6 +45,10 @@ export const DefaultToolRunWidget = {
           'nexus-tool-run',
           toolStatusClass(run.status),
           this.expanded ? 'nexus-tool-run--open' : '',
+          fade === 1 ? 'nexus-tool-run--fade-1' : '',
+          fade === 2 ? 'nexus-tool-run--fade-2' : '',
+          access === 'write' ? 'nexus-tool-run--write' : '',
+          access === 'read' ? 'nexus-tool-run--read' : '',
         ],
       },
       [
@@ -48,7 +59,7 @@ export const DefaultToolRunWidget = {
             attrs: {
               type: 'button',
               disabled: !this.canViewToolDetails,
-              title: run.tool || run.label || undefined,
+              title: this.display.tooltip || run.tool || run.label || undefined,
             },
             on: {
               click: () => {
@@ -58,10 +69,19 @@ export const DefaultToolRunWidget = {
           },
           [
             h('span', {
-              class: ['nexus-tool-run__dot', toolStatusClass(run.status)],
+              class: [
+                'nexus-tool-run__dot',
+                toolStatusClass(run.status),
+                access === 'write' ? 'is-write' : '',
+              ],
               attrs: { 'aria-hidden': 'true' },
             }),
-            h('span', { class: 'nexus-tool-run__title' }, this.title),
+            h('span', { class: 'nexus-tool-run__titles' }, [
+              h('span', { class: 'nexus-tool-run__title' }, this.display.title),
+              this.display.subtitle
+                ? h('span', { class: 'nexus-tool-run__subtitle' }, this.display.subtitle)
+                : null,
+            ]),
             h(
               'span',
               { class: ['nexus-tool-run__chip', toolStatusClass(run.status)] },

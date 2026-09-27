@@ -4,6 +4,17 @@ import { mergeToolStreamEvents, rehydrateToolRunsFromHistory, patchToolRunStatus
 import type { ChatTurn } from '../state.js';
 
 describe('stream-events', () => {
+  it('turn_snapshot replaces the live bubble text (reattach replay)', () => {
+    const turns: ChatTurn[] = [{ id: 'a1', role: 'assistant', text: 'stale tail' }];
+    const next = applyStreamEventToTurns(turns, 'a1', {
+      type: 'turn_snapshot',
+      data: { text: 'Full answer so far' },
+    });
+    expect(next[0]!.text).toBe('Full answer so far');
+    const after = applyStreamEventToTurns(next, 'a1', { type: 'token', data: { text: '!' } });
+    expect(after[0]!.text).toBe('Full answer so far!');
+  });
+
   it('parses JSON stream messages', () => {
     expect(parseStreamMessage('{"type":"token","data":{"text":"hi"}}')).toEqual({
       type: 'token',
@@ -35,6 +46,47 @@ describe('stream-events', () => {
       approvalId: 'ap1',
       args: { q: 'x' },
     });
+  });
+
+  it('promotes anx_command onto args from denormalized tool_result.command', () => {
+    const runs = mergeToolStreamEvents([
+      {
+        type: 'tool_call',
+        data: {
+          callId: 'c1',
+          name: 'anx_command',
+          arguments: '{}',
+        },
+      },
+      {
+        type: 'tool_result',
+        data: {
+          callId: 'c1',
+          name: 'anx_command',
+          command: 'anx.crm.campaign.strategy.update',
+          result: { status: 'ok' },
+          status: 'success',
+        },
+      },
+    ]);
+    expect(runs[0]).toMatchObject({
+      tool: 'anx_command',
+      status: 'success',
+      args: { command: 'anx.crm.campaign.strategy.update' },
+    });
+  });
+
+  it('rehydrates anx_command from result.command when history args were stripped', () => {
+    const runs = rehydrateToolRunsFromHistory([
+      {
+        id: 'c1',
+        name: 'anx_command',
+        arguments: {},
+        result: { status: 'ok', command: 'anx.notes.create' },
+        status: 'success',
+      },
+    ]);
+    expect(runs[0]?.args?.command).toBe('anx.notes.create');
   });
 
   it('clears stale assistant text on generationStart', () => {

@@ -26,6 +26,11 @@ import type {
 import { DEFAULT_FEATURES } from './types.js';
 import { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 import {
+  LiveAttachSession,
+  type LiveAttachOutcome,
+  type LiveAttachResult,
+} from './stream/live-attach.js';
+import {
   parseStreamMessage,
   applyStreamEventToTurns,
   isEmptyAssistantTurn,
@@ -64,26 +69,23 @@ import {
   resolveConversationAvatarUrl,
   indexChatContactsById,
 } from './contact-identity.js';
+import { SubAgentObserver } from './stream/sub-agent-observer.js';
+import { SubAgentSeqTracker } from './stream/sub-agent-seq-tracker.js';
+import {
+  applySubAgentRunStatesToTurns,
+  type SubAgentRunState,
+} from './agent-runs/apply-run-states.js';
+import { pendingApprovalFromPayload } from './stream/tool-events.js';
+import {
+  elevationCommandNames,
+  isSubAgentApprovalEvent,
+  permissionElevationInfoFromEvent,
+} from './stream/approval-events.js';
 import {
   attachmentsForCommand,
   mergeAttachmentDisplay,
 } from './attachments.js';
 
-function elevationCommandNames(elev: {
-  command?: string | null;
-  commandNames?: string[];
-  resume?: { command?: string };
-}): string[] {
-  const names = Array.isArray(elev.commandNames)
-    ? elev.commandNames.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-    : [];
-  const single =
-    (typeof elev.command === 'string' && elev.command.trim()) ||
-    (typeof elev.resume?.command === 'string' && elev.resume.command.trim()) ||
-    '';
-  if (single && !names.includes(single)) names.unshift(single);
-  return names;
-}
 
 export type {
   ChatTransport,
@@ -123,6 +125,8 @@ export {
 } from './model-capabilities.js';
 export type { ChatPickerModelFields, ReasoningEffortLevel } from './model-capabilities.js';
 export { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
+export { LiveAttachSession, LIVE_ATTACH_IDLE_CHECK_MS } from './stream/live-attach.js';
+export type { LiveAttachOutcome, LiveAttachResult } from './stream/live-attach.js';
 export { parseStreamMessage, applyStreamEventToTurns } from './stream/stream-events.js';
 export type { StreamEvent } from './stream/stream-events.js';
 export { isEmptyAssistantTurn } from './stream/stream-events.js';
@@ -153,6 +157,19 @@ export {
   updateAgentRunTask,
   mapAgentRunRow,
 } from './agent-runs/api.js';
+export {
+  applySubAgentRunStatesToTurns,
+  subAgentPhaseForRunStatus,
+  type SubAgentRunState,
+  type SubAgentPhase,
+} from './agent-runs/apply-run-states.js';
+export { SubAgentObserver, isObservedEventType } from './stream/sub-agent-observer.js';
+export { SubAgentSeqTracker } from './stream/sub-agent-seq-tracker.js';
+export {
+  permissionElevationInfoFromEvent,
+  isSubAgentApprovalEvent,
+  type PermissionElevationInfo,
+} from './stream/approval-events.js';
 export { collectSubAgentRuns, activeSubAgentCountFromTurns, visibleSubAgentStripRuns, isActiveSubAgentStripStatus } from './agent-runs/collect-runs.js';
 export type {
   AgentRunOrigin,
@@ -834,6 +851,30 @@ export type NexusChat = {
   cancelConversation: (opts: {
     conversationId: string;
   }) => Promise<{ cancelled: boolean; generationInProgress: boolean }>;
+  /**
+   * Re-attach to a server-side generation that is still running (page reload,
+   * navigating back to the conversation). Replays the in-flight turn from the
+   * stream replay buffer, keeps `streaming=true` (so Cancel stays visible) and
+   * resolves once the attach settles. Call after history was rehydrated.
+   */
+  attachLiveGeneration: (opts: { conversationId: string }) => Promise<LiveAttachResult>;
+  /** Close an attach-owned stream (panel closed). A send-owned stream is left alone. */
+  detachLiveGeneration: () => void;
+  /**
+   * Fold server-side AgentRun state (`anx.inference.workloads.list` with
+   * `parentConversationId`) into `run_sub_agent` rows: phase, pending approval,
+   * linked chat. Returns true when any row changed.
+   */
+  applySubAgentRunStates: (runs: SubAgentRunState[]) => boolean;
+  /** Same, from a user-inbox `activity` payload (kind `sub_agent`) for the open conversation. */
+  applySubAgentActivity: (data: unknown) => boolean;
+  /**
+   * Keep a passive stream subscription while background sub-agents of this
+   * conversation are live and no send / live-attach socket is open (null stops).
+   * Delivers widget live output, sub-agent approval requests and hands a new
+   * parent generation to `onObservedGenerationStart` / `attachLiveGeneration`.
+   */
+  observeSubAgents: (opts: { conversationId: string | null }) => void;
   loadContacts: () => Promise<void>;
   /** Create a new conversation for an agent contact (VE id or agent id). Always allocates a new id. */
   openContact: (contactId: string, opts?: { title?: string }) => Promise<{ conversationId: string; agentId?: string }>;
@@ -1183,7 +1224,20 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     opts.logger?.debug?.(msg, extra);
   };
 
+  let liveAttach: LiveAttachSession | null = null;
+  let liveAttachCleanup: ((outcome: LiveAttachOutcome) => void) | null = null;
+  const settleLiveAttach = (fallback: LiveAttachOutcome) => {
+    const session = liveAttach;
+    const cleanup = liveAttachCleanup;
+    if (!session) return;
+    liveAttach = null;
+    liveAttachCleanup = null;
+    session.settle(fallback);
+    void session.promise.then((r) => cleanup?.(r.outcome));
+  };
+
   const closeSocket = () => {
+    settleLiveAttach('superseded');
     if (activeSocket) {
       try {
         activeSocket.close();
@@ -1191,6 +1245,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         /* ignore */
       }
       activeSocket = null;
+      // Primary stream ended: background sub-agents keep reporting via the observer.
+      setTimeout(() => void subAgentObserver.ensure(), 0);
     }
   };
 
@@ -1200,11 +1256,310 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     return state === WebSocket.OPEN || state === WebSocket.CONNECTING;
   };
 
+  const subAgentSeq = new SubAgentSeqTracker();
+  /** Never a real turn id: observer events only patch turns owning a sub-agent row. */
+  const OBSERVER_TURN_ID = '__sub_agent_observer__';
+
+  const applyRunStates = (runs: SubAgentRunState[]): boolean => {
+    const current = store.getState().turns;
+    const next = applySubAgentRunStatesToTurns(current, runs);
+    if (next === current) return false;
+    syncMessagesFromTurns(next);
+    return true;
+  };
+
+  /** `activity` (kind `sub_agent`) for the open conversation → widget phase / pending approval. */
+  const applySubAgentActivity = (data: unknown): boolean => {
+    if (!data || typeof data !== 'object') return false;
+    const d = data as Record<string, unknown>;
+    if (d.kind !== 'sub_agent' || typeof d.runId !== 'string' || typeof d.status !== 'string') {
+      return false;
+    }
+    const conversationId = store.getState().conversationId;
+    if (!conversationId || d.conversationId !== conversationId) return false;
+    return applyRunStates([
+      {
+        runId: d.runId,
+        status: d.status,
+        linkedConversationId:
+          typeof d.linkedConversationId === 'string' ? d.linkedConversationId : null,
+        pendingApproval: pendingApprovalFromPayload(d),
+      },
+    ]);
+  };
+
+  /** A failed / superseded attach must not leave the observer suspended. */
+  const resumeObserverAfter = <T,>(result: T): T => {
+    setTimeout(() => void subAgentObserver.ensure(), 0);
+    return result;
+  };
+
+  const subAgentObserver = new SubAgentObserver({
+    prepare: async (conversationId) => {
+      try {
+        await streamInit({ conversationId });
+      } catch (err) {
+        opts.logger?.warn?.('sub_agent_observer_stream_init_failed', {
+          conversationId,
+          message: String(err),
+        });
+        return false;
+      }
+      return streamResolver.getOrderedEndpoints().length > 0;
+    },
+    connect: (handlers) =>
+      streamResolver
+        .connectWebSocket(handlers)
+        .then((ws) => ws as unknown as { close(): void })
+        .catch(() => null),
+    canObserve: (conversationId) =>
+      store.getState().conversationId === conversationId &&
+      !hasLiveStream() &&
+      !store.getState().streaming,
+    onEvent: (conversationId, parsed) => {
+      if (store.getState().conversationId !== conversationId) {
+        subAgentObserver.stop();
+        return;
+      }
+      if (parsed.type === 'activity') {
+        applySubAgentActivity(parsed.data);
+        return;
+      }
+      if (subAgentSeq.alreadyApplied(conversationId, parsed)) return;
+      subAgentSeq.record(conversationId, parsed);
+      if (parsed.type === 'permission_elevation_request') {
+        opts.hooks?.onPermissionElevationRequired?.(permissionElevationInfoFromEvent(parsed.data));
+        return;
+      }
+      if (parsed.type === 'data_access_approval_request') {
+        emitDataAccessApprovalOnce(dataAccessApprovalInfoFrom(parsed.data));
+        return;
+      }
+      const current = store.getState().turns;
+      const next = applyStreamEventToTurns(current, OBSERVER_TURN_ID, parsed);
+      if (next !== current) syncMessagesFromTurns(next);
+    },
+    onGenerationStart: (conversationId) => {
+      if (opts.hooks?.onObservedGenerationStart) {
+        opts.hooks.onObservedGenerationStart({ conversationId });
+      } else {
+        void controller.attachLiveGeneration({ conversationId });
+      }
+    },
+    logger: {
+      debug: (msg, extra) => opts.logger?.debug?.(msg, extra),
+      warn: (msg, extra) => opts.logger?.warn?.(msg, extra),
+    },
+  });
+
   const finishPausedTurn = () => {
     store.setState({ streaming: false });
     patchCurrentPanel({ streaming: false });
     opts.hooks?.onStreamState?.('idle');
     closeSocket();
+  };
+
+  /**
+   * One live conversation stream → assistant turn. Shared by `send` and
+   * `attachLiveGeneration` (reload / navigate back while the agent is still working).
+   * `requireGenerationStart` drops replayed tokens from a previous turn until this
+   * turn's generationStart marker; attach sets it false because the replay buffer
+   * only ever holds the in-flight turn.
+   */
+  const createLiveStreamMessageHandler = (ctx: {
+    assistantId: string;
+    panelId?: string | null;
+    requireGenerationStart: boolean;
+  }) => {
+    const { assistantId, panelId } = ctx;
+    let acceptStreamTokens = !ctx.requireGenerationStart;
+    let turns: ChatTurn[] = store.getState().turns;
+    return (ev: MessageEvent) => {
+      const parsed = parseStreamMessage(ev.data);
+      if (!parsed) return;
+      const streamConversationId = store.getState().conversationId;
+      if (subAgentSeq.alreadyApplied(streamConversationId, parsed)) return;
+      subAgentSeq.record(streamConversationId, parsed);
+      if (parsed.type === 'activity') {
+        applySubAgentActivity(parsed.data);
+        return;
+      }
+      // Drop Redis replay from the previous turn until this turn's
+      // generationStart marker arrives (ConversationDispatch clears
+      // replay after message.send, which is after WS connect).
+      if (
+        parsed.type === 'conversation' &&
+        parsed.data &&
+        typeof parsed.data === 'object' &&
+        (parsed.data as { generationStart?: unknown }).generationStart === true
+      ) {
+        acceptStreamTokens = true;
+      } else if (
+        (parsed.type === 'token' ||
+          parsed.type === 'sub_agent_token' ||
+          parsed.type === 'turn_snapshot') &&
+        !acceptStreamTokens
+      ) {
+        return;
+      }
+      // Prefer store turns so deliveryStatus patches are not clobbered.
+      turns = applyStreamEventToTurns(store.getState().turns, assistantId, parsed);
+      syncMessagesFromTurns(turns);
+      if (panelId && parsed.type === 'usage') {
+        const turnUsage = turns.find((t) => t.id === assistantId)?.usage || null;
+        applyUsageToPanel(panelId, turnUsage);
+      }
+      if (parsed.type === 'tool_call') {
+        const data = (parsed.data || {}) as { name?: string; arguments?: unknown };
+        opts.hooks?.onToolCall?.(String(data.name || 'tool'), data.arguments);
+      }
+      if (parsed.type === 'tool_result') {
+        const run = turns
+          .find((t) => t.id === assistantId)
+          ?.toolEvents?.find(
+            (r) =>
+              r.id ===
+              String(
+                (parsed.data as { callId?: string })?.callId ||
+                  (parsed.data as { id?: string })?.id ||
+                  '',
+              ),
+          );
+        if (run?.status === 'needs_approval') {
+          opts.hooks?.onToolApprovalRequired?.({
+            callId: run.id,
+            tool: run.tool,
+            approvalId: run.approvalId,
+            conversationId: store.getState().conversationId || null,
+          });
+        }
+        const toolResult =
+          parsed.data && typeof parsed.data === 'object'
+            ? (parsed.data as { result?: unknown }).result
+            : undefined;
+        if (
+          toolResult &&
+          typeof toolResult === 'object' &&
+          (toolResult as { needsApproval?: unknown }).needsApproval === true &&
+          (toolResult as { approvalKind?: unknown }).approvalKind ===
+            'permission_elevation'
+        ) {
+          const elev = toolResult as {
+            elevationId?: string | null;
+            pack?: string | null;
+            command?: string | null;
+            commandNames?: string[];
+            resume?: { command?: string };
+            resourceRef?: Record<string, unknown> | null;
+            reason?: string | null;
+            requiredOnboardingType?: string | null;
+            onboardingSatisfied?: boolean;
+          };
+          const commandNames = elevationCommandNames(elev);
+          opts.hooks?.onPermissionElevationRequired?.({
+            elevationId: elev.elevationId ?? null,
+            pack: elev.pack ?? null,
+            command:
+              typeof elev.command === 'string' ? elev.command : null,
+            commandNames,
+            callId: run?.id ?? null,
+            resourceRef: elev.resourceRef ?? null,
+            reason: elev.reason ?? null,
+            requiredOnboardingType: elev.requiredOnboardingType ?? null,
+            onboardingSatisfied: elev.onboardingSatisfied,
+          });
+          finishPausedTurn();
+        }
+        if (
+          toolResult &&
+          typeof toolResult === 'object' &&
+          (toolResult as { needsApproval?: unknown }).needsApproval === true &&
+          ((toolResult as { approvalKind?: unknown }).approvalKind === 'data_access' ||
+            (toolResult as { status?: unknown }).status ===
+              'data_access_approval_required')
+        ) {
+          emitDataAccessApprovalOnce(
+            dataAccessApprovalInfoFrom(toolResult, run?.id ?? null),
+          );
+          finishPausedTurn();
+        }
+      }
+      if (parsed.type === 'permission_elevation_request') {
+        opts.hooks?.onPermissionElevationRequired?.(permissionElevationInfoFromEvent(parsed.data));
+        // A background sub-agent's pause does not pause this parent turn.
+        if (!isSubAgentApprovalEvent(parsed.data)) finishPausedTurn();
+      }
+      if (parsed.type === 'data_access_approval_request') {
+        emitDataAccessApprovalOnce(dataAccessApprovalInfoFrom(parsed.data));
+        finishPausedTurn();
+      }
+      let clientToolPause = false;
+      if (parsed.type === 'client_tool_request') {
+        const data = (parsed.data || {}) as {
+          callId?: string;
+          name?: string;
+          arguments?: Record<string, unknown>;
+        };
+        const callId = String(data.callId || '');
+        const name = String(data.name || '');
+        if (callId && name) {
+          clientToolPause = true;
+          store.setState({
+            streaming: false,
+            pausedCallId: callId,
+          });
+          patchCurrentPanel({ streaming: false });
+          opts.hooks?.onStreamState?.('paused');
+          void Promise.resolve(
+            opts.hooks?.onClientToolRequest?.({
+              callId,
+              name,
+              arguments:
+                data.arguments && typeof data.arguments === 'object'
+                  ? data.arguments
+                  : {},
+              conversationId: store.getState().conversationId || null,
+            }),
+          ).catch((err) => {
+            log('client_tool_hook_failed', { message: String(err), callId, name });
+            opts.hooks?.onError?.(err);
+          });
+        }
+      }
+      if (parsed.type === 'paused') {
+        // Keep WS open for client-tool resume; other pauses finish the turn.
+        if (!clientToolPause && !store.getState().pausedCallId) {
+          finishPausedTurn();
+        }
+      }
+      if (
+        parsed.type === 'done' ||
+        parsed.type === 'complete' ||
+        parsed.type === 'finished' ||
+        parsed.type === 'error'
+      ) {
+        if (parsed.type === 'error' && panelId) {
+          const errData =
+            parsed.data && typeof parsed.data === 'object'
+              ? (parsed.data as Record<string, unknown>)
+              : {};
+          const issue = classifyChatBillingIssue({
+            code: errData.code,
+            message: errData.message,
+          });
+          if (issue) {
+            mergePanelPatch(panelId, billingPatchFromIssue(issue));
+            if (typeof issue.message === 'string' && issue.message) {
+              opts.hooks?.onError?.(new Error(issue.message));
+            }
+          }
+        }
+        store.setState({ streaming: false });
+        patchCurrentPanel({ streaming: false });
+        opts.hooks?.onStreamState?.(parsed.type === 'error' ? 'error' : 'idle');
+        closeSocket();
+      }
+    };
   };
 
   // The backend emits both a needs_approval tool_result and a data_access_approval_request
@@ -1328,7 +1683,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     };
   };
 
-  return {
+  const controller: NexusChat = {
     getState: store.getState,
     subscribe: store.subscribe,
     features,
@@ -1897,6 +2252,24 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       }>,
       rehydrateOpts?: { conversationId?: string | null },
     ) {
+      // Rebuilt rows carry no raw sub-agent stream: let the next replay refill it.
+      subAgentSeq.reset(store.getState().conversationId);
+      if (
+        rehydrateOpts &&
+        Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId') &&
+        subAgentObserver.targetConversationId &&
+        subAgentObserver.targetConversationId !== (rehydrateOpts.conversationId || null)
+      ) {
+        subAgentObserver.stop();
+      }
+      // History replaces every turn, including a live-attach bubble; the host
+      // re-attaches after rehydrate when the generation is still running.
+      if (liveAttach) {
+        closeSocket();
+        store.setState({ streaming: false });
+        patchCurrentPanel({ streaming: false });
+        opts.hooks?.onStreamState?.('idle');
+      }
       const turns: ChatTurn[] = rows.map((row, i) => {
         const createdAt =
           (typeof row.createdAt === 'string' && row.createdAt) ||
@@ -2135,6 +2508,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           return { ok: false, code: 'stream_init', message };
         }
 
+        subAgentObserver.suspend();
         const assistantId = `a_${Date.now()}`;
         let turns: ChatTurn[] = [
           ...store.getState().turns,
@@ -2155,237 +2529,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
 
         closeSocket();
         let wsConnected = false;
-        let acceptStreamTokens = false;
         if (streamResolver.getOrderedEndpoints().length > 0) {
           wsConnected = await streamResolver
             .connectWebSocket({
-              onMessage: (ev) => {
-                const parsed = parseStreamMessage(ev.data);
-                if (!parsed) return;
-                // Drop Redis replay from the previous turn until this turn's
-                // generationStart marker arrives (ConversationDispatch clears
-                // replay after message.send, which is after WS connect).
-                if (
-                  parsed.type === 'conversation' &&
-                  parsed.data &&
-                  typeof parsed.data === 'object' &&
-                  (parsed.data as { generationStart?: unknown }).generationStart === true
-                ) {
-                  acceptStreamTokens = true;
-                } else if (
-                  (parsed.type === 'token' || parsed.type === 'sub_agent_token') &&
-                  !acceptStreamTokens
-                ) {
-                  return;
-                }
-                // Prefer store turns so deliveryStatus patches are not clobbered.
-                turns = applyStreamEventToTurns(store.getState().turns, assistantId, parsed);
-                syncMessagesFromTurns(turns);
-                if (panelId && parsed.type === 'usage') {
-                  const turnUsage = turns.find((t) => t.id === assistantId)?.usage || null;
-                  applyUsageToPanel(panelId, turnUsage);
-                }
-                if (parsed.type === 'tool_call') {
-                  const data = (parsed.data || {}) as { name?: string; arguments?: unknown };
-                  opts.hooks?.onToolCall?.(String(data.name || 'tool'), data.arguments);
-                }
-                if (parsed.type === 'tool_result') {
-                  const run = turns
-                    .find((t) => t.id === assistantId)
-                    ?.toolEvents?.find(
-                      (r) =>
-                        r.id ===
-                        String(
-                          (parsed.data as { callId?: string })?.callId ||
-                            (parsed.data as { id?: string })?.id ||
-                            '',
-                        ),
-                    );
-                  if (run?.status === 'needs_approval') {
-                    opts.hooks?.onToolApprovalRequired?.({
-                      callId: run.id,
-                      tool: run.tool,
-                      approvalId: run.approvalId,
-                      conversationId: store.getState().conversationId || null,
-                    });
-                  }
-                  const toolResult =
-                    parsed.data && typeof parsed.data === 'object'
-                      ? (parsed.data as { result?: unknown }).result
-                      : undefined;
-                  if (
-                    toolResult &&
-                    typeof toolResult === 'object' &&
-                    (toolResult as { needsApproval?: unknown }).needsApproval === true &&
-                    (toolResult as { approvalKind?: unknown }).approvalKind ===
-                      'permission_elevation'
-                  ) {
-                    const elev = toolResult as {
-                      elevationId?: string | null;
-                      pack?: string | null;
-                      command?: string | null;
-                      commandNames?: string[];
-                      resume?: { command?: string };
-                      resourceRef?: Record<string, unknown> | null;
-                      reason?: string | null;
-                      requiredOnboardingType?: string | null;
-                      onboardingSatisfied?: boolean;
-                    };
-                    const commandNames = elevationCommandNames(elev);
-                    opts.hooks?.onPermissionElevationRequired?.({
-                      elevationId: elev.elevationId ?? null,
-                      pack: elev.pack ?? null,
-                      command:
-                        typeof elev.command === 'string' ? elev.command : null,
-                      commandNames,
-                      callId: run?.id ?? null,
-                      resourceRef: elev.resourceRef ?? null,
-                      reason: elev.reason ?? null,
-                      requiredOnboardingType: elev.requiredOnboardingType ?? null,
-                      onboardingSatisfied: elev.onboardingSatisfied,
-                    });
-                    finishPausedTurn();
-                  }
-                  if (
-                    toolResult &&
-                    typeof toolResult === 'object' &&
-                    (toolResult as { needsApproval?: unknown }).needsApproval === true &&
-                    ((toolResult as { approvalKind?: unknown }).approvalKind === 'data_access' ||
-                      (toolResult as { status?: unknown }).status ===
-                        'data_access_approval_required')
-                  ) {
-                    emitDataAccessApprovalOnce(
-                      dataAccessApprovalInfoFrom(toolResult, run?.id ?? null),
-                    );
-                    finishPausedTurn();
-                  }
-                }
-                if (parsed.type === 'permission_elevation_request') {
-                  const elev =
-                    parsed.data && typeof parsed.data === 'object'
-                      ? (parsed.data as {
-                          elevationId?: string | null;
-                          pack?: string | null;
-                          command?: string | null;
-                          commandNames?: string[];
-                          callId?: string | null;
-                          resourceRef?: Record<string, unknown> | null;
-                          reason?: string | null;
-                          requiredOnboardingType?: string | null;
-                          onboardingSatisfied?: boolean;
-                          runId?: string | null;
-                          subAgentRunId?: string | null;
-                          linkedConversationId?: string | null;
-                          parentConversationId?: string | null;
-                          conversationId?: string | null;
-                        })
-                      : {};
-                  opts.hooks?.onPermissionElevationRequired?.({
-                    elevationId: elev.elevationId ?? null,
-                    pack: elev.pack ?? null,
-                    command: typeof elev.command === 'string' ? elev.command : null,
-                    commandNames: elevationCommandNames(elev),
-                    callId: typeof elev.callId === 'string' ? elev.callId : null,
-                    resourceRef: elev.resourceRef ?? null,
-                    reason: elev.reason ?? null,
-                    requiredOnboardingType: elev.requiredOnboardingType ?? null,
-                    onboardingSatisfied: elev.onboardingSatisfied,
-                    runId:
-                      typeof elev.runId === 'string'
-                        ? elev.runId
-                        : typeof elev.subAgentRunId === 'string'
-                          ? elev.subAgentRunId
-                          : null,
-                    subAgentRunId:
-                      typeof elev.subAgentRunId === 'string'
-                        ? elev.subAgentRunId
-                        : typeof elev.runId === 'string'
-                          ? elev.runId
-                          : null,
-                    linkedConversationId:
-                      typeof elev.linkedConversationId === 'string'
-                        ? elev.linkedConversationId
-                        : null,
-                    parentConversationId:
-                      typeof elev.parentConversationId === 'string'
-                        ? elev.parentConversationId
-                        : typeof elev.conversationId === 'string'
-                          ? elev.conversationId
-                          : null,
-                  });
-                  finishPausedTurn();
-                }
-                if (parsed.type === 'data_access_approval_request') {
-                  emitDataAccessApprovalOnce(dataAccessApprovalInfoFrom(parsed.data));
-                  finishPausedTurn();
-                }
-                let clientToolPause = false;
-                if (parsed.type === 'client_tool_request') {
-                  const data = (parsed.data || {}) as {
-                    callId?: string;
-                    name?: string;
-                    arguments?: Record<string, unknown>;
-                  };
-                  const callId = String(data.callId || '');
-                  const name = String(data.name || '');
-                  if (callId && name) {
-                    clientToolPause = true;
-                    store.setState({
-                      streaming: false,
-                      pausedCallId: callId,
-                    });
-                    patchCurrentPanel({ streaming: false });
-                    opts.hooks?.onStreamState?.('paused');
-                    void Promise.resolve(
-                      opts.hooks?.onClientToolRequest?.({
-                        callId,
-                        name,
-                        arguments:
-                          data.arguments && typeof data.arguments === 'object'
-                            ? data.arguments
-                            : {},
-                        conversationId: store.getState().conversationId || null,
-                      }),
-                    ).catch((err) => {
-                      log('client_tool_hook_failed', { message: String(err), callId, name });
-                      opts.hooks?.onError?.(err);
-                    });
-                  }
-                }
-                if (parsed.type === 'paused') {
-                  // Keep WS open for client-tool resume; other pauses finish the turn.
-                  if (!clientToolPause && !store.getState().pausedCallId) {
-                    finishPausedTurn();
-                  }
-                }
-                if (
-                  parsed.type === 'done' ||
-                  parsed.type === 'complete' ||
-                  parsed.type === 'finished' ||
-                  parsed.type === 'error'
-                ) {
-                  if (parsed.type === 'error' && panelId) {
-                    const errData =
-                      parsed.data && typeof parsed.data === 'object'
-                        ? (parsed.data as Record<string, unknown>)
-                        : {};
-                    const issue = classifyChatBillingIssue({
-                      code: errData.code,
-                      message: errData.message,
-                    });
-                    if (issue) {
-                      mergePanelPatch(panelId, billingPatchFromIssue(issue));
-                      if (typeof issue.message === 'string' && issue.message) {
-                        opts.hooks?.onError?.(new Error(issue.message));
-                      }
-                    }
-                  }
-                  store.setState({ streaming: false });
-                  patchCurrentPanel({ streaming: false });
-                  opts.hooks?.onStreamState?.(parsed.type === 'error' ? 'error' : 'idle');
-                  closeSocket();
-                }
-              },
+              onMessage: createLiveStreamMessageHandler({
+                assistantId,
+                panelId,
+                requireGenerationStart: true,
+              }),
             })
             .then((ws) => {
               activeSocket = ws as unknown as WebSocket;
@@ -2613,10 +2764,156 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       opts.hooks?.onStreamState?.('idle');
       const data =
         result?.response?.responseObject ?? result?.responseObject ?? (result as Record<string, unknown>);
+      const generationInProgress = Boolean(
+        (data as { generationInProgress?: boolean })?.generationInProgress,
+      );
+      // Orphaned generation cleared server-side: no `done` will ever arrive.
+      if (!generationInProgress && liveAttach) {
+        settleLiveAttach('ended');
+        closeSocket();
+      }
       return {
         cancelled: Boolean((data as { cancelled?: boolean })?.cancelled),
-        generationInProgress: Boolean((data as { generationInProgress?: boolean })?.generationInProgress),
+        generationInProgress,
       };
+    },
+    async attachLiveGeneration(attachOpts: { conversationId: string }): Promise<LiveAttachResult> {
+      const conversationId = String(attachOpts?.conversationId || '').trim();
+      if (!conversationId) return resumeObserverAfter({ attached: false, outcome: 'not_live' });
+      if (store.getState().conversationId !== conversationId) {
+        log('live_attach_skip', { reason: 'conversation_mismatch', conversationId });
+        return resumeObserverAfter({ attached: false, outcome: 'not_live' });
+      }
+      if (hasLiveStream()) {
+        // A send / resume in this tab already owns the socket for this turn.
+        log('live_attach_skip', { reason: 'socket_active', conversationId });
+        return resumeObserverAfter({ attached: false, outcome: 'not_live' });
+      }
+      subAgentObserver.suspend();
+
+      try {
+        await streamInit({ conversationId });
+      } catch (err) {
+        opts.logger?.warn?.('live_attach_stream_init_failed', { conversationId, message: String(err) });
+        return resumeObserverAfter({ attached: false, outcome: 'failed' });
+      }
+      // A send/switch may have happened while stream-init was in flight.
+      if (store.getState().conversationId !== conversationId || hasLiveStream()) {
+        return resumeObserverAfter({ attached: false, outcome: 'superseded' });
+      }
+      if (streamResolver.getOrderedEndpoints().length === 0) {
+        opts.logger?.warn?.('live_attach_no_endpoints', { conversationId });
+        return resumeObserverAfter({ attached: false, outcome: 'failed' });
+      }
+
+      const panelId = currentPanel(store.getState())?.id;
+      const assistantId = `a_live_${Date.now()}`;
+      syncMessagesFromTurns([
+        ...store.getState().turns,
+        {
+          id: assistantId,
+          role: 'assistant',
+          text: '',
+          toolEvents: [],
+          rawToolStream: [],
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      store.setState({ streaming: true });
+      patchCurrentPanel({ streaming: true });
+      opts.hooks?.onStreamState?.('streaming');
+
+      const dropEmptyLiveTurn = () => {
+        const current = store.getState().turns;
+        if (isEmptyAssistantTurn(current.find((t) => t.id === assistantId))) {
+          syncMessagesFromTurns(current.filter((t) => t.id !== assistantId));
+        }
+      };
+      const stopStreamingChrome = () => {
+        if (!store.getState().streaming) return;
+        store.setState({ streaming: false });
+        patchCurrentPanel({ streaming: false });
+        opts.hooks?.onStreamState?.('idle');
+      };
+
+      const session = new LiveAttachSession({
+        checkLive: async () => {
+          try {
+            const res = (await opts.client.send('anx.communicate.conversations.get', {
+              conversationId,
+            })) as { ok?: boolean } | null;
+            if (res && res.ok === false) return true;
+            return unwrapData(res).generationInProgress === true;
+          } catch (err) {
+            // Transport hiccup is not evidence the generation ended.
+            opts.logger?.warn?.('live_attach_liveness_check_failed', { conversationId, message: String(err) });
+            return true;
+          }
+        },
+        onEnded: () => {
+          log('live_attach_ended_silently', { conversationId });
+          closeSocket();
+        },
+      });
+      const inner = createLiveStreamMessageHandler({
+        assistantId,
+        panelId,
+        requireGenerationStart: false,
+      });
+
+      const ws = await streamResolver
+        .connectWebSocket({
+          onMessage: (ev) => {
+            session.noteEvent(parseStreamMessage(ev.data)?.type);
+            inner(ev);
+          },
+          onClose: () => {
+            // Server/network closed the socket without a terminal event.
+            if (liveAttach === session) {
+              activeSocket = null;
+              settleLiveAttach('ended');
+            }
+          },
+        })
+        .catch((err) => {
+          opts.logger?.warn?.('live_attach_ws_connect_failed', { conversationId, message: String(err) });
+          return null;
+        });
+      if (!ws) {
+        session.settle('failed');
+        stopStreamingChrome();
+        dropEmptyLiveTurn();
+        return resumeObserverAfter({ attached: false, outcome: 'failed' });
+      }
+      if (store.getState().conversationId !== conversationId || hasLiveStream()) {
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+        session.settle('superseded');
+        dropEmptyLiveTurn();
+        return resumeObserverAfter({ attached: false, outcome: 'superseded' });
+      }
+      activeSocket = ws as unknown as WebSocket;
+      liveAttach = session;
+      liveAttachCleanup = (outcome) => {
+        // done / error / paused already reset streaming in the stream handler;
+        // superseded means a new send owns the streaming chrome now.
+        if (outcome === 'ended') stopStreamingChrome();
+        dropEmptyLiveTurn();
+      };
+      log('live_attach_open', { conversationId });
+
+      const result = await session.promise;
+      log('live_attach_settled', { conversationId, outcome: result.outcome });
+      return result;
+    },
+    detachLiveGeneration() {
+      if (!liveAttach) return;
+      closeSocket();
+      store.setState({ streaming: false });
+      patchCurrentPanel({ streaming: false });
     },
     async resumeClientTool(resumeOpts: {
       callId: string;
@@ -2667,7 +2964,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               ) {
                 acceptStreamTokens = true;
               } else if (
-                (parsed.type === 'token' || parsed.type === 'sub_agent_token') &&
+                (parsed.type === 'token' ||
+                  parsed.type === 'sub_agent_token' ||
+                  parsed.type === 'turn_snapshot') &&
                 !acceptStreamTokens
               ) {
                 return;
@@ -2831,7 +3130,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         return { ok: false, message };
       }
     },
+    applySubAgentRunStates(runs) {
+      return applyRunStates(Array.isArray(runs) ? runs : []);
+    },
+    applySubAgentActivity(data) {
+      return applySubAgentActivity(data);
+    },
+    observeSubAgents(observeOpts) {
+      const conversationId =
+        typeof observeOpts?.conversationId === 'string' ? observeOpts.conversationId : null;
+      subAgentObserver.setTarget(conversationId);
+    },
   };
+  return controller;
 }
 
 export function assertAiDisclosureAlwaysOn(state: ChatState): void {

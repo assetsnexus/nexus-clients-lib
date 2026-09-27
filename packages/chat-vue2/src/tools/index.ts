@@ -9,4 +9,5 @@ export { SubAgentsStrip } from './SubAgentsStrip';
 export { DeliveryModePicker } from './DeliveryModePicker';
 export { ToolCallTimeline } from './ToolCallTimeline';
 export { toolTimelineProps, normalizeToolRun, toolStatusClass } from './shared';
+export { formatToolRunDisplay, commandMetafieldTitle } from './tool-run-display';
 export { ensureToolWidgetStyles, TOOL_WIDGET_CSS } from './styles';

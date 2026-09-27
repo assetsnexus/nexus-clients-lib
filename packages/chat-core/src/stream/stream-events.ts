@@ -1,4 +1,4 @@
-import type { ChatTurn } from '../state.js';
+import type { ChatToolRun, ChatTurn } from '../state.js';
 import { mergeToolStreamEvents, type ToolStreamEvent } from './tool-events.js';
 import { classifyChatBillingIssue } from '../billing/classify-billing-issue.js';
 
@@ -37,12 +37,38 @@ function eventCallId(ev: StreamEvent): string | null {
 function owningTurnIndex(turns: ChatTurn[], assistantTurnId: string, ev: StreamEvent): number {
   const ownIdx = turns.findIndex((t) => t.id === assistantTurnId);
   if (!isToolish(ev.type) && ev.type !== 'paused') return ownIdx;
+  const findRow = (match: (r: ChatToolRun) => boolean): number => {
+    if (ownIdx >= 0 && (turns[ownIdx].toolEvents || []).some(match)) return ownIdx;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (i === ownIdx) continue;
+      if ((turns[i].toolEvents || []).some(match)) return i;
+    }
+    return -1;
+  };
   const callId = eventCallId(ev);
-  if (!callId) return ownIdx;
-  if (ownIdx >= 0 && (turns[ownIdx].toolEvents || []).some((r) => r.id === callId)) return ownIdx;
-  for (let i = turns.length - 1; i >= 0; i--) {
-    if (i === ownIdx) continue;
-    if ((turns[i].toolEvents || []).some((r) => r.id === callId)) return i;
+  if (callId) {
+    const idx = findRow((r) => r.id === callId);
+    if (idx >= 0) return idx;
+  }
+  if (ev.type.startsWith('sub_agent_') && ev.data && typeof ev.data === 'object') {
+    // Background sub-agent events (possibly long after the spawning turn, or
+    // after a reload) belong to the turn holding their `run_sub_agent` row.
+    const d = ev.data as Record<string, unknown>;
+    const parentCallId = typeof d.parentCallId === 'string' ? d.parentCallId : '';
+    if (parentCallId) {
+      const idx = findRow((r) => r.id === parentCallId);
+      if (idx >= 0) return idx;
+    }
+    const runId =
+      (typeof d.subAgentRunId === 'string' && d.subAgentRunId) ||
+      (typeof d.runId === 'string' && d.runId) ||
+      '';
+    if (runId) {
+      const idx = findRow(
+        (r) => r.subAgentRunId === runId && (r.tool === 'run_sub_agent' || r.kind === 'sub_agent'),
+      );
+      if (idx >= 0) return idx;
+    }
   }
   return ownIdx;
 }
@@ -97,6 +123,15 @@ export function applyStreamEventToTurns(
   const next = [...turns];
 
   if (turns[idx].id !== assistantTurnId) {
+    if (ev.type.startsWith('sub_agent_')) {
+      const event = { type: ev.type, data: ev.data } as ToolStreamEvent;
+      next[idx] = {
+        ...turn,
+        rawToolStream: [...(turn.rawToolStream || []), event],
+        toolEvents: mergeToolStreamEvents([event], turn.toolEvents || []),
+      };
+      return next;
+    }
     next[idx] = patchForeignTurnRow(turn, ev);
     return next;
   }
@@ -107,6 +142,13 @@ export function applyStreamEventToTurns(
         ? String((ev.data as { text?: unknown }).text ?? '')
         : '';
     turn.text = (turn.text || '') + text;
+  } else if (ev.type === 'turn_snapshot') {
+    // Server-side text of the in-flight turn so far (replay on (re)subscribe).
+    const text =
+      ev.data && typeof ev.data === 'object' && 'text' in (ev.data as object)
+        ? (ev.data as { text?: unknown }).text
+        : undefined;
+    if (typeof text === 'string') turn.text = text;
   } else if (ev.type === 'sub_agent_token') {
     // WP23 fix: route sub_agent_token into rawToolStream keyed by parentCallId,
     // NOT into the parent assistant bubble text.
