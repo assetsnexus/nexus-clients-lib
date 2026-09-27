@@ -21,16 +21,29 @@ export function scoreRoute(opts: {
 export type RouteKind =
   | 'p2p_direct'
   | 'intranet'
+  | 'lan_mdns'
+  | 'wifi_direct'
+  | 'cluster_peer_relay'
   | 'registry_relay'
   | 'turn_relay'
   | 'federation_relay'
+  | 'ble'
   | string;
 
-/** Default kind weights aligned with Rust RouteType priority_weight. */
+/**
+ * Default kind weights aligned with Rust `RouteType::priority_weight`.
+ * Order: LAN / intranet > Wi-Fi Direct > peer relay > STUN P2P > registry > TURN > BLE.
+ */
 export function defaultKindWeight(kind: RouteKind): number {
   switch ((kind || '').toLowerCase()) {
-    case 'p2p_direct':
+    case 'lan_mdns':
     case 'intranet':
+      return 1.2;
+    case 'wifi_direct':
+      return 1.1;
+    case 'cluster_peer_relay':
+      return 1.05;
+    case 'p2p_direct':
       return 1.0;
     case 'registry_relay':
       return 0.8;
@@ -38,6 +51,8 @@ export function defaultKindWeight(kind: RouteKind): number {
       return 0.5;
     case 'federation_relay':
       return 0.3;
+    case 'ble':
+      return 0.15;
     default:
       return 0.5;
   }

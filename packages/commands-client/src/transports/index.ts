@@ -4,6 +4,15 @@ export {
   type RouteKind,
 } from './route-score.js';
 export {
+  normalizeCandidate,
+  resolveRoutes,
+  pickBestRoute,
+  mdnsEndpointToLanCandidate,
+  mergeLanMdnsCandidates,
+  type RouteCandidateInput,
+  type ResolvedRoute,
+} from './route-resolver.js';
+export {
   RouteMonitor,
   pickRedundantRoutes,
   DEFAULT_COMMAND_REDUNDANCY,

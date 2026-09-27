@@ -1,4 +1,4 @@
-import { scoreRoute } from './route-score.js';
+import { defaultKindWeight, scoreRoute } from './route-score.js';
 
 export type RouteRole = 'primary' | 'redundant' | 'standby' | 'down';
 
@@ -228,16 +228,7 @@ export class RouteMonitor {
     for (const input of inputs) {
       const existing = this.routes.get(input.id);
       const kindWeight =
-        input.kindWeight ??
-        (input.kind === 'intranet'
-          ? 1.2
-          : input.kind === 'p2p_direct'
-            ? 1.0
-            : input.kind === 'registry_relay'
-              ? 0.8
-              : input.kind === 'turn_relay'
-                ? 0.5
-                : 0.5);
+        input.kindWeight ?? defaultKindWeight(input.kind ?? 'p2p_direct');
       if (existing) {
         existing.kindWeight = kindWeight;
         if (input.carryingTraffic != null) existing.carryingTraffic = input.carryingTraffic;
@@ -579,7 +570,10 @@ export class RouteMonitor {
 
   private kindBucket(r: RouteState): string {
     // Coarse diversity: weight bands approximate kind families.
-    if (r.kindWeight >= 1.0) return 'direct';
+    if (r.kindWeight >= 1.15) return 'lan';
+    if (r.kindWeight >= 1.08) return 'wifi_direct';
+    if (r.kindWeight >= 1.02) return 'peer_relay';
+    if (r.kindWeight >= 0.9) return 'direct';
     if (r.kindWeight >= 0.7) return 'registry';
     if (r.kindWeight >= 0.4) return 'turn';
     return 'other';
