@@ -88,3 +88,19 @@ export {
   type ConnectivityState,
   type WrapOptions,
 } from './connectivity/index.js';
+export {
+  scoreRoute,
+  defaultKindWeight,
+  RouteMonitor,
+  pickRedundantRoutes,
+  DEFAULT_COMMAND_REDUNDANCY,
+  type RouteKind,
+  type RouteRole,
+  type ProbeResult,
+  type RouteProbeFn,
+  type RouteMonitorInput,
+  type RouteQosSnapshot,
+  type CommandRedundancyConfig,
+  type RouteMonitorClock,
+  type RouteMonitorOptions,
+} from './transports/index.js';

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "direct_good",
+    "rtt_ms": 20.0,
+    "jitter_ms": 2.0,
+    "loss_ratio": 0.0,
+    "kind_weight": 1.0,
+    "expected_score": 41.666666666666664
+  },
+  {
+    "id": "direct_jittery",
+    "rtt_ms": 20.0,
+    "jitter_ms": 10.0,
+    "loss_ratio": 0.0,
+    "kind_weight": 1.0,
+    "expected_score": 25.0
+  },
+  {
+    "id": "registry_ok",
+    "rtt_ms": 50.0,
+    "jitter_ms": 5.0,
+    "loss_ratio": 0.01,
+    "kind_weight": 0.8,
+    "expected_score": 13.2
+  },
+  {
+    "id": "turn_lossy",
+    "rtt_ms": 200.0,
+    "jitter_ms": 20.0,
+    "loss_ratio": 0.05,
+    "kind_weight": 0.5,
+    "expected_score": 1.9791666666666667
+  },
+  {
+    "id": "zero_rtt",
+    "rtt_ms": 0.0,
+    "jitter_ms": 0.0,
+    "loss_ratio": 0.0,
+    "kind_weight": 1.0,
+    "expected_score": 1000.0
+  },
+  {
+    "id": "failed_weight",
+    "rtt_ms": 10.0,
+    "jitter_ms": 1.0,
+    "loss_ratio": 1.0,
+    "kind_weight": 1.0,
+    "expected_score": 0.0
+  }
+]
