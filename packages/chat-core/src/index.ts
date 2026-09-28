@@ -1478,6 +1478,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         const turnUsage = turns.find((t) => t.id === assistantId)?.usage || null;
         applyUsageToPanel(panelId, turnUsage);
       }
+      if (parsed.type === 'chat_command') {
+        const command = parsed.data && typeof parsed.data === 'object' ? parsed.data as { name?: string; modelId?: string; hostingType?: string | null } : null;
+        if (command) opts.hooks?.onChatCommand?.(command);
+      }
       if (parsed.type === 'tool_call') {
         const data = (parsed.data || {}) as { name?: string; arguments?: unknown };
         opts.hooks?.onToolCall?.(String(data.name || 'tool'), data.arguments);
@@ -1662,7 +1666,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     }
     const payload = unwrapData(result);
     streamResolver.setFromStreamInit(payload || {});
-    if (payload?.resourceId) {
+    // Room streams are keyed by room id. Copying that into conversationId makes
+    // billing and context-details look up a conversation that does not exist.
+    if (initOpts.roomId) {
+      const roomKey = String(initOpts.roomId);
+      const current = store.getState().conversationId;
+      if (current && (current === roomKey || current === String(payload?.resourceId || ''))) {
+        store.setState({ conversationId: null });
+        patchCurrentPanel({ conversationId: null });
+      }
+    } else if (payload?.resourceId) {
       store.setState({ conversationId: String(payload.resourceId) });
       patchCurrentPanel({ conversationId: String(payload.resourceId) });
     }
@@ -3115,6 +3128,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               if (panelId && parsed.type === 'usage') {
                 const turnUsage = turns.find((t) => t.id === assistantId)?.usage || null;
                 applyUsageToPanel(panelId, turnUsage);
+              }
+              if (parsed.type === 'chat_command') {
+                const command = parsed.data && typeof parsed.data === 'object'
+                  ? parsed.data as { name?: string; modelId?: string; hostingType?: string | null }
+                  : null;
+                if (command) opts.hooks?.onChatCommand?.(command);
               }
               if (parsed.type === 'client_tool_request') {
                 const data = (parsed.data || {}) as {

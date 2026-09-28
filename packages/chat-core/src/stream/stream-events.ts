@@ -205,6 +205,15 @@ export function applyStreamEventToTurns(
       creditsChargedCents:
         typeof data.creditsChargedCents === 'number' ? data.creditsChargedCents : undefined,
       contextSnapshot: data.contextSnapshot,
+      subscriberType:
+        typeof data.subscriberType === 'string' && data.subscriberType.trim()
+          ? data.subscriberType.trim()
+          : undefined,
+      side: data.side === 'edge' || data.side === 'twin' ? data.side : undefined,
+      registryName:
+        typeof data.registryName === 'string' && data.registryName.trim()
+          ? data.registryName.trim()
+          : undefined,
     };
   } else if (ev.type === 'conversation') {
     const data = (ev.data && typeof ev.data === 'object' ? ev.data : {}) as Record<string, unknown>;

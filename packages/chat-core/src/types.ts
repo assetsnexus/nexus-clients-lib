@@ -82,6 +82,12 @@ export type ChatUsageSnapshot = {
   /** Platform prepaid credits actually charged (0 on BYOK). */
   creditsChargedCents?: number;
   contextSnapshot?: unknown;
+  /** Asset chat: who the usage event billed. */
+  subscriberType?: string;
+  /** Asset chat: `edge` (local) or `twin` (registry inference). */
+  side?: string;
+  /** Display name of the hosting registry when `side` is `twin`. */
+  registryName?: string;
 };
 
 export type ChatSpendLimitsState = {
@@ -299,6 +305,8 @@ export type ChatHooks = {
   }) => void | Promise<void>;
   onStreamState?: (state: string) => void;
   onUsage?: (usage: ChatUsageSnapshot) => void;
+  /** Server-side slash command, e.g. `/model` switching the picker. */
+  onChatCommand?: (command: { name?: string; modelId?: string; hostingType?: string | null }) => void;
   /** Fired once per `sendMessage` attempt with the terminal outcome code. */
   onSendOutcome?: (code: ChatSendOutcomeCode) => void;
   onError?: (err: unknown) => void;

@@ -1254,4 +1254,24 @@ describe('chat-core', () => {
     expect(userTurn?.deliveryStatus).toBe('failed');
     expect(userTurn?.deliveryError?.message).toMatch(/stream endpoint/i);
   });
+
+  it('does not copy a room resource id into conversationId', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          if (command === 'anx.communicate.stream-init') {
+            const resourceId = payload?.roomId || payload?.conversationId || 'c1';
+            return { ok: true, data: { endpoints: [], token: null, resourceId } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    chat.getState().conversationId = 'room-9';
+    await chat.streamInit({ roomId: 'room-9' });
+    expect(chat.getState().conversationId).toBeNull();
+
+    await chat.streamInit({ conversationId: 'c1' });
+    expect(chat.getState().conversationId).toBe('c1');
+  });
 });
