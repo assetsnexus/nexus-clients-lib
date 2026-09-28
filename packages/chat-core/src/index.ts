@@ -599,6 +599,25 @@ function mapHumanContacts(rows: unknown[]): ChatContact[] {
     .filter(Boolean) as ChatContact[];
 }
 
+function mapAssetAgentContacts(rows: unknown[]): ChatContact[] {
+  return rows
+    .map((row: any) => {
+      const assetId = String(row?.assetId || '').trim();
+      const assetAgentKey = String(row?.assetAgentKey || row?.agentKey || '').trim();
+      if (!assetId || !assetAgentKey) return null;
+      const id = String(row?.id || `${assetId}:${assetAgentKey}`);
+      return {
+        id,
+        name: String(row?.name || assetAgentKey),
+        type: 'asset_agent' as const,
+        assetId,
+        assetAgentKey,
+        assetName: row?.assetName != null ? String(row.assetName) : assetId,
+      };
+    })
+    .filter(Boolean) as ChatContact[];
+}
+
 function isFetchableAvatarUrl(value: unknown): boolean {
   if (typeof value !== 'string' || !value.trim()) return false;
   const v = value.trim();
@@ -887,13 +906,19 @@ export type NexusChat = {
     type?: 'dm' | 'group';
     encryptionMode?: 'server_group_v1' | 'client_v1';
     participants?: Array<{
-      type: 'user' | 'agent' | 'virtual_agent';
+      type: 'user' | 'agent' | 'virtual_agent' | 'asset_agent';
       id: string;
       role?: string;
       displayName?: string;
+      assetAgentKey?: string;
     }>;
-    /** AI contacts to add after create (`agent` / `virtual_agent`). */
-    aiParticipants?: Array<{ type: 'agent' | 'virtual_agent'; id: string; displayName?: string }>;
+    /** AI contacts to add after create (`agent` / `virtual_agent` / `asset_agent`). */
+    aiParticipants?: Array<{
+      type: 'agent' | 'virtual_agent' | 'asset_agent';
+      id: string;
+      displayName?: string;
+      assetAgentKey?: string;
+    }>;
     /** Disappearing-message TTL in seconds; null disables. Default applied by backend when omitted. */
     messageTtlSeconds?: number | null;
   }) => Promise<{ roomId: string }>;
@@ -906,10 +931,11 @@ export type NexusChat = {
   addRoomParticipant: (input: {
     roomId: string;
     participant: {
-      type: 'user' | 'agent' | 'virtual_agent';
+      type: 'user' | 'agent' | 'virtual_agent' | 'asset_agent';
       id: string;
       role?: string;
       displayName?: string;
+      assetAgentKey?: string;
     };
   }) => Promise<unknown>;
   getRoomBillingSummary: (roomId: string) => Promise<Record<string, unknown>>;
@@ -1055,8 +1081,11 @@ export type NexusChat = {
       text?: string;
       toolCalls?: Array<Record<string, unknown>>;
       attachments?: IoDescriptor[];
+      createdAt?: string | null;
+      senderId?: string | null;
+      senderName?: string | null;
     }>,
-    opts?: { conversationId?: string | null },
+    opts?: { conversationId?: string | null; detachStream?: boolean },
   ) => void;
   /** Apply persisted conversation usage / context snapshot (e.g. from conversations.get). */
   applyUsage: (usage: ChatUsageSnapshot | null | undefined) => void;
@@ -1695,10 +1724,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     async loadContacts() {
       if (!features.contacts) return;
 
-      const [humanResult, veResult, vePublicResult] = await Promise.all([
+      const [humanResult, veResult, vePublicResult, assetAgentsResult] = await Promise.all([
         opts.client.send('anx.communicate.contacts.list', {}),
         opts.client.send('anx.ai-agents.virtual-employees.list', {}),
         opts.client.send('anx.ai-agents.virtual-employees.list-public', {}),
+        opts.client.send('anx.communicate.contacts.asset-agents.list', {}),
       ]);
 
       const handleFail = (result: unknown, command: string) => {
@@ -1718,10 +1748,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       handleFail(humanResult, 'anx.communicate.contacts.list');
       handleFail(veResult, 'anx.ai-agents.virtual-employees.list');
       handleFail(vePublicResult, 'anx.ai-agents.virtual-employees.list-public');
+      handleFail(assetAgentsResult, 'anx.communicate.contacts.asset-agents.list');
 
       const humanData = unwrapData(humanResult);
       const veData = unwrapData(veResult);
       const vePublicData = unwrapData(vePublicResult);
+      const assetAgentsData = unwrapData(assetAgentsResult);
 
       const humanRows = Array.isArray(humanData.contacts)
         ? (humanData.contacts as unknown[])
@@ -1750,6 +1782,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               ? (vePublicResult as unknown[])
               : [];
 
+      const assetAgentRows: unknown[] = Array.isArray(assetAgentsData.contacts)
+        ? (assetAgentsData.contacts as unknown[])
+        : Array.isArray(assetAgentsData)
+          ? (assetAgentsData as unknown[])
+          : Array.isArray(assetAgentsResult)
+            ? (assetAgentsResult as unknown[])
+            : [];
+
       const byId = new Map<string, ChatContact>();
       // Owned VEs first — marks canConfigure so portal can deep-link to agent settings.
       const publicFilesBaseUrl = opts.publicFilesBaseUrl || null;
@@ -1760,6 +1800,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         if (!byId.has(c.id)) byId.set(c.id, c);
       }
       for (const c of mapHumanContacts(humanRows)) {
+        byId.set(c.id, c);
+      }
+      for (const c of mapAssetAgentContacts(assetAgentRows)) {
         byId.set(c.id, c);
       }
 
@@ -1808,6 +1851,26 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           participantCount,
           participantNames,
           unreadCount: typeof row.unreadCount === 'number' ? row.unreadCount : undefined,
+          lastActivityAt:
+            typeof row.lastMessageAt === 'string' && row.lastMessageAt
+              ? row.lastMessageAt
+              : typeof row.createdAt === 'string' && row.createdAt
+                ? row.createdAt
+                : null,
+          assetIds: Array.isArray(row.assetIds)
+            ? row.assetIds.map((id) => String(id || '').trim()).filter(Boolean)
+            : [],
+          assetAgents: Array.isArray(row.assetAgents)
+            ? (row.assetAgents as Array<Record<string, unknown>>)
+                .map((a) => ({
+                  assetId: String(a?.assetId || '').trim(),
+                  assetAgentKey:
+                    typeof a?.assetAgentKey === 'string' && a.assetAgentKey.trim()
+                      ? a.assetAgentKey.trim()
+                      : null,
+                }))
+                .filter((a) => a.assetId)
+            : [],
           purpose: 'room',
         };
       });
@@ -1837,7 +1900,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const roomId = String(data.roomId || data.id || '');
       if (roomId && Array.isArray(input.aiParticipants)) {
         for (const p of input.aiParticipants) {
-          if (!p?.id || (p.type !== 'agent' && p.type !== 'virtual_agent')) continue;
+          if (
+            !p?.id ||
+            (p.type !== 'agent' && p.type !== 'virtual_agent' && p.type !== 'asset_agent')
+          ) {
+            continue;
+          }
           try {
             await opts.client.send('anx.communicate.rooms.participants.add', {
               roomId,
@@ -1845,6 +1913,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 type: p.type,
                 id: p.id,
                 displayName: p.displayName,
+                ...(p.type === 'asset_agent' && (p as { assetAgentKey?: string }).assetAgentKey
+                  ? { assetAgentKey: (p as { assetAgentKey?: string }).assetAgentKey }
+                  : {}),
               },
             });
           } catch {
@@ -2250,10 +2321,20 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         senderId?: string | null;
         senderName?: string | null;
       }>,
-      rehydrateOpts?: { conversationId?: string | null },
+      rehydrateOpts?: { conversationId?: string | null; detachStream?: boolean },
     ) {
       // Rebuilt rows carry no raw sub-agent stream: let the next replay refill it.
       subAgentSeq.reset(store.getState().conversationId);
+      // Switching the panel to another room: the in-flight send socket belongs
+      // to the previous target and must not keep this panel "streaming".
+      if (rehydrateOpts?.detachStream && !liveAttach) {
+        closeSocket();
+        if (store.getState().streaming) {
+          store.setState({ streaming: false });
+          patchCurrentPanel({ streaming: false });
+          opts.hooks?.onStreamState?.('idle');
+        }
+      }
       if (
         rehydrateOpts &&
         Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId') &&
@@ -2312,7 +2393,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     },
     applyUsage(usage) {
       const panel = currentPanel(store.getState());
-      if (!panel?.id || !usage) return;
+      if (!panel?.id) return;
+      if (!usage) {
+        mergePanelPatch(panel.id, {
+          usage: null,
+          credits: {
+            ...(panel.credits || {}),
+            usedCents: null,
+          },
+        });
+        return;
+      }
       applyUsageToPanel(panel.id, usage);
     },
     uploadAttachment(file, uploadOpts) {

@@ -122,7 +122,7 @@ export type ChatTurn = {
 export type PanelState = {
   id: string;
   contactId: string;
-  contactType: 'agent' | 'user' | 'group';
+  contactType: 'agent' | 'user' | 'group' | 'asset_agent';
   conversationId: string | null;
   roomId?: string | null;
   roomPurpose?: 'conversation' | 'room';

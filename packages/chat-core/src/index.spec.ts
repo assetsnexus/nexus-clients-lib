@@ -255,6 +255,49 @@ describe('chat-core', () => {
     expect(sent).toContain('anx.communicate.conversations.create');
   });
 
+  it('merges asset_agent contacts from asset-agents.list', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [] };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            return { ok: true, data: [] };
+          }
+          if (command === 'anx.communicate.contacts.asset-agents.list') {
+            return {
+              ok: true,
+              data: {
+                contacts: [
+                  {
+                    type: 'asset_agent',
+                    assetId: 'asset-1',
+                    assetAgentKey: 'tank-driver',
+                    name: 'Tank Driver · Tank',
+                    assetName: 'Tank',
+                  },
+                ],
+              },
+            };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const hit = chat.getState().contacts.find((c) => c.type === 'asset_agent');
+    expect(hit).toMatchObject({
+      id: 'asset-1:tank-driver',
+      assetId: 'asset-1',
+      assetAgentKey: 'tank-driver',
+      assetName: 'Tank',
+    });
+  });
+
   it('includes scope:global agents from list-public in contacts', async () => {
     const chat = createNexusChat({
       client: {

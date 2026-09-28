@@ -294,7 +294,7 @@
         </div>
 
         <group-room-leave-section
-          v-if="resolvedPanel.roomId && getRoom && leaveRoom"
+          v-if="contactType === 'group' && resolvedPanel.roomId && getRoom && leaveRoom"
           :room-id="resolvedPanel.roomId"
           :get-room="getRoom"
           :leave-room="leaveRoom"
@@ -389,6 +389,19 @@ function emptyPanel() {
     parentConversationId: null,
     subAgentRunId: null,
   };
+}
+
+/** 1:1 rooms present as a DM (asset agent → agent) until a third participant joins. */
+function roomPresentation(room) {
+  const count = Number(room && room.participantCount);
+  if (Number.isFinite(count) && count > 2) return 'group';
+  const agents = room && room.assetAgents;
+  const assetIds = room && room.assetIds;
+  const hasAsset =
+    (Array.isArray(agents) && agents.some((row) => row && row.assetId)) ||
+    (Array.isArray(assetIds) && assetIds.length > 0);
+  if (hasAsset || (room && room.type === 'asset_agent')) return 'agent';
+  return 'user';
 }
 
 export default {
@@ -514,10 +527,18 @@ export default {
         'Chat'
       );
     },
+    activeRoom() {
+      const roomId = this.resolvedPanel.roomId;
+      if (!roomId) return null;
+      return (this.rooms || []).find(
+        (entry) => entry && (entry.id === roomId || entry.roomId === roomId),
+      ) || null;
+    },
     contactType() {
-      return this.resolvedPanel.roomId
-        ? 'group'
-        : (this.contactRecord && this.contactRecord.type) || null;
+      if (this.resolvedPanel.roomId) return roomPresentation(this.activeRoom);
+      const raw = (this.contactRecord && this.contactRecord.type) || null;
+      if (raw === 'asset_agent') return 'agent';
+      return raw;
     },
     throttled() {
       const t = this.resolvedPanel.throttle;

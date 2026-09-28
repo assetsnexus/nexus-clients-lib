@@ -295,6 +295,8 @@ export default {
       return this.retentionPreset !== this.savedRetentionPreset;
     },
     isGroup() {
+      const people = (this.detail && this.detail.participants) || [];
+      if (people.length) return people.length > 2;
       return !this.detail || this.detail.type !== 'dm';
     },
     billingRows() {

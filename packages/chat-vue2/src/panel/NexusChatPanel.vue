@@ -468,7 +468,7 @@
         </div>
 
         <group-room-leave-section
-          v-if="resolvedPanel.roomId && getRoom && leaveRoom"
+          v-if="contactType === 'group' && resolvedPanel.roomId && getRoom && leaveRoom"
           :room-id="resolvedPanel.roomId"
           :get-room="getRoom"
           :leave-room="leaveRoom"
@@ -630,6 +630,19 @@ function emptyPanel() {
   };
 }
 
+/** 1:1 rooms present as a DM (asset agent → agent) until a third participant joins. */
+function roomPresentation(room) {
+  const count = Number(room && room.participantCount);
+  if (Number.isFinite(count) && count > 2) return 'group';
+  const agents = room && room.assetAgents;
+  const assetIds = room && room.assetIds;
+  const hasAsset =
+    (Array.isArray(agents) && agents.some((row) => row && row.assetId)) ||
+    (Array.isArray(assetIds) && assetIds.length > 0);
+  if (hasAsset || (room && room.type === 'asset_agent')) return 'agent';
+  return 'user';
+}
+
 export default {
   name: 'NexusChatPanel',
   components: {
@@ -650,6 +663,11 @@ export default {
     panelIndex: { type: Number, default: 0 },
     contacts: { type: Array, default: () => [] },
     rooms: { type: Array, default: () => [] },
+    /**
+     * Host presentation for the open room: 'group' | 'agent' | 'user' | 'dm'.
+     * A 1:1 room stays a DM until a third participant joins.
+     */
+    presentation: { type: String, default: null },
     collapsed: { type: Boolean, default: false },
     sidebarOpen: { type: Boolean, default: true },
     /** When false, host provides its own context % / History / Compact cluster in header-actions. */
@@ -815,10 +833,21 @@ export default {
       if (this.contactType === 'user') return 'Direct message';
       return '';
     },
+    activeRoom() {
+      const roomId = this.resolvedPanel.roomId;
+      if (!roomId) return null;
+      return (this.rooms || []).find(
+        (entry) => entry && (entry.id === roomId || entry.roomId === roomId),
+      ) || null;
+    },
     contactType() {
-      return this.resolvedPanel.roomId
-        ? 'group'
-        : (this.contactRecord && this.contactRecord.type) || this.resolvedPanel.type || null;
+      const forced = this.presentation;
+      if (forced === 'group' || forced === 'agent' || forced === 'user') return forced;
+      if (forced === 'dm') return 'user';
+      if (this.resolvedPanel.roomId) return roomPresentation(this.activeRoom);
+      const raw = (this.contactRecord && this.contactRecord.type) || this.resolvedPanel.type || null;
+      if (raw === 'asset_agent') return 'agent';
+      return raw;
     },
     sendBlockedHint() {
       if (this.resolvedPanel.streaming) return 'Waiting for response…';

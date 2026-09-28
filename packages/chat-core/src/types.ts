@@ -130,6 +130,11 @@ export type ChatRoomSummary = {
   participantCount?: number;
   participantNames?: string[];
   unreadCount?: number;
+  /** ISO time of the last room message (createdAt when empty). */
+  lastActivityAt?: string | null;
+  /** Asset ids of `asset_agent` participants. */
+  assetIds?: string[];
+  assetAgents?: Array<{ assetId: string; assetAgentKey: string | null }>;
   purpose?: 'conversation' | 'room';
 };
 
@@ -314,7 +319,13 @@ export type ChatHooks = {
 export type ChatContact = {
   id: string;
   name: string;
-  type: 'agent' | 'user' | 'group';
+  type: 'agent' | 'user' | 'group' | 'asset_agent';
+  /** Asset instance id when type=asset_agent. */
+  assetId?: string | null;
+  /** Edge-ai agent key when type=asset_agent. */
+  assetAgentKey?: string | null;
+  /** Human-readable asset name when type=asset_agent. */
+  assetName?: string | null;
   unreadCount?: number;
   /**
    * Agent availability when type=agent (`Agent.contactStatus`).
