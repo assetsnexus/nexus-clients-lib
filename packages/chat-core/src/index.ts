@@ -1238,6 +1238,46 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   const tools = new Map<string, { descriptor: ChatToolDescriptor; handler: (args: unknown) => unknown }>();
   let activeSocket: WebSocket | null = null;
 
+  /** Tools from `registerTool`, in the `browserFunctionCalls` shape communicate expects. */
+  const registeredToolSchemas = () =>
+    [...tools.values()].map(({ descriptor }) => ({
+      name: descriptor.name,
+      description: descriptor.description || `Client tool ${descriptor.name}`,
+      parameters: {
+        type: 'object',
+        properties: {},
+        ...(descriptor.parameters || {}),
+      } as { type: string; properties?: Record<string, unknown>; required?: string[] },
+    }));
+
+  /**
+   * Registered tools run here and resume the turn automatically; anything else
+   * goes to `hooks.onClientToolRequest`, which must call `resumeClientTool`.
+   */
+  const dispatchClientToolRequest = async (req: {
+    callId: string;
+    name: string;
+    arguments: Record<string, unknown>;
+    conversationId: string | null;
+  }) => {
+    const registered = tools.get(req.name);
+    if (!registered) {
+      await opts.hooks?.onClientToolRequest?.(req);
+      return;
+    }
+    let result: unknown;
+    try {
+      result = await registered.handler(req.arguments);
+    } catch (err) {
+      result = { error: err instanceof Error ? err.message : String(err) };
+    }
+    await controller.resumeClientTool({
+      callId: req.callId,
+      result,
+      conversationId: req.conversationId ?? undefined,
+    });
+  };
+
   const voice = createVoiceApi({
     client: opts.client,
     hooks: opts.hooks,
@@ -1540,7 +1580,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           patchCurrentPanel({ streaming: false });
           opts.hooks?.onStreamState?.('paused');
           void Promise.resolve(
-            opts.hooks?.onClientToolRequest?.({
+            dispatchClientToolRequest({
               callId,
               name,
               arguments:
@@ -2644,6 +2684,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           : opts.agentSource === 'raw_models'
             ? 'anx.inference.chat.completions'
             : 'anx.communicate.message.send';
+        const explicitTools = sendOpts.browserFunctionCalls ?? [];
+        const browserFunctionCalls =
+          command === 'anx.communicate.message.send'
+            ? [
+                ...explicitTools,
+                ...registeredToolSchemas().filter(
+                  (t) => !explicitTools.some((e) => e.name === t.name),
+                ),
+              ]
+            : explicitTools;
         const result = (await opts.client.send(command, {
           text,
           message: command === 'anx.inference.chat.completions' ? text : undefined,
@@ -2664,9 +2714,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.pageInstructions ? { pageInstructions: sendOpts.pageInstructions } : {}),
           ...(sendOpts.pageData ? { pageData: sendOpts.pageData } : {}),
           ...(sendOpts.browserContext ? { browserContext: sendOpts.browserContext } : {}),
-          ...(sendOpts.browserFunctionCalls?.length
-            ? { browserFunctionCalls: sendOpts.browserFunctionCalls }
-            : {}),
+          ...(browserFunctionCalls.length ? { browserFunctionCalls } : {}),
           ...(sendOpts.pageFunctionCalls?.length
             ? { pageFunctionCalls: sendOpts.pageFunctionCalls }
             : {}),
@@ -3082,7 +3130,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                   patchCurrentPanel({ streaming: false });
                   opts.hooks?.onStreamState?.('paused');
                   void Promise.resolve(
-                    opts.hooks?.onClientToolRequest?.({
+                    dispatchClientToolRequest({
                       callId: nextCallId,
                       name,
                       arguments:

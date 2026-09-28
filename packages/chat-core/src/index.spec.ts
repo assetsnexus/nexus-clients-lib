@@ -18,6 +18,44 @@ describe('chat-core', () => {
     expect(chat.getState().aiDisclosureVisible).toBe(true);
   });
 
+  it('sends registerTool descriptors as browserFunctionCalls; explicit schemas win', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sent.push({ command, payload });
+          if (command === 'anx.communicate.message.send') {
+            return { ok: true, data: { text: 'ok', conversationId: 'c1' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    chat.registerTool(
+      {
+        name: 'app.inventory.reserve',
+        description: 'Reserve stock',
+        parameters: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
+      },
+      async () => ({ reserved: true }),
+    );
+    chat.registerTool({ name: 'app.cart.get' }, () => ({ items: [] }));
+    await chat.sendMessage('reserve', {
+      conversationId: 'c1',
+      browserFunctionCalls: [
+        { name: 'app.cart.get', description: 'Explicit cart', parameters: { type: 'object' } },
+      ],
+    });
+    const calls = sent.find((e) => e.command === 'anx.communicate.message.send')?.payload
+      ?.browserFunctionCalls as Array<{ name: string; description: string }>;
+    expect(calls.map((c) => c.name)).toEqual(['app.cart.get', 'app.inventory.reserve']);
+    expect(calls[0].description).toBe('Explicit cart');
+    expect(calls[1]).toMatchObject({
+      description: 'Reserve stock',
+      parameters: { type: 'object', required: ['sku'] },
+    });
+  });
+
   it('defaults spendLimits to true', () => {
     expect(DEFAULT_FEATURES.spendLimits).toBe(true);
   });
