@@ -1,0 +1,71 @@
+{
+  "name": "@nexus/chat-react",
+  "version": "0.1.0",
+  "description": "React 19 adapter for @nexus/chat-core (messenger / WebView embeds)",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist",
+    "dist-webview",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "vite build && node ./scripts/write-dts.mjs",
+    "build:webview": "vite build --config vite.webview.config.ts",
+    "dev": "vite --config vite.dev.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "dompurify": "^3.3.2",
+    "jszip": "^3.10.2",
+    "mammoth": "^1.13.0",
+    "marked": "^15.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "peerDependencies": {
+    "@nexus/character-kit": "*",
+    "@nexus/character-react": "*",
+    "@nexus/chat-core": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": ">=0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "@nexus/character-kit": {
+      "optional": true
+    },
+    "@nexus/character-react": {
+      "optional": true
+    },
+    "three": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nexus/chat-core": "file:../chat-core",
+    "@types/dompurify": "^3.0.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.4"
+  }
+}

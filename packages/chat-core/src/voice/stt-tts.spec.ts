@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAndPollStt, createAndPollTts, createLiveSttSession, createSttJob, listAudioModels } from './stt-tts.js';
 
+type SendFn = (
+  command: string,
+  payload?: Record<string, unknown>,
+) => Promise<{ ok: boolean; data?: unknown }>;
+
 describe('stt-tts helpers', () => {
   it('lists audio models from stt.models.list', async () => {
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendFn>(async () => ({
       ok: true,
       data: {
         models: [
@@ -19,7 +24,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('creates STT jobs with inline IoDescriptor', async () => {
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendFn>(async () => ({
       ok: true,
       data: { jobId: 'job-1', status: 'queued', model: 'stt-1', text: null },
     }));
@@ -39,7 +44,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('omits language on STT create when Auto / null', async () => {
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendFn>(async () => ({
       ok: true,
       data: { jobId: 'job-1', status: 'queued', model: 'stt-1', text: null },
     }));
@@ -50,7 +55,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('polls stt_gen workloads and never writes workspace items', async () => {
-    const send = vi.fn(async (command: string) => {
+    const send = vi.fn<SendFn>(async (command) => {
       if (command === 'anx.inference.stt.create') {
         return { ok: true, data: { workloadId: 'wl-stt', status: 'queued', text: null } };
       }
@@ -78,7 +83,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('mints live STT sessions without workspace writes', async () => {
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendFn>(async () => ({
       ok: true,
       data: {
         mode: 'realtime_ws',
@@ -96,7 +101,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('forwards language on live-session.create and omits Auto / null', async () => {
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendFn>(async () => ({
       ok: true,
       data: { mode: 'realtime_ws', modelId: 'stt-stream-1', token: 'tok', endpoints: [] },
     }));
@@ -113,7 +118,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('polls TTS workloads for audioUrl', async () => {
-    const send = vi.fn(async (command: string) => {
+    const send = vi.fn<SendFn>(async (command) => {
       if (command === 'anx.inference.tts.create') {
         return { ok: true, data: { id: 'wl-1', status: 'queued' } };
       }
@@ -135,7 +140,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('prefers inline dataBase64 over JWT-gated audioUrl for playback', async () => {
-    const send = vi.fn(async (command: string) => {
+    const send = vi.fn<SendFn>(async (command) => {
       if (command === 'anx.inference.tts.create') {
         return { ok: true, data: { id: 'wl-2', status: 'queued' } };
       }
@@ -168,7 +173,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('forwards voiceSampleRef on tts.create', async () => {
-    const send = vi.fn(async (command: string) => {
+    const send = vi.fn<SendFn>(async (command) => {
       if (command === 'anx.inference.tts.create') {
         return {
           ok: true,
@@ -199,7 +204,7 @@ describe('stt-tts helpers', () => {
   });
 
   it('forwards agentId and difficultWords to stt.live-session.create (G9)', async () => {
-    const send = vi.fn(async () => ({
+    const send = vi.fn<SendFn>(async () => ({
       ok: true,
       data: {
         mode: 'rolling_batch',

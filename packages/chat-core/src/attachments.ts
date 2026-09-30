@@ -59,7 +59,8 @@ export function attachmentsForCommand(attachments: AttachmentDisplay[] | undefin
         byteLength: attachment.byteLength,
       };
     }
-    const next = { ...attachment } as Record<string, unknown>;
+    const leftover = attachment as unknown as Record<string, unknown>;
+    const next = { ...leftover };
     for (const key of DISPLAY_KEYS) delete next[key];
     return next as IoDescriptor;
   });

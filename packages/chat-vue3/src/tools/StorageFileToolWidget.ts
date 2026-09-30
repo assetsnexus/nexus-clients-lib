@@ -1,4 +1,4 @@
-import { h as vueH } from 'vue';
+import { defineComponent, h as vueH } from 'vue';
 import { createCompatH } from './hCompat';
 const h = createCompatH(vueH);
 
@@ -16,7 +16,7 @@ function explorerHref(file: PresentFileItem): string | null {
 /**
  * present_file / present_files cards with storage explorer deep-link.
  */
-export const StorageFileToolWidget = {
+export const StorageFileToolWidget = defineComponent({
   name: 'NexusStorageFileToolWidget',
   props: {
     run: { type: Object, required: true },
@@ -157,6 +157,6 @@ export const StorageFileToolWidget = {
         : null,
     ]);
   },
-};
+});
 
 export default StorageFileToolWidget;

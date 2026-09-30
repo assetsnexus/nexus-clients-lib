@@ -9,7 +9,7 @@ import type { PageAgentHost, PagePack } from './types.js';
 function makeHost(overrides: Partial<PageAgentHost> = {}): PageAgentHost {
   return {
     getCurrentPath: () => '/b2b/jobs/blueprints/bp1/edit',
-    searchPages: (q) => [{ path: '/b2b/jobs/blueprints/new', title: 'New job blueprint', score: 1 }],
+    searchPages: () => [{ path: '/b2b/jobs/blueprints/new', title: 'New job blueprint', score: 1 }],
     resolveAccess: (path) => ({ path, allowed: true }),
     navigate: async (path) => ({ ok: true, path }),
     listPageCommands: () => [],

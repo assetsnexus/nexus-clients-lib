@@ -19,6 +19,8 @@ export type PageAgentOptions = {
   conversationId?: string | null;
   /** When true, navigate without confirmNavigate */
   autoNavigate?: boolean;
+  /** Registered immediately so the first turn can resolve a pack. */
+  packs?: PagePack[];
 };
 
 export type ClientToolResult = {
@@ -47,6 +49,7 @@ export class PageAgent {
     this.host = opts.host;
     this.conversationId = opts.conversationId ?? null;
     this.autoNavigate = !!opts.autoNavigate;
+    for (const pack of opts.packs || []) this.packs.register(pack);
   }
 
   setHost(host: PageAgentHost): void {

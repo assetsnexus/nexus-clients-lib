@@ -291,11 +291,6 @@ describe('NexusClient.send', () => {
     expect(requestIds).toContain('req_stable_1');
     // verify-2fa gets its own requestId; the retry of the original command must reuse req_stable_1
     expect(requestIds.filter((id) => id === 'req_stable_1').length).toBeGreaterThanOrEqual(1);
-    const transferCall = requestIds.findIndex((_, i, arr) => {
-      // second command call after verify should be transfer with same id
-      return true;
-    });
-    expect(transferCall).toBeGreaterThanOrEqual(0);
     // Last requestId for transfer path: both verify and transfer are sent; transfer uses options.requestId
     expect(requestIds[requestIds.length - 1]).toBe('req_stable_1');
   });
@@ -332,14 +327,13 @@ describe('oauth helpers', () => {
   it('fetchUserInfo and revokeToken call expected endpoints', async () => {
     const { fetchUserInfo, revokeToken, fetchDiscovery } = await import('./oauth/helpers.js');
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetchImpl = async (url: string | URL, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return {
-        ok: true,
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ sub: 'abc', active: true }), {
         status: 200,
-        json: async () => ({ sub: 'abc', active: true }),
-        text: async () => '',
-      } as any;
+        headers: { 'Content-Type': 'application/json' },
+      });
     };
     await fetchUserInfo({ issuer: 'https://region.example', accessToken: 't', fetchImpl });
     await revokeToken({

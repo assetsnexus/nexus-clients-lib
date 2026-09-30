@@ -1,4 +1,4 @@
-import { h as vueH } from 'vue';
+import { defineComponent, h as vueH } from 'vue';
 import { createCompatH } from './hCompat';
 const h = createCompatH(vueH);
 
@@ -19,7 +19,7 @@ type PollFn = (
  * Media carousel for generate_image / generate_audio (Vue 2 Options API).
  * Polls via injected pollWorkload when result only has workloadId.
  */
-export const MediaToolWidget = {
+export const MediaToolWidget = defineComponent({
   name: 'NexusMediaToolWidget',
   props: {
     run: { type: Object, required: true },
@@ -174,6 +174,6 @@ export const MediaToolWidget = {
     }
     return null;
   },
-};
+});
 
 export default MediaToolWidget;

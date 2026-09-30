@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@nexus/chat-core": ["../chat-core/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

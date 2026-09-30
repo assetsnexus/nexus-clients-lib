@@ -1,6 +1,4 @@
-import { h as vueH } from 'vue';
-import { createCompatH } from './hCompat';
-const h = createCompatH(vueH);
+import { defineComponent } from 'vue';
 
 import {
   isScheduleCheckBackTool,
@@ -57,7 +55,7 @@ function formatToolsSummary(total: number, errors: number): string {
  * While streaming, collapses to the current call + previous two (fading) unless expanded.
  * When finished, shows a compact summary (expandable to the full list) — never auto-expands.
  */
-export const ToolCallTimeline = {
+export const ToolCallTimeline = defineComponent({
   name: 'NexusToolCallTimeline',
   components: {
     AskUserChoiceToolWidget,
@@ -339,6 +337,6 @@ export const ToolCallTimeline = {
       [...controls, ...items],
     );
   },
-};
+});
 
 export default ToolCallTimeline;

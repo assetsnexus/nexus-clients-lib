@@ -85,6 +85,11 @@ import {
   attachmentsForCommand,
   mergeAttachmentDisplay,
 } from './attachments.js';
+import { createContactThreadApi, type ContactThreadApi } from './session/contact-thread-api.js';
+import {
+  listAvailableChatModels,
+  type ModelsAvailableCatalog,
+} from './models/available-models.js';
 
 
 export type {
@@ -112,7 +117,7 @@ export type {
   IoDescriptor,
 };
 export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED } from './types.js';
-export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus } from './state.js';
+export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus, SubAgentPendingApproval } from './state.js';
 export {
   inferSupportsReasoning,
   modelSupportsToolCalling,
@@ -124,6 +129,13 @@ export {
   ALL_REASONING_EFFORT_LEVELS,
 } from './model-capabilities.js';
 export type { ChatPickerModelFields, ReasoningEffortLevel } from './model-capabilities.js';
+export {
+  listAvailableChatModels,
+  mapAvailableChatModels,
+  buildChatModelOverride,
+} from './models/available-models.js';
+export type { AvailableChatModel, ModelsAvailableCatalog } from './models/available-models.js';
+export type { ChatModelOverride } from './types.js';
 export { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 export { LiveAttachSession, LIVE_ATTACH_IDLE_CHECK_MS } from './stream/live-attach.js';
 export type { LiveAttachOutcome, LiveAttachResult } from './stream/live-attach.js';
@@ -197,6 +209,25 @@ export type {
   ActivitySubscribeOptions,
 } from './session/activity-subscribe.js';
 export {
+  buildContactThreadIndex,
+  pickLatestOpenConversation,
+  historyForContact,
+  conversationBelongsToContact,
+  conversationIdFromRow,
+} from './session/contact-threads.js';
+export type {
+  ContactThreadIndexEntry,
+  ConversationHistoryItem,
+  ConversationRow,
+} from './session/contact-threads.js';
+export { createContactThreadApi } from './session/contact-thread-api.js';
+export type { ContactThreadApi, CommandClientLike } from './session/contact-thread-api.js';
+export {
+  createVoiceModeState,
+  type VoiceLayoutMode,
+  type VoiceModeState,
+} from './voice/voice-mode.js';
+export {
   listAudioModels,
   createSttJob,
   createAndPollStt,
@@ -255,6 +286,17 @@ export {
   resolveConversationAvatarUrl,
   indexChatContactsById,
 };
+export {
+  parseParticipantPresenceV1,
+  mergeParticipantPresenceV1,
+  createPresenceStore,
+  readPresenceFromProfile,
+  writePresenceIntoProfilePatch,
+} from './presence/participant-presence.js';
+export type {
+  AvatarValidationStatus,
+  ParticipantPresenceV1,
+} from './presence/participant-presence.js';
 export type { TurnSenderLineOpts } from './turn-meta.js';
 export {
   waitForIceGatheringComplete,
@@ -859,6 +901,27 @@ export type NexusChat = {
       modelOverride?: import('./types').ChatModelOverride;
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
       uiLocale?: string;
+      currentPagePath?: string;
+      injectedSystemPrompts?: string[];
+      pageEntityRef?: {
+        type: string;
+        id?: string | null;
+        name?: string | null;
+        saved?: boolean;
+      };
+      pageInstructions?: string;
+      pageData?: Record<string, unknown>;
+      browserContext?: Record<string, unknown>;
+      browserFunctionCalls?: Array<{
+        name: string;
+        description: string;
+        parameters: {
+          type: string;
+          properties?: Record<string, unknown>;
+          required?: string[];
+        };
+      }>;
+      pageFunctionCalls?: string[];
     },
   ) => Promise<SendMessageResult>;
   /** Compact conversation context via anx.communicate.conversations.compact. */
@@ -895,8 +958,22 @@ export type NexusChat = {
    */
   observeSubAgents: (opts: { conversationId: string | null }) => void;
   loadContacts: () => Promise<void>;
+  /** Entitled chat catalog via existing `anx.inference.models.available`. */
+  listAvailableModels: (input?: {
+    agentId?: string;
+    category?: string;
+    role?: 'owner' | 'orgMember' | 'public';
+  }) => Promise<ModelsAvailableCatalog>;
   /** Create a new conversation for an agent contact (VE id or agent id). Always allocates a new id. */
   openContact: (contactId: string, opts?: { title?: string }) => Promise<{ conversationId: string; agentId?: string }>;
+  listConversations: ContactThreadApi['listConversations'];
+  listMessages: ContactThreadApi['listMessages'];
+  archiveConversation: ContactThreadApi['archiveConversation'];
+  reopenConversation: ContactThreadApi['reopenConversation'];
+  deleteConversation: ContactThreadApi['deleteConversation'];
+  openLatest: ContactThreadApi['openLatest'];
+  resetConversation: ContactThreadApi['resetConversation'];
+  history: ContactThreadApi['history'];
   streamInit: (opts: { conversationId?: string; contactId?: string; roomId?: string }) => Promise<void>;
   /** True while this controller holds an open/connecting conversation WebSocket. */
   hasLiveStream: () => boolean;
@@ -1059,6 +1136,21 @@ export type NexusChat = {
   endVoiceCall: (input: { agentId: string; callSid: string }) => Promise<boolean>;
   endCall: (input: { agentId: string; callSid: string }) => Promise<boolean>;
   getVoiceSurface: () => VoiceCallSurface;
+  /** WebRTC remote audio for lip-sync (analysis). */
+  subscribeRemotePlaybackStream: (
+    handler: import('./voice/types.js').PlaybackStreamHandler,
+  ) => () => void;
+  getRemotePlaybackStream: () => MediaStream | null;
+  /** TTS speak-turn controller with optional lip-sync MediaStream callback. */
+  createSpeakTurn: (opts: {
+    agentId?: string | null;
+    virtualAgentId?: string | null;
+    fallbackModelId?: string | null;
+    onPlaybackStream?: (
+      stream: MediaStream | null,
+      audioContext: AudioContext | null,
+    ) => void;
+  }) => import('./voice/speak-turn.js').SpeakTurnController;
   reattachVoice: (agentId?: string | null) => boolean;
   toggleMute: () => boolean;
   pauseCall: () => void;
@@ -1288,6 +1380,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     syncMessagesFromTurns,
     unwrapData,
   });
+
+  const contactThreads = createContactThreadApi({ send: opts.client.send.bind(opts.client) });
 
   const log = (msg: string, extra?: Record<string, unknown>) => {
     opts.logger?.debug?.(msg, extra);
@@ -1774,6 +1868,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     registerTool(descriptor, handler) {
       tools.set(descriptor.name, { descriptor, handler });
     },
+    async listAvailableModels(input) {
+      if (!features.modelPicker) return { models: [], priceScaleReference: null };
+      return listAvailableChatModels(opts.client, input);
+    },
     async loadContacts() {
       if (!features.contacts) return;
 
@@ -1868,6 +1966,49 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         .catch(() => {});
     },
     openContact,
+    listConversations: contactThreads.listConversations.bind(contactThreads),
+    listMessages: contactThreads.listMessages.bind(contactThreads),
+    archiveConversation: contactThreads.archiveConversation.bind(contactThreads),
+    reopenConversation: contactThreads.reopenConversation.bind(contactThreads),
+    deleteConversation: contactThreads.deleteConversation.bind(contactThreads),
+    async openLatest(contact, openOpts) {
+      const res = await contactThreads.openLatest(contact, openOpts);
+      const resolved = findChatContact(store.getState().contacts, contact.id) || contact;
+      const canonicalId = resolved.id || contact.id;
+      store.setState({
+        selectedAgentId: canonicalId,
+        conversationId: res.conversationId || store.getState().conversationId,
+      });
+      patchCurrentPanel({
+        contactId: canonicalId,
+        contactType: resolved.type || 'agent',
+        conversationId: res.conversationId || store.getState().conversationId,
+        roomId: null,
+        roomPurpose: 'conversation',
+      });
+      return res;
+    },
+    async resetConversation(contact, currentConversationId) {
+      const res = await contactThreads.resetConversation(contact, currentConversationId);
+      const resolved = findChatContact(store.getState().contacts, contact.id) || contact;
+      const canonicalId = resolved.id || contact.id;
+      store.setState({
+        selectedAgentId: canonicalId,
+        conversationId: res.conversationId,
+      });
+      syncMessagesFromTurns([]);
+      patchCurrentPanel({
+        contactId: canonicalId,
+        contactType: resolved.type || 'agent',
+        conversationId: res.conversationId,
+        roomId: null,
+        roomPurpose: 'conversation',
+        turns: [],
+        streaming: false,
+      });
+      return res;
+    },
+    history: contactThreads.history.bind(contactThreads),
     streamInit,
     hasLiveStream,
     async listRooms() {
@@ -2355,6 +2496,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     endVoiceCall: voice.endVoiceCall,
     endCall: voice.endCall,
     getVoiceSurface: voice.getVoiceSurface,
+    subscribeRemotePlaybackStream: voice.subscribeRemotePlaybackStream,
+    getRemotePlaybackStream: voice.getRemotePlaybackStream,
+    createSpeakTurn: voice.createSpeakTurn,
     reattachVoice: voice.reattachVoice,
     toggleMute: voice.toggleMute,
     pauseCall: voice.pauseCall,

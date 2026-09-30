@@ -68,7 +68,7 @@ function searchAnxCommandsDisplay(run: ChatToolRun): ToolRunDisplay {
       ? result.totalMatch
       : count;
   let title = 'search commands';
-  if (run.status === 'running' || run.status === 'pending' || run.status === 'queued') {
+  if (run.status === 'running') {
     title = query ? `search · ${truncateLabel(query, 28)}` : 'search commands';
   } else if (run.status === 'error' || run.status === 'reverted') {
     title = 'search commands';
@@ -98,7 +98,7 @@ function assembleToolCatalogDisplay(run: ChatToolRun): ToolRunDisplay {
   const plus = added.length || (typeof result?.addedCount === 'number' ? result.addedCount : 0);
   const minus =
     removed.length || (typeof result?.removedCount === 'number' ? result.removedCount : 0);
-  const running = run.status === 'running' || run.status === 'pending' || run.status === 'queued';
+  const running = run.status === 'running';
   let title = 'tool catalog';
   if (running) {
     title = 'assembling tools';

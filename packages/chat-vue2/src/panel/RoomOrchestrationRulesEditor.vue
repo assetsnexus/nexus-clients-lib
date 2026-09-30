@@ -67,7 +67,7 @@ import {
   MAX_ROOM_ORCHESTRATION_RULE_LENGTH,
   normalizeRoomOrchestrationRules,
   validateRoomOrchestrationRules,
-} from './room-orchestration-rules.util.js'
+} from './room-orchestration-rules.util'
 
 export default {
   name: 'RoomOrchestrationRulesEditor',

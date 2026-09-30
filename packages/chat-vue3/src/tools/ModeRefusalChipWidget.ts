@@ -1,4 +1,4 @@
-import { h as vueH } from 'vue';
+import { defineComponent, h as vueH } from 'vue';
 import { createCompatH } from './hCompat';
 const h = createCompatH(vueH);
 
@@ -39,7 +39,7 @@ function modeBlockedResult(run: ChatToolRun): ModeBlockedResult | null {
  * props threaded down from NexusChatPanel), so an agent-initiated retry
  * looks identical to a user-initiated mode change.
  */
-export const ModeRefusalChipWidget = {
+export const ModeRefusalChipWidget = defineComponent({
   name: 'NexusModeRefusalChipWidget',
   props: {
     run: { type: Object, required: true },
@@ -184,6 +184,6 @@ export const ModeRefusalChipWidget = {
       ]);
     },
   },
-};
+});
 
 export default ModeRefusalChipWidget;

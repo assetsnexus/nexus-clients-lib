@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import type { MessageDelivery } from '@nexus/chat-core';
 
 const OPTIONS: Array<{ value: MessageDelivery; label: string; hint: string }> = [
@@ -9,12 +10,15 @@ const OPTIONS: Array<{ value: MessageDelivery; label: string; hint: string }> = 
 /**
  * Delivery mode picker for messaging a live AgentRun / linked subchat.
  */
-export const DeliveryModePicker = {
+export const DeliveryModePicker = defineComponent({
   name: 'NexusDeliveryModePicker',
   props: {
     value: { type: String, default: 'queue' },
     disabled: { type: Boolean, default: false },
     compact: { type: Boolean, default: true },
+  },
+  data() {
+    return {};
   },
   methods: {
     setValue(next: MessageDelivery) {
@@ -55,6 +59,6 @@ export const DeliveryModePicker = {
       ),
     );
   },
-};
+});
 
 export default DeliveryModePicker;

@@ -19,10 +19,23 @@ export type BrowserRealtimeCallRuntime = {
   audioEl: any | null;
   localStream: any;
   localTrack: any | null;
+  /** Remote WebRTC audio (agent TTS / realtime voice). Used for lip-sync analysis. */
+  remoteStream: MediaStream | null;
   timerInterval: ReturnType<typeof setInterval> | null;
   connectTimeout: ReturnType<typeof setTimeout> | null;
   liveStartedAtMs: number | null;
 };
+
+export type PlaybackStreamMeta = {
+  agentId: string;
+  conversationId: string | null;
+  source: 'webrtc' | 'tts';
+};
+
+export type PlaybackStreamHandler = (
+  stream: MediaStream | null,
+  meta: PlaybackStreamMeta & { audioContext?: AudioContext | null },
+) => void;
 
 export type VoiceCallSurface = {
   status: BrowserRealtimeCallStatus;

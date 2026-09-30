@@ -1,32 +1,3 @@
-import {
-  createNexusChat,
-  AI_DISCLOSURE_REQUIRED,
-  DEFAULT_FEATURES,
-  mergeToolStreamEvents,
-  rehydrateToolRunsFromHistory,
-  patchToolRunStatus,
-  applyStreamEventToTurns,
-  pollWorkload,
-  parseScheduleCheckBackResult,
-  isScheduleCheckBackTool,
-  parsePresentFileItems,
-  parseMediaImages,
-  parseUserChoiceOptions,
-  collectSubAgentRuns,
-  activeSubAgentCountFromTurns,
-  mapConversationListItem,
-  subscribeConversationActivity,
-  pauseAgentRun,
-  cancelAgentRun,
-  resumeAgentRun,
-  messageAgentRun,
-  getAgentRunPlan,
-  listAgentRunTasks,
-  updateAgentRunTask,
-  listAgentRuns,
-  getAgentRun,
-} from '@nexus/chat-core';
-
 export type {
   NexusChat,
   ChatFeatures,
@@ -172,11 +143,11 @@ export {
   MAX_ROOM_ORCHESTRATION_RULE_LENGTH,
   normalizeRoomOrchestrationRules,
   validateRoomOrchestrationRules,
-} from './panel/room-orchestration-rules.util.js';
+} from './panel/room-orchestration-rules.util';
 export {
   participantResponseModeFromSelect,
   participantResponseModeSelectValue,
-} from './panel/room-participants-ai-config.util.js';
+} from './panel/room-participants-ai-config.util';
 export {
   DEFAULT_PANEL_LABELS,
   formatCallDuration,

@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import {
   parseMediaAudioUrl,
   parseMediaImages,
@@ -15,7 +16,7 @@ type PollFn = (
  * Media carousel for generate_image / generate_audio (Vue 2 Options API).
  * Polls via injected pollWorkload when result only has workloadId.
  */
-export const MediaToolWidget = {
+export const MediaToolWidget = defineComponent({
   name: 'NexusMediaToolWidget',
   props: {
     run: { type: Object, required: true },
@@ -170,6 +171,6 @@ export const MediaToolWidget = {
     }
     return null;
   },
-};
+});
 
 export default MediaToolWidget;

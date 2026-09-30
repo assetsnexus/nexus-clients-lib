@@ -62,7 +62,7 @@
 import {
   participantResponseModeFromSelect,
   participantResponseModeSelectValue,
-} from './room-participants-ai-config.util.js'
+} from './room-participants-ai-config.util'
 
 export default {
   name: 'RoomParticipantsAiConfig',

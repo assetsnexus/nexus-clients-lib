@@ -1,4 +1,4 @@
-import { h as vueH } from 'vue';
+import { defineComponent, h as vueH } from 'vue';
 import { createCompatH } from './hCompat';
 const h = createCompatH(vueH);
 
@@ -7,7 +7,7 @@ import type { UserChoiceOption } from '@nexus/chat-core';
 /**
  * ask_user_choice — emits choice-select with the option label (sent as user message).
  */
-export const AskUserChoiceToolWidget = {
+export const AskUserChoiceToolWidget = defineComponent({
   name: 'NexusAskUserChoiceToolWidget',
   props: {
     options: { type: Array, default: () => [] },
@@ -100,6 +100,6 @@ export const AskUserChoiceToolWidget = {
       ],
     );
   },
-};
+});
 
 export default AskUserChoiceToolWidget;

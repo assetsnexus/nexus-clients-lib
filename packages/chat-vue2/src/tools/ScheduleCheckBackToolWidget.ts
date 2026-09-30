@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import {
   checkBackProgress,
   checkBackRemainingMs,
@@ -18,7 +19,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 /**
  * schedule_check_back countdown + manual/auto trigger via triggerCheckBack prop.
  */
-export const ScheduleCheckBackToolWidget = {
+export const ScheduleCheckBackToolWidget = defineComponent({
   name: 'NexusScheduleCheckBackToolWidget',
   props: {
     run: { type: Object, required: true },
@@ -235,6 +236,6 @@ export const ScheduleCheckBackToolWidget = {
       this.error ? h('p', { class: 'text-danger small mb-0 mt-1' }, this.error) : null,
     ]);
   },
-};
+});
 
 export default ScheduleCheckBackToolWidget;

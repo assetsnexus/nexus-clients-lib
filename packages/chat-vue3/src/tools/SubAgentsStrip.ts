@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import type { SubAgentStripItem } from '@nexus/chat-core';
 import { toolStatusClass, toolStatusLabel, truncateLabel } from './shared';
 
@@ -15,7 +16,7 @@ function isActiveStatus(status: string | null | undefined): boolean {
 /**
  * Compact strip: count badge + expandable active subagent list.
  */
-export const SubAgentsStrip = {
+export const SubAgentsStrip = defineComponent({
   name: 'NexusSubAgentsStrip',
   props: {
     runs: { type: Array, default: () => [] },
@@ -222,6 +223,6 @@ export const SubAgentsStrip = {
       [header, list],
     );
   },
-};
+});
 
 export default SubAgentsStrip;

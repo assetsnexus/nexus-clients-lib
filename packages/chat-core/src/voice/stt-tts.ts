@@ -612,14 +612,71 @@ export async function createAndPollTts(
   }
 }
 
-export async function playAudioUrl(audioUrl: string): Promise<HTMLAudioElement> {
+export type PlayAudioUrlOpts = {
+  /**
+   * When set, tap the element into an AudioContext graph and expose a MediaStream
+   * for lip-sync analysis (same AudioContext as playback). Called with `null` when
+   * playback ends or fails.
+   */
+  onPlaybackStream?: (
+    stream: MediaStream | null,
+    audioContext: AudioContext | null,
+  ) => void;
+};
+
+function resolveAudioContextCtor(): (typeof AudioContext) | null {
+  if (typeof globalThis === 'undefined') return null;
+  const g = globalThis as unknown as {
+    AudioContext?: typeof AudioContext;
+    webkitAudioContext?: typeof AudioContext;
+  };
+  return g.AudioContext || g.webkitAudioContext || null;
+}
+
+/**
+ * Play a TTS (or other) audio URL. Optionally tap a MediaStream for lip-sync.
+ */
+export async function playAudioUrl(
+  audioUrl: string,
+  opts?: PlayAudioUrlOpts,
+): Promise<HTMLAudioElement> {
   if (!audioUrl || typeof audioUrl !== 'string') {
     throw new Error('No audio URL to play.');
   }
   const audio = new Audio(audioUrl);
+  let ctx: AudioContext | null = null;
+  let notified = false;
+  const notify = (stream: MediaStream | null) => {
+    if (!opts?.onPlaybackStream) return;
+    if (!stream && notified && !ctx) {
+      opts.onPlaybackStream(null, null);
+      return;
+    }
+    notified = true;
+    opts.onPlaybackStream(stream, ctx);
+  };
+  const endNotify = () => notify(null);
+
   try {
+    const AudioCtx = resolveAudioContextCtor();
+    if (AudioCtx && opts?.onPlaybackStream) {
+      ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        try {
+          await ctx.resume();
+        } catch {
+          /* autoplay policies */
+        }
+      }
+      const source = ctx.createMediaElementSource(audio);
+      const dest = ctx.createMediaStreamDestination();
+      source.connect(dest);
+      source.connect(ctx.destination);
+      notify(dest.stream);
+    }
     await audio.play();
   } catch (err) {
+    endNotify();
     const msg = err instanceof Error ? err.message : String(err);
     // Common when a relative/JWT-gated serve path resolves to HTML/JSON.
     if (/no supported source|not supported|decode/i.test(msg)) {
@@ -629,6 +686,8 @@ export async function playAudioUrl(audioUrl: string): Promise<HTMLAudioElement> 
     }
     throw err instanceof Error ? err : new Error(msg || 'Audio playback failed');
   }
+  audio.addEventListener('ended', endNotify, { once: true });
+  audio.addEventListener('error', endNotify, { once: true });
   return audio;
 }
 
@@ -758,7 +817,12 @@ export async function transcribeOrNull(
 /** Speak text via TTS create/poll then play. */
 export async function speakText(
   client: CommandClient,
-  input: { modelId: string; text: string; voice?: string | null },
+  input: {
+    modelId: string;
+    text: string;
+    voice?: string | null;
+    onPlaybackStream?: PlayAudioUrlOpts['onPlaybackStream'];
+  },
 ): Promise<TtsPlaybackResult & { ok: boolean }> {
   if (!client) {
     return { ok: false, errorMessage: 'No command client' };
@@ -773,7 +837,9 @@ export async function speakText(
   );
   if (!result.ok) return result;
   try {
-    await playAudioUrl(result.audioUrl);
+    await playAudioUrl(result.audioUrl, {
+      onPlaybackStream: input.onPlaybackStream,
+    });
   } catch (err) {
     return {
       ok: false,

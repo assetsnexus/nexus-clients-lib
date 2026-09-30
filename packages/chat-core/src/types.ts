@@ -14,6 +14,7 @@ export type ChatFeatures = {
   encryptionModes: boolean;
   spendLimits: boolean;
   calls: boolean;
+  adminPanels: boolean;
 };
 
 /** Intentionally NOT part of ChatFeatures — AI disclosure cannot be disabled. */
@@ -32,6 +33,7 @@ export const DEFAULT_FEATURES: ChatFeatures = {
   encryptionModes: true,
   spendLimits: true,
   calls: true,
+  adminPanels: false,
 };
 
 export type ChatToolDescriptor = {

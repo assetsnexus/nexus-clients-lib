@@ -8,6 +8,7 @@ import {
   destroyBrowserRealtimeCallRuntime,
   getBrowserRealtimeCallRuntime,
   isBrowserRealtimeCallConnected,
+  notifyBrowserRealtimeRemoteStream,
   setBrowserRealtimeCallHandlers,
   setBrowserRealtimeCallRuntime,
   syncRuntimeElapsed,
@@ -187,12 +188,24 @@ export class BrowserCallSession {
             })()
           : null);
 
-      if (audioEl) {
-        pc.ontrack = (e: { streams?: any[] }) => {
-          audioEl.srcObject = e.streams?.[0] ?? null;
+      // Always attach ontrack so lip-sync / hosts get the remote MediaStream even
+      // when there is no HTMLAudioElement (headless / analysis-only).
+      pc.ontrack = (e: { streams?: any[]; track?: MediaStreamTrack }) => {
+        const streamFromEvent =
+          e.streams?.[0] ??
+          (e.track && typeof MediaStream !== 'undefined' ? new MediaStream([e.track]) : null);
+        if (audioEl) {
+          audioEl.srcObject = streamFromEvent;
           void audioEl.play?.()?.catch?.(() => {});
-        };
-      }
+        }
+        const live = getBrowserRealtimeCallRuntime();
+        if (live) live.remoteStream = streamFromEvent;
+        notifyBrowserRealtimeRemoteStream(streamFromEvent, {
+          agentId: input.agentId,
+          conversationId: input.conversationId ?? null,
+          source: 'webrtc',
+        });
+      };
 
       if (localTrack) pc.addTrack(localTrack, stream);
 
@@ -215,6 +228,7 @@ export class BrowserCallSession {
         audioEl,
         localStream: stream,
         localTrack,
+        remoteStream: null,
         timerInterval: null,
         connectTimeout,
         liveStartedAtMs: null,

@@ -1,4 +1,4 @@
-import { h as vueH } from 'vue';
+import { defineComponent, h as vueH } from 'vue';
 import { createCompatH } from './hCompat';
 const h = createCompatH(vueH);
 
@@ -13,7 +13,7 @@ const OPTIONS: Array<{ value: MessageDelivery; label: string; hint: string }> = 
 /**
  * Delivery mode picker for messaging a live AgentRun / linked subchat.
  */
-export const DeliveryModePicker = {
+export const DeliveryModePicker = defineComponent({
   name: 'NexusDeliveryModePicker',
   props: {
     value: { type: String, default: 'queue' },
@@ -59,6 +59,6 @@ export const DeliveryModePicker = {
       ),
     );
   },
-};
+});
 
 export default DeliveryModePicker;

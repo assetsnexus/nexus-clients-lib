@@ -1,7 +1,16 @@
 import type { ChatVoiceCallSession, ChatVoiceDialInInfo, ChatHooks } from '../types.js';
 import type { ChatTurn, PanelState } from '../state.js';
 import { BrowserCallSession } from './session.js';
-import type { VoiceBridgeEventPayload, VoiceCallSurface } from './types.js';
+import type {
+  PlaybackStreamHandler,
+  VoiceBridgeEventPayload,
+  VoiceCallSurface,
+} from './types.js';
+import {
+  getBrowserRealtimeRemoteStream,
+  setBrowserRealtimeRemoteStreamHandler,
+} from './runtime.js';
+import { createSpeakTurnController } from './speak-turn.js';
 
 type SendResult =
   | { ok: true; data?: unknown; kind?: string }
@@ -239,6 +248,40 @@ export function createVoiceApi(deps: VoiceApiDeps) {
     session,
     getVoiceSurface(): VoiceCallSurface {
       return session.getSurface();
+    },
+    /**
+     * Subscribe to WebRTC remote audio (and optionally receive the current stream).
+     * Used by avatar lip-sync; analysis-only — does not replace HTMLAudioElement playback.
+     */
+    subscribeRemotePlaybackStream(handler: PlaybackStreamHandler): () => void {
+      setBrowserRealtimeRemoteStreamHandler(handler);
+      return () => {
+        if (getBrowserRealtimeRemoteStream() != null) {
+          // keep stream on runtime; only detach this handler
+        }
+        setBrowserRealtimeRemoteStreamHandler(null);
+      };
+    },
+    getRemotePlaybackStream(): MediaStream | null {
+      return getBrowserRealtimeRemoteStream();
+    },
+    /** TTS speak-turn with optional lip-sync MediaStream callback. */
+    createSpeakTurn(opts: {
+      agentId?: string | null;
+      virtualAgentId?: string | null;
+      fallbackModelId?: string | null;
+      onPlaybackStream?: (
+        stream: MediaStream | null,
+        audioContext: AudioContext | null,
+      ) => void;
+    }) {
+      return createSpeakTurnController({
+        client: deps.client,
+        agentId: opts.agentId,
+        virtualAgentId: opts.virtualAgentId,
+        fallbackModelId: opts.fallbackModelId,
+        onPlaybackStream: opts.onPlaybackStream,
+      });
     },
     reattachVoice(agentId?: string | null): boolean {
       return session.reattach(agentId);

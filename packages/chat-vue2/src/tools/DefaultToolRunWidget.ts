@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import type { ChatToolRun } from '@nexus/chat-core';
 import { formatToolRunDisplay } from './tool-run-display';
 import { resolveToolAccessKind, toolStatusClass, toolStatusLabel } from './shared';
@@ -5,7 +6,7 @@ import { resolveToolAccessKind, toolStatusClass, toolStatusLabel } from './share
 /**
  * Compact expandable tool run row with approve/revert actions.
  */
-export const DefaultToolRunWidget = {
+export const DefaultToolRunWidget = defineComponent({
   name: 'NexusDefaultToolRunWidget',
   props: {
     run: { type: Object, required: true },
@@ -148,6 +149,6 @@ export const DefaultToolRunWidget = {
       ],
     );
   },
-};
+});
 
 export default DefaultToolRunWidget;

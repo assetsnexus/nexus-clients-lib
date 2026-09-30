@@ -1,6 +1,11 @@
-import type { BrowserRealtimeCallRuntime } from './types.js';
+import type {
+  BrowserRealtimeCallRuntime,
+  PlaybackStreamHandler,
+  PlaybackStreamMeta,
+} from './types.js';
 
 let activeRuntime: BrowserRealtimeCallRuntime | null = null;
+let remoteStreamHandler: PlaybackStreamHandler | null = null;
 
 export function getBrowserRealtimeCallRuntime(): BrowserRealtimeCallRuntime | null {
   return activeRuntime;
@@ -12,6 +17,38 @@ export function setBrowserRealtimeCallRuntime(runtime: BrowserRealtimeCallRuntim
 
 export function clearBrowserRealtimeCallRuntime(): void {
   activeRuntime = null;
+}
+
+export function setBrowserRealtimeRemoteStreamHandler(
+  handler: PlaybackStreamHandler | null,
+): void {
+  remoteStreamHandler = handler;
+  const rt = activeRuntime;
+  if (handler && rt?.remoteStream) {
+    handler(rt.remoteStream, {
+      agentId: rt.agentId,
+      conversationId: rt.conversationId,
+      source: 'webrtc',
+    });
+  }
+}
+
+export function getBrowserRealtimeRemoteStream(): MediaStream | null {
+  return activeRuntime?.remoteStream ?? null;
+}
+
+export function notifyBrowserRealtimeRemoteStream(
+  stream: MediaStream | null,
+  meta?: Partial<PlaybackStreamMeta>,
+): void {
+  const rt = activeRuntime;
+  if (rt) rt.remoteStream = stream;
+  remoteStreamHandler?.(stream, {
+    agentId: meta?.agentId ?? rt?.agentId ?? '',
+    conversationId:
+      meta?.conversationId !== undefined ? meta.conversationId : (rt?.conversationId ?? null),
+    source: meta?.source ?? 'webrtc',
+  });
 }
 
 /** Close WebRTC resources held by the module runtime (safe if refs were lost on remount). */
@@ -55,6 +92,12 @@ export function destroyBrowserRealtimeCallRuntime(): void {
       /* ignore */
     }
   }
+  rt.remoteStream = null;
+  notifyBrowserRealtimeRemoteStream(null, {
+    agentId: rt.agentId,
+    conversationId: rt.conversationId,
+    source: 'webrtc',
+  });
   clearBrowserRealtimeCallRuntime();
 }
 

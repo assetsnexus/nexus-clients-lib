@@ -209,6 +209,11 @@ export function createSpeakTurnController(opts: {
   virtualAgentId?: string | null;
   /** Fallback when contact-tts has no model. */
   fallbackModelId?: string | null;
+  /** Lip-sync: MediaStream from the TTS AudioContext graph (null when done). */
+  onPlaybackStream?: (
+    stream: MediaStream | null,
+    audioContext: AudioContext | null,
+  ) => void;
 }): SpeakTurnController {
   let state: SpeakTurnState = {
     phase: 'idle',
@@ -235,6 +240,7 @@ export function createSpeakTurnController(opts: {
       /* ignore */
     }
     audio = null;
+    opts.onPlaybackStream?.(null, null);
   };
 
   const cancelWorkload = async (workloadId: string | null) => {
@@ -250,7 +256,9 @@ export function createSpeakTurnController(opts: {
     stopAudio();
     emit({ phase: 'playing', errorMessage: null, audioUrl: url });
     try {
-      const el = await playAudioUrl(url);
+      const el = opts.onPlaybackStream
+        ? await playAudioUrl(url, { onPlaybackStream: opts.onPlaybackStream })
+        : await playAudioUrl(url);
       audio = el;
       await new Promise<void>((resolve) => {
         const done = () => {

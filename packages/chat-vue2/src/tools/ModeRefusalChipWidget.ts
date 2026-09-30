@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import {
   formatModeTransitionCountdown,
   modeLabel,
@@ -35,7 +36,63 @@ function modeBlockedResult(run: ChatToolRun): ModeBlockedResult | null {
  * props threaded down from NexusChatPanel), so an agent-initiated retry
  * looks identical to a user-initiated mode change.
  */
-export const ModeRefusalChipWidget = {
+function renderModeRing(h: any, t: ModeTransitionState) {
+  const dashOffset = RING_CIRCUMFERENCE * (1 - t.progress);
+  return h('span', { class: 'nexus-mode-transition' }, [
+    t.phase === 'transitioning'
+      ? h(
+          'span',
+          {
+            class: 'nexus-mode-transition__ring',
+            style: { width: RING_SIZE + 'px', height: RING_SIZE + 'px' },
+          },
+          [
+            h(
+              'svg',
+              { attrs: { width: RING_SIZE, height: RING_SIZE }, class: 'nexus-mode-transition__svg' },
+              [
+                h('circle', {
+                  attrs: {
+                    cx: RING_SIZE / 2,
+                    cy: RING_SIZE / 2,
+                    r: RING_RADIUS,
+                    fill: 'none',
+                    stroke: 'currentColor',
+                    'stroke-width': RING_STROKE,
+                  },
+                  class: 'nexus-checkback__track',
+                }),
+                h('circle', {
+                  attrs: {
+                    cx: RING_SIZE / 2,
+                    cy: RING_SIZE / 2,
+                    r: RING_RADIUS,
+                    fill: 'none',
+                    stroke: 'currentColor',
+                    'stroke-width': RING_STROKE,
+                    'stroke-linecap': 'round',
+                    'stroke-dasharray': String(RING_CIRCUMFERENCE),
+                    'stroke-dashoffset': String(dashOffset),
+                  },
+                  class: 'nexus-mode-transition__progress',
+                }),
+              ],
+            ),
+          ],
+        )
+      : null,
+    h('span', { class: 'nexus-mode-transition__labels' }, [
+      h('span', { class: 'nexus-mode-transition__from' }, modeLabel(t.from)),
+      h('span', { class: 'nexus-mode-transition__arrow' }, '→'),
+      h('span', { class: 'nexus-mode-transition__to' }, modeLabel(t.to)),
+      t.phase === 'transitioning'
+        ? h('span', { class: 'nexus-mode-transition__countdown' }, formatModeTransitionCountdown(t.remainingMs))
+        : null,
+    ]),
+  ]);
+}
+
+export const ModeRefusalChipWidget = defineComponent({
   name: 'NexusModeRefusalChipWidget',
   props: {
     run: { type: Object, required: true },
@@ -83,7 +140,7 @@ export const ModeRefusalChipWidget = {
     const currentLabel = modeLabel(blocked.mode);
 
     const ring = this.isThisTransitionActive
-      ? this.renderRing(h, this.transition!)
+      ? renderModeRing(h, this.transition!)
       : null;
 
     const actionRow = this.switchedTo
@@ -123,63 +180,6 @@ export const ModeRefusalChipWidget = {
       actionRow,
     ]);
   },
-  methods: {
-    renderRing(h: any, t: ModeTransitionState) {
-      const dashOffset = RING_CIRCUMFERENCE * (1 - t.progress);
-      return h('span', { class: 'nexus-mode-transition' }, [
-        t.phase === 'transitioning'
-          ? h(
-              'span',
-              {
-                class: 'nexus-mode-transition__ring',
-                style: { width: RING_SIZE + 'px', height: RING_SIZE + 'px' },
-              },
-              [
-                h(
-                  'svg',
-                  { attrs: { width: RING_SIZE, height: RING_SIZE }, class: 'nexus-mode-transition__svg' },
-                  [
-                    h('circle', {
-                      attrs: {
-                        cx: RING_SIZE / 2,
-                        cy: RING_SIZE / 2,
-                        r: RING_RADIUS,
-                        fill: 'none',
-                        stroke: 'currentColor',
-                        'stroke-width': RING_STROKE,
-                      },
-                      class: 'nexus-checkback__track',
-                    }),
-                    h('circle', {
-                      attrs: {
-                        cx: RING_SIZE / 2,
-                        cy: RING_SIZE / 2,
-                        r: RING_RADIUS,
-                        fill: 'none',
-                        stroke: 'currentColor',
-                        'stroke-width': RING_STROKE,
-                        'stroke-linecap': 'round',
-                        'stroke-dasharray': String(RING_CIRCUMFERENCE),
-                        'stroke-dashoffset': String(dashOffset),
-                      },
-                      class: 'nexus-mode-transition__progress',
-                    }),
-                  ],
-                ),
-              ],
-            )
-          : null,
-        h('span', { class: 'nexus-mode-transition__labels' }, [
-          h('span', { class: 'nexus-mode-transition__from' }, modeLabel(t.from)),
-          h('span', { class: 'nexus-mode-transition__arrow' }, '→'),
-          h('span', { class: 'nexus-mode-transition__to' }, modeLabel(t.to)),
-          t.phase === 'transitioning'
-            ? h('span', { class: 'nexus-mode-transition__countdown' }, formatModeTransitionCountdown(t.remainingMs))
-            : null,
-        ]),
-      ]);
-    },
-  },
-};
+});
 
 export default ModeRefusalChipWidget;

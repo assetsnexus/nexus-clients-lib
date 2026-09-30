@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue';
 import type {
   AgentRunPlan,
   AgentRunTask,
@@ -77,6 +78,7 @@ const STATUS_CHIP: Record<SubAgentFinalStatus, { label: string; cls: string }> =
   cancelled: { label: 'cancelled', cls: 'is-mode-blocked' },
   interrupted: { label: 'interrupted', cls: 'is-mode-blocked' },
   paused: { label: 'paused', cls: 'is-paused' },
+  failed: { label: 'failed', cls: 'is-error' },
 };
 
 function progressRingAttrs(pct: number) {
@@ -89,7 +91,7 @@ function progressRingAttrs(pct: number) {
  * Nested sub-agent / AgentRun card: compact header, plan/tasks, controls, delivery.
  * Collapsed by default; header shows mission name + elapsed while running.
  */
-export const SubAgentRunWidget = {
+export const SubAgentRunWidget = defineComponent({
   name: 'NexusSubAgentRunWidget',
   components: { DeliveryModePicker },
   props: {
@@ -755,6 +757,6 @@ export const SubAgentRunWidget = {
       [header, body],
     );
   },
-};
+});
 
 export default SubAgentRunWidget;

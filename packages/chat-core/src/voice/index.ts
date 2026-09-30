@@ -2,6 +2,8 @@ export type {
   BrowserCallRuntimeOptions,
   BrowserRealtimeCallRuntime,
   BrowserRealtimeCallStatus,
+  PlaybackStreamHandler,
+  PlaybackStreamMeta,
   VoiceBridgeEvent,
   VoiceBridgeEventPayload,
   VoiceCallSurface,
@@ -21,9 +23,12 @@ export {
   computeRuntimeElapsedSec,
   destroyBrowserRealtimeCallRuntime,
   getBrowserRealtimeCallRuntime,
+  getBrowserRealtimeRemoteStream,
   isBrowserRealtimeCallConnected,
+  notifyBrowserRealtimeRemoteStream,
   setBrowserRealtimeCallHandlers,
   setBrowserRealtimeCallRuntime,
+  setBrowserRealtimeRemoteStreamHandler,
   syncRuntimeElapsed,
 } from './runtime.js';
 export {
@@ -61,6 +66,7 @@ export {
   type TtsVoiceListItem,
   type TtsVoicesListResult,
   type TtsVoicePickerOption,
+  type PlayAudioUrlOpts,
 } from './stt-tts.js';
 export {
   filterSttModelsForPicker,
@@ -68,6 +74,11 @@ export {
   modelHasSttCapability,
   modelSupportsSttStream,
 } from './stt-models-picker.js';
+export {
+  createVoiceModeState,
+  type VoiceLayoutMode,
+  type VoiceModeState,
+} from './voice-mode.js';
 export {
   createSpeakTurnController,
   getContactTts,

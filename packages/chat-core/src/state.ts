@@ -28,6 +28,7 @@ export type ChatToolRunStatus =
 export type SubAgentFinalStatus =
   | 'completed'
   | 'error'
+  | 'failed'
   | 'timeout'
   | 'cancelled'
   | 'interrupted'

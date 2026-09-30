@@ -29,6 +29,7 @@ function fakeRuntime(overrides: Partial<BrowserRealtimeCallRuntime> = {}): Brows
     timerInterval: null,
     connectTimeout: null,
     liveStartedAtMs: Date.now() - 2000,
+    remoteStream: null,
     ...overrides,
   };
 }

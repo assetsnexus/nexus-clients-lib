@@ -268,8 +268,10 @@ describe('CommandConnectivityController', () => {
   });
 
   it('coalesces duplicate reads while queued', async () => {
-    let releaseSleep: (() => void) | null = null;
     let fail = true;
+    let releaseSleep = (): void => {
+      throw new Error('sleep was not armed');
+    };
     const ctrl = createController({
       sleep: () =>
         new Promise<void>((resolve) => {
@@ -294,7 +296,7 @@ describe('CommandConnectivityController', () => {
     await flushMicrotasks();
     expect(ctrl.getSnapshot().queuedCount).toBe(1);
 
-    releaseSleep?.();
+    releaseSleep();
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1).toEqual({ ok: true });
     expect(r2).toEqual({ ok: true });
