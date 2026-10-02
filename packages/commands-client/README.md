@@ -8,10 +8,22 @@ Framework-free TypeScript client for the Nexus commands API and Login with Nexus
 npm i @nexus/commands-client
 ```
 
+## Node.js
+
+`engines` allows Node.js 18 or newer. `generatePkce` and `verifyAttestation` call the Web Crypto global (`crypto.subtle`). Browsers and Node.js 20+ provide that global. Node 18 keeps working if you assign Web Crypto once before those calls:
+
+```js
+import { webcrypto } from 'node:crypto';
+
+if (!globalThis.crypto?.subtle) {
+  globalThis.crypto = webcrypto;
+}
+```
+
 ## Quick start
 
 ```ts
-import { NexusClient, StaticTokenProvider } from '@nexus/commands-client';
+import { ElevationRequiredError, NexusClient, StaticTokenProvider } from '@nexus/commands-client';
 
 const client = new NexusClient({
   baseUrl: 'https://region.example.com',
@@ -24,7 +36,8 @@ if (result.ok) {
 } else if (result.kind === 'sca_required') {
   // MUST render authorizationText + uiMetadata.dynamicFields next to the factor
 } else if (result.kind === 'permission_elevation_required') {
-  // 403 — elevations.respond, then retry the original chat turn
+  const elevation = ElevationRequiredError.fromSendResult(result);
+  // Send the user to elevation.approvalUrl, then elevation.waitForDecision(client)
 } else if (result.kind === 'accepted') {
   // Envelope 102 (or legacy non-SCA 202) — follow anx.long-running.get; do not retry the write
   if (result.taskId) {
@@ -44,6 +57,8 @@ if (result.ok) {
 - **Command connectivity**: `CommandConnectivityController` — strict transport-disconnect classifier, 3 attempts over ~10s, degraded/down state (portal overlay after 20s authenticated / 10s anonymous), read coalesce, `formatConnectivityTooltip`
 - OAuth PKCE helpers, JWKS cache, introspection
 - Region resolvers (static / country / gateway stub)
+- `subject` namespace: consented identities, regulatory status, field claims
+- `permissions.requestBatch` and `ElevationRequiredError.waitForDecision`
 - `grant` and `subscriptions` namespaces
 - `/testing` in-memory transport + fixtures
 - `npx nexus-commands-codegen --region <url>` typed command map

@@ -1,7 +1,7 @@
 {
   "name": "@nexus/webhooks",
-  "version": "0.1.0",
-  "description": "Nexus webhook HMAC verification and typed event handlers",
+  "version": "0.2.0",
+  "description": "Nexus webhook HMAC verification, typed partner events, and rolesVersion ordering",
   "license": "UNLICENSED",
   "publishConfig": {
     "access": "public"

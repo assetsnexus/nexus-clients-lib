@@ -4,7 +4,9 @@ import { DiscoveryNamespace } from './discovery/namespace.js';
 import { mapHttpStatusToCode, NexusError } from './errors/nexus-error.js';
 import { GrantNamespace } from './grant/namespace.js';
 import { LongRunningNamespace } from './long-running/namespace.js';
+import { PermissionsNamespace } from './permissions/namespace.js';
 import { SubscriptionsNamespace } from './subscriptions/namespace.js';
+import { SubjectNamespace } from './subject/namespace.js';
 import type { IdentityContext, TokenProvider } from './token-provider.js';
 import {
   type CommandResponse,
@@ -80,6 +82,8 @@ export class NexusClient {
   readonly subscriptions: SubscriptionsNamespace;
   readonly discovery: DiscoveryNamespace;
   readonly longRunning: LongRunningNamespace;
+  readonly subject: SubjectNamespace;
+  readonly permissions: PermissionsNamespace;
 
   private readonly baseUrl: string;
   private readonly tokenProvider?: TokenProvider;
@@ -108,6 +112,8 @@ export class NexusClient {
     this.subscriptions = new SubscriptionsNamespace(this);
     this.discovery = new DiscoveryNamespace(this);
     this.longRunning = new LongRunningNamespace(this);
+    this.subject = new SubjectNamespace(this);
+    this.permissions = new PermissionsNamespace(this);
   }
 
   getBaseUrl(): string {

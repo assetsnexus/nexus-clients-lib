@@ -9,6 +9,7 @@ export type NexusErrorCode =
   | 'SCA_REQUIRED'
   | 'DATA_ACCESS_APPROVAL_REQUIRED'
   | 'PERMISSION_ELEVATION_REQUIRED'
+  | 'ATTESTATION_INVALID'
   | 'APPROVER_INSUFFICIENT_PERMISSION'
   | 'ONBOARDING_REQUIRED_FOR_GRANT'
   | 'INVALID_GRANT'
@@ -106,8 +107,16 @@ export const NEXUS_ERROR_CATALOG: Record<NexusErrorCode, NexusErrorCatalogEntry>
     retryable: false,
     meaning: 'An AI identity lacks a capability or RBAC for this command.',
     remediation:
-      'Show pack + command names. If onboarding is required, complete it first. Else anx.ai-agents.elevations.respond (deny / allow_once / allow_session / allow_permanent), then retry the original chat turn.',
+      'App calls: send the user to approvalUrl and poll with ElevationRequiredError.waitForDecision(). AI calls: show pack + command names, then anx.ai-agents.elevations.respond (deny / allow_once / allow_session / allow_permanent) and retry the original turn.',
     docsAnchor: 'errors#permission_elevation_required',
+  },
+  ATTESTATION_INVALID: {
+    code: 'ATTESTATION_INVALID',
+    httpStatus: 401,
+    retryable: false,
+    meaning: 'The regulatory-status attestation JWS failed verification.',
+    remediation: 'Fetch a fresh anx.oauth2.subject.regulatory-status.get attestation and verify it against the region JWKS. Reject HS256.',
+    docsAnchor: 'errors#attestation_invalid',
   },
   APPROVER_INSUFFICIENT_PERMISSION: {
     code: 'APPROVER_INSUFFICIENT_PERMISSION',

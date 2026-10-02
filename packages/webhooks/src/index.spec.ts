@@ -1,6 +1,6 @@
 import { createHmac } from 'crypto';
 import { describe, expect, it } from 'vitest';
-import { verifySignature } from './index.js';
+import { dispatchWebhookEvent, isNewerVersion, verifySignature, type NexusWebhookPayload } from './index.js';
 
 describe('verifySignature', () => {
   const secret = 'whsec_test_aaaaaaaa';
@@ -29,5 +29,54 @@ describe('verifySignature', () => {
   it('fails closed on missing raw body or header', () => {
     expect(verifySignature('', { 'x-nexus-signature': sign(body, secret) }, secret)).toBe(false);
     expect(verifySignature(body, {}, secret)).toBe(false);
+  });
+});
+
+describe('dispatchWebhookEvent', () => {
+  it('routes regulatory status and applies roles only when the version is newer', async () => {
+    const seen: string[] = [];
+    let rolesVersion = 2;
+    const regulatory: NexusWebhookPayload = {
+      eventId: 'e-reg',
+      event: 'regulatory.status_changed',
+      eventVersion: 1,
+      clientId: 'client-1',
+      at: '2026-10-02T12:00:00.000Z',
+      data: {
+        grantId: 'g1',
+        clientId: 'client-1',
+        sub: 'pairwise',
+        subjectType: 'org_member',
+        bundleSlug: 'kyb-l1',
+        target: 'org',
+        status: 'revoked',
+        previousStatus: 'verified',
+      },
+    };
+    await dispatchWebhookEvent(regulatory, {
+      'regulatory.status_changed': (payload) => {
+        seen.push(payload.data.status);
+      },
+    });
+    expect(seen).toEqual(['revoked']);
+
+    const roles = (version: number): NexusWebhookPayload => ({
+      eventId: `e-roles-${version}`,
+      event: 'app_roles.changed',
+      eventVersion: 1,
+      clientId: 'client-1',
+      at: '2026-10-02T12:00:00.000Z',
+      data: { sub: 'pairwise', grantId: 'g1', roles: ['admin'], rolesVersion: version },
+    });
+    let applied = 0;
+    const onRoles = async (payload: Extract<NexusWebhookPayload, { event: 'app_roles.changed' }>) => {
+      if (!isNewerVersion(rolesVersion, payload.data.rolesVersion)) return;
+      rolesVersion = payload.data.rolesVersion;
+      applied += 1;
+    };
+    await dispatchWebhookEvent(roles(2), { 'app_roles.changed': onRoles });
+    await dispatchWebhookEvent(roles(3), { 'app_roles.changed': onRoles });
+    expect(applied).toBe(1);
+    expect(rolesVersion).toBe(3);
   });
 });

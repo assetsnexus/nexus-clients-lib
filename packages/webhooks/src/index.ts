@@ -1,25 +1,26 @@
 import { createHmac, timingSafeEqual } from 'crypto';
+import type { NexusWebhookPayload } from './events.js';
 
-export type NexusWebhookEvent =
-  | 'grant.revoked'
-  | 'grant.updated'
-  | 'privacy.export_requested'
-  | 'privacy.erasure_requested'
-  | 'account.erased'
-  | 'subscription.created'
-  | 'subscription.updated'
-  | 'subscription.canceled'
-  | 'invoice.payment_succeeded'
-  | 'invoice.payment_failed';
-
-export type NexusWebhookPayload = {
-  eventId: string;
-  event: NexusWebhookEvent;
-  eventVersion: number;
-  clientId: string;
-  data: Record<string, unknown>;
-  at: string;
-};
+export {
+  APP_SUBSCRIPTION_EVENTS,
+  isAppSubscriptionEvent,
+  type AgentFundingChangedData,
+  type AppConfigChangedData,
+  type AppRolesChangedData,
+  type AppSubscriptionData,
+  type AppSubscriptionEvent,
+  type AppUserBlockedData,
+  type AppUserUnblockedData,
+  type GrantAccessRevokedData,
+  type GrantFieldsChangedData,
+  type GrantResourceScopeChangedData,
+  type GrantRevokedData,
+  type NexusWebhookEvent,
+  type NexusWebhookPayload,
+  type PermissionRequestDecidedData,
+  type RegulatoryStatusChangedData,
+} from './events.js';
+export { isNewerVersion } from './version.js';
 
 export function verifySignature(
   rawBody: string | Buffer,
@@ -76,15 +77,19 @@ export function createIdempotencyStore() {
   };
 }
 
-export type WebhookHandlers = Partial<
-  Record<NexusWebhookEvent, (payload: NexusWebhookPayload) => void | Promise<void>>
->;
+export type WebhookHandlers = {
+  [E in NexusWebhookPayload['event']]?: (
+    payload: Extract<NexusWebhookPayload, { event: E }>,
+  ) => void | Promise<void>;
+};
 
 export async function dispatchWebhookEvent(
   payload: NexusWebhookPayload,
   handlers: WebhookHandlers,
 ): Promise<void> {
-  const handler = handlers[payload.event];
+  const handler = handlers[payload.event] as
+    | ((payload: NexusWebhookPayload) => void | Promise<void>)
+    | undefined;
   if (handler) await handler(payload);
 }
 
@@ -109,7 +114,11 @@ export function expressAdapter(opts: {
     const payload = (typeof req.body === 'object' && req.body
       ? req.body
       : JSON.parse(raw)) as NexusWebhookPayload;
-    if (store.seen(payload.eventId)) {
+    if (!payload || typeof payload.eventId !== 'string' || !payload.eventId || typeof payload.event !== 'string') {
+      res.status(400).json({ error: 'invalid_payload' });
+      return;
+    }
+    if (await store.seen(payload.eventId)) {
       res.status(200).json({ ok: true, duplicate: true });
       return;
     }

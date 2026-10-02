@@ -1,5 +1,9 @@
 export type PermissionElevationPrompt = {
   elevationId: string | null;
+  /** App elevation id from R5 (`elevationRequestId`). Falls back to `elevationId`. */
+  elevationRequestId: string | null;
+  /** Portal path the user opens to approve the batch. Relative, as the region sends it. */
+  approvalUrl: string | null;
   pack: string | null;
   command: string | null;
   commandNames: string[];
@@ -23,6 +27,14 @@ export function mapPermissionElevationError(
   }
 
   const details = errorObject.details || {};
+  const elevationRequestId =
+    typeof details.elevationRequestId === 'string' && details.elevationRequestId.trim()
+      ? details.elevationRequestId.trim()
+      : null;
+  const elevationId =
+    typeof details.elevationId === 'string' && details.elevationId.trim()
+      ? details.elevationId.trim()
+      : elevationRequestId;
   const commandNames = asStringList(details.commandNames);
   const single =
     typeof details.command === 'string' && details.command.trim()
@@ -31,7 +43,12 @@ export function mapPermissionElevationError(
   if (single && !commandNames.includes(single)) commandNames.unshift(single);
 
   return {
-    elevationId: typeof details.elevationId === 'string' ? details.elevationId : null,
+    elevationId,
+    elevationRequestId: elevationRequestId || elevationId,
+    approvalUrl:
+      typeof details.approvalUrl === 'string' && details.approvalUrl.trim()
+        ? details.approvalUrl.trim()
+        : null,
     pack: typeof details.pack === 'string' ? details.pack : null,
     command: single || commandNames[0] || null,
     commandNames,

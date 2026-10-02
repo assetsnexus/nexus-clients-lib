@@ -8,6 +8,54 @@ export {
   type PermissionElevationPrompt,
 } from './permission-elevation.js';
 export {
+  ElevationRequiredError,
+  type PermissionRequestSnapshot,
+  type PermissionRequestStatus,
+  type CommandSender,
+} from './permissions/elevation-error.js';
+export {
+  PermissionsNamespace,
+  type PermissionBatchResult,
+} from './permissions/namespace.js';
+export {
+  PermissionBatchValidationError,
+  normalizePermissionBatch,
+  type PermissionBatchItem,
+  type PermissionResourceRef,
+} from './permissions/validate-batch.js';
+export {
+  SubjectNamespace,
+  SubjectFieldsNamespace,
+} from './subject/namespace.js';
+export { verifyAttestation, type AttestationLogger, type JwksKeySource } from './subject/attestation.js';
+export {
+  FieldClaimValidationError,
+  isCatalogField,
+  normalizeFieldRequest,
+} from './subject/field-catalog.js';
+export type {
+  AuthorizeRequirements,
+  CatalogGroup,
+  DataAccessMode,
+  DefaultSubjectType,
+  FieldOmittedReason,
+  FieldRequestItem,
+  FieldsGetResult,
+  FieldsRequestResult,
+  LoginRequirements,
+  MinVerificationLevel,
+  RegulatoryAttestationClaims,
+  RegulatoryStatusKind,
+  RegulatoryStatusResult,
+  RegulatoryStatusRow,
+  RegulatoryStatusTarget,
+  RegulatoryStatusValue,
+  RequirementAction,
+  RequirementBundle,
+  SubjectIdentitiesResult,
+  SubjectIdentity,
+} from './subject/types.js';
+export {
   NexusError,
   NEXUS_ERROR_CATALOG,
   mapHttpStatusToCode,

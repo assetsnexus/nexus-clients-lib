@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- `client.subject.identities()`, `regulatoryStatus()`, and `fields.get()` / `fields.request()` for the R3–R4 app commands.
+- `verifyAttestation()` checks the RS256 regulatory JWS (`aud` = client id, region JWKS). HS256 is rejected.
+- `client.permissions.requestBatch()` plus `ElevationRequiredError` (`approvalUrl`, `waitForDecision()`).
+- PKCE and attestation verification use global Web Crypto. Node 20+ has it; Node 18 partners assign `node:crypto` `webcrypto` onto `globalThis.crypto` (see README). `engines` stays `>=18`.
+- Typed login requirements, data-access modes, and catalog groups.
+
 ## 0.2.2
 
 - `CommandConnectivityController`: transport disconnect classifier, 3-attempt/10s retry queue, degraded→down state (20s authenticated / 10s anonymous), health probe, coalesce for identical reads.
