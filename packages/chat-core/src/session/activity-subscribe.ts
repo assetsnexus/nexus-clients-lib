@@ -5,6 +5,9 @@ import { mapConversationListItem, type ChatSessionSummary } from './session-summ
 
 export type ActivityEventData = {
   conversationId: string;
+  /** Persona org, or null for a private identity. Absent means the client refreshes every identity. */
+  orgId?: string | null;
+  roomId?: string;
   kind?: 'sub_agent' | 'generation' | 'unread' | string;
   activeSubAgentCount?: number;
   backgroundSubAgentCompleted?: boolean;
@@ -77,7 +80,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function toActivityEvent(
+export function toActivityEvent(
   parsed: StreamEvent,
   fallbackConversationId?: string,
 ): ActivityEvent | null {
@@ -101,7 +104,10 @@ function toActivityEvent(
     typeof data.conversationId === 'string'
       ? data.conversationId
       : fallbackConversationId || '';
-  if (!conversationId && parsed.type !== 'ready') return null;
+  const roomId = typeof data.roomId === 'string' ? data.roomId : undefined;
+  const orgId =
+    data.orgId === null || typeof data.orgId === 'string' ? data.orgId : undefined;
+  if (!conversationId && !roomId && parsed.type !== 'ready') return null;
   const runId =
     typeof data.runId === 'string'
       ? data.runId
@@ -112,6 +118,8 @@ function toActivityEvent(
     type: parsed.type,
     data: {
       conversationId,
+      ...(orgId !== undefined ? { orgId } : {}),
+      ...(roomId ? { roomId } : {}),
       kind: typeof data.kind === 'string' ? data.kind : undefined,
       activeSubAgentCount:
         typeof data.activeSubAgentCount === 'number' ? data.activeSubAgentCount : undefined,

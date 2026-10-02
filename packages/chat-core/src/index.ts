@@ -35,6 +35,7 @@ import {
   applyStreamEventToTurns,
   isEmptyAssistantTurn,
 } from './stream/stream-events.js';
+import { applyRoomDispatchPlan, mergePrependedTurns, shouldKeepRoomAssistantPlaceholder } from './history-turns.js';
 import {
   dataAccessApprovalInfoFrom,
   type DataAccessApprovalInfo,
@@ -484,6 +485,13 @@ export type ChatState = {
     usage?: ChatTurn['usage'];
   }>;
   turns: ChatTurn[];
+  history?: {
+    hasMore: boolean;
+    oldest: { messageId: string; createdAt: string | null } | null;
+    loading: boolean;
+    loadingMore: boolean;
+  };
+  lastDispatchSkip?: string | null;
 };
 
 type Listener = (state: ChatState) => void;
@@ -850,9 +858,20 @@ async function hydrateAgentAvatars(
   return contacts.map((c) => (srcById.has(c.id) ? { ...c, avatarUrl: srcById.get(c.id) || null } : c));
 }
 
+export type AiDispatchSummary = {
+  responders?: Array<{ participantType?: string; participantId?: string }>;
+  skippedReason?: string | null;
+};
+
 export type SendMessageResult =
-  | { ok: true }
+  | { ok: true; aiDispatch?: AiDispatchSummary | null; dispatched?: boolean }
   | { ok: false; code: string; message: string; kind?: string };
+
+function readAiDispatch(data: Record<string, unknown>): AiDispatchSummary | null {
+  const raw = data.aiDispatch;
+  if (!raw || typeof raw !== 'object') return null;
+  return raw as AiDispatchSummary;
+}
 
 function emitSendOutcome(hooks: ChatHooks | undefined, code: ChatSendOutcomeCode): void {
   try {
@@ -1177,7 +1196,32 @@ export type NexusChat = {
       senderId?: string | null;
       senderName?: string | null;
     }>,
-    opts?: { conversationId?: string | null; detachStream?: boolean },
+    opts?: {
+      conversationId?: string | null;
+      roomId?: string | null;
+      detachStream?: boolean;
+      history?: {
+        hasMore?: boolean;
+        oldest?: { messageId: string; createdAt: string | null } | null;
+      };
+    },
+  ) => void;
+  prependTurns: (
+    rows: Array<{
+      id?: string;
+      role: string;
+      content?: string;
+      text?: string;
+      toolCalls?: Array<Record<string, unknown>>;
+      attachments?: IoDescriptor[];
+      createdAt?: string | null;
+      senderId?: string | null;
+      senderName?: string | null;
+    }>,
+    opts?: {
+      hasMore?: boolean;
+      oldest?: { messageId: string; createdAt: string | null } | null;
+    },
   ) => void;
   /** Apply persisted conversation usage / context snapshot (e.g. from conversations.get). */
   applyUsage: (usage: ChatUsageSnapshot | null | undefined) => void;
@@ -1233,6 +1277,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     messages: [],
     turns: [],
     streaming: false,
+    history: { hasMore: false, oldest: null, loading: false, loadingMore: false },
+    lastDispatchSkip: null,
     selectedAgentId: null,
     conversationId: null,
     features,
@@ -1721,6 +1767,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             }
           }
         }
+        const finished = store.getState().turns;
+        const placeholder = finished.find((t) => t.id === assistantId);
+        if (isEmptyAssistantTurn(placeholder)) {
+          syncMessagesFromTurns(finished.filter((t) => t.id !== assistantId));
+          log('empty_assistant_turn_dropped', { assistantId });
+        }
         store.setState({ streaming: false });
         patchCurrentPanel({ streaming: false });
         opts.hooks?.onStreamState?.(parsed.type === 'error' ? 'error' : 'idle');
@@ -2066,6 +2118,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 .filter((a) => a.assetId)
             : [],
           purpose: 'room',
+          sceneLink:
+            row.sceneLink && typeof row.sceneLink === 'object'
+              ? (row.sceneLink as ChatRoomSummary['sceneLink'])
+              : null,
         };
       });
       store.setState({ rooms });
@@ -2518,7 +2574,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         senderId?: string | null;
         senderName?: string | null;
       }>,
-      rehydrateOpts?: { conversationId?: string | null; detachStream?: boolean },
+      rehydrateOpts?: {
+        conversationId?: string | null;
+        roomId?: string | null;
+        detachStream?: boolean;
+        history?: {
+          hasMore?: boolean;
+          oldest?: { messageId: string; createdAt: string | null } | null;
+        };
+      },
     ) {
       // Rebuilt rows carry no raw sub-agent stream: let the next replay refill it.
       subAgentSeq.reset(store.getState().conversationId);
@@ -2579,7 +2643,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         };
       });
       syncMessagesFromTurns(collapseRepeatedToolRows(turns));
-      if (rehydrateOpts && Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId')) {
+      const roomId =
+        typeof rehydrateOpts?.roomId === 'string' && rehydrateOpts.roomId.trim()
+          ? rehydrateOpts.roomId.trim()
+          : null;
+      if (roomId) {
+        store.setState({ conversationId: null });
+        patchCurrentPanel({ conversationId: null, roomId, roomPurpose: 'room' });
+      } else if (rehydrateOpts && Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId')) {
         const conversationId =
           typeof rehydrateOpts.conversationId === 'string' && rehydrateOpts.conversationId.trim()
             ? rehydrateOpts.conversationId.trim()
@@ -2587,6 +2658,52 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         store.setState({ conversationId });
         patchCurrentPanel({ conversationId, roomId: null, roomPurpose: 'conversation' });
       }
+      if (rehydrateOpts?.history) {
+        store.setState({
+          history: {
+            hasMore: !!rehydrateOpts.history.hasMore,
+            oldest: rehydrateOpts.history.oldest ?? null,
+            loading: false,
+            loadingMore: false,
+          },
+        });
+      }
+    },
+    prependTurns(
+      rows: Array<{
+        id?: string;
+        role: string;
+        content?: string;
+        text?: string;
+        toolCalls?: Array<Record<string, unknown>>;
+        attachments?: IoDescriptor[];
+        createdAt?: string | null;
+        senderId?: string | null;
+        senderName?: string | null;
+      }>,
+      prependOpts?: {
+        hasMore?: boolean;
+        oldest?: { messageId: string; createdAt: string | null } | null;
+      },
+    ) {
+      const incoming = rows.map((row, i) => ({
+        id: String(row.id || `older_${i}`),
+        role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
+        text: String(row.content ?? row.text ?? ''),
+        ...(row.createdAt ? { createdAt: row.createdAt } : {}),
+        ...(row.senderId ? { senderId: row.senderId } : {}),
+        ...(row.senderName ? { senderName: row.senderName } : {}),
+      }));
+      syncMessagesFromTurns(mergePrependedTurns(store.getState().turns, incoming));
+      const prev = store.getState().history;
+      store.setState({
+        history: {
+          hasMore: prependOpts?.hasMore ?? prev?.hasMore ?? false,
+          oldest: prependOpts?.oldest ?? prev?.oldest ?? null,
+          loading: false,
+          loadingMore: false,
+        },
+      });
     },
     applyUsage(usage) {
       const panel = currentPanel(store.getState());
@@ -2921,6 +3038,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         }
 
         const data = unwrapData(result);
+        const aiDispatch = readAiDispatch(data);
+        if (roomId && !shouldKeepRoomAssistantPlaceholder(aiDispatch)) {
+          syncMessagesFromTurns(store.getState().turns.filter((t) => t.id !== assistantId));
+          const skip = aiDispatch?.skippedReason || 'no_ai_participants';
+          store.setState({ streaming: false, lastDispatchSkip: skip });
+          patchCurrentPanel({ streaming: false });
+          opts.hooks?.onStreamState?.('idle');
+          closeSocket();
+          emitSendOutcome(opts.hooks, 'ok');
+          patchTurnById(id, { deliveryStatus: 'sent', deliveryError: null });
+          return { ok: true, aiDispatch, dispatched: false };
+        }
+        if (roomId) store.setState({ lastDispatchSkip: null });
         if (panelId) {
           applyUsageToPanel(panelId, usageFromData(data));
           if (data.spendLimits && typeof data.spendLimits === 'object') {
@@ -3251,6 +3381,26 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             onMessage: (ev) => {
               const parsed = parseStreamMessage(ev.data);
               if (!parsed) return;
+              if (parsed.type === 'dispatch-plan' || parsed.type === 'rooms:dispatch-plan') {
+                const plan =
+                  parsed.data && typeof parsed.data === 'object'
+                    ? (parsed.data as { responders?: unknown[]; skippedReason?: string | null })
+                    : null;
+                const applied = applyRoomDispatchPlan(store.getState().turns, assistantId, plan);
+                if (applied.dropped || applied.lastDispatchSkip) {
+                  turns = applied.turns;
+                  syncMessagesFromTurns(turns);
+                  store.setState({
+                    streaming: applied.dropped ? false : store.getState().streaming,
+                    lastDispatchSkip: applied.lastDispatchSkip,
+                  });
+                  if (applied.dropped) {
+                    patchCurrentPanel({ streaming: false });
+                    opts.hooks?.onStreamState?.('idle');
+                  }
+                }
+                return;
+              }
               let clientToolPause = false;
               if (
                 parsed.type === 'conversation' &&

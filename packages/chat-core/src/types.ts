@@ -144,6 +144,12 @@ export type ChatRoomSummary = {
   assetIds?: string[];
   assetAgents?: Array<{ assetId: string; assetAgentKey: string | null }>;
   purpose?: 'conversation' | 'room';
+  sceneLink?: {
+    kind: 'cluster';
+    clusterId: string;
+    active?: boolean;
+    rails?: string[];
+  } | null;
 };
 
 /** Per-turn model selection for anx.communicate.message.send. */

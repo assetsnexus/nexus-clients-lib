@@ -20,7 +20,8 @@
       @pointerdown="onHeaderPointerDown"
     >
       <div class="nexus-chat-panel__header-left">
-        <button
+          <button
+          v-if="!showEmptyStarter"
           type="button"
           class="nexus-chat-panel__identity"
           :title="contactName"
@@ -341,6 +342,22 @@
           @scroll="onMessageListScroll"
         >
           <div ref="messagesContentEl">
+          <slot name="before-messages" :panel="resolvedPanel" />
+          <div v-if="historyLoading" class="nexus-history-skeleton" aria-busy="true">
+            <span /><span /><span />
+          </div>
+          <button
+            v-if="showLoadOlderButton"
+            type="button"
+            class="nexus-load-older"
+            @click="requestOlder"
+          >
+            {{ resolvedLabels.loadEarlier || 'Load earlier messages' }}
+          </button>
+          <div v-else-if="historyLoadingMore" class="nexus-history-more">
+            {{ resolvedLabels.loadingEarlier || 'Loading earlier messages…' }}
+          </div>
+          <slot v-if="showEmptyStarter" name="empty" :panel="resolvedPanel" />
           <div class="nexus-muted nexus-messages-label">{{ resolvedLabels.messages }}</div>
           <div
             v-for="turn in resolvedPanel.turns"
@@ -483,7 +500,7 @@
           <slot name="composer-prefix" :panel="resolvedPanel" />
         </div>
 
-        <div class="nexus-chat-panel__composer">
+        <div v-if="!showEmptyStarter" class="nexus-chat-panel__composer">
           <composer-attachment-rail
             :items="railItems"
             :can-add-more="attachmentSupported && canAddMore && pendingItems.length > 0"
@@ -697,6 +714,15 @@ export default {
     viewerUserId: { type: String, default: null },
     /** Auto-speak assistant replies (drives SpeakTurnWidget). */
     autoVoice: { type: Boolean, default: false },
+    /**
+     * History paging. pageSize is advisory (the host requests it).
+     * loadMore: 'scroll' fetches when the list is near the top, 'button' shows
+     * "Load earlier messages" and does not auto-fetch.
+     */
+    history: {
+      type: Object,
+      default: () => ({ pageSize: 10, loadMore: 'scroll' }),
+    },
     /** Command client for TTS / billing (optional; host may inject via speak slot). */
     commandClient: { type: Object, default: null },
     /** Whether the viewer can open global agent voice config. */
@@ -794,6 +820,28 @@ export default {
     },
     contactRecord() {
       return findChatContact(this.resolvedContacts, this.resolvedPanel.contactId);
+    },
+    historyLoading() {
+      return !!this.resolvedPanel?.historyLoading;
+    },
+    historyLoadingMore() {
+      return !!this.resolvedPanel?.historyLoadingMore;
+    },
+    showEmptyStarter() {
+      const panel = this.resolvedPanel || {};
+      const kind = panel.target && panel.target.kind;
+      if (kind && kind !== 'none') return false;
+      return (
+        !panel.conversationId &&
+        !panel.roomId &&
+        !panel.streaming &&
+        !(panel.turns || []).length &&
+        !panel.historyLoading
+      );
+    },
+    showLoadOlderButton() {
+      const mode = (this.history && this.history.loadMore) || 'scroll';
+      return mode === 'button' && !!this.resolvedPanel?.historyHasMore && !this.historyLoading;
     },
     contactName() {
       const room = (this.rooms || []).find(
@@ -1052,6 +1100,16 @@ export default {
     },
   },
   watch: {
+    'resolvedPanel.turns'() {
+      const anchor = this._historyAnchor;
+      if (!anchor) return;
+      this.$nextTick(() => {
+        const el = this.messageListEl();
+        if (!el) return;
+        el.scrollTop = anchor.top + (el.scrollHeight - anchor.height);
+        this._historyAnchor = null;
+      });
+    },
     contactAvatarUrl() {
       this.avatarImgFailed = false;
     },
@@ -1123,6 +1181,21 @@ export default {
     },
     onMessageListScroll() {
       if (this._messageListScroll) this._messageListScroll.onUserScroll();
+      this.maybeLoadOlder();
+    },
+    maybeLoadOlder() {
+      const mode = (this.history && this.history.loadMore) || 'scroll';
+      if (mode !== 'scroll') return;
+      const el = this.messageListEl();
+      if (!el || el.scrollTop > 80) return;
+      this.requestOlder();
+    },
+    requestOlder() {
+      const panel = this.resolvedPanel || {};
+      if (panel.historyLoading || panel.historyLoadingMore || !panel.historyHasMore) return;
+      const el = this.messageListEl();
+      if (el) this._historyAnchor = { height: el.scrollHeight, top: el.scrollTop };
+      this.$emit('load-older', panel);
     },
     pinAndScrollMessages() {
       if (this._messageListScroll) this._messageListScroll.pin();
@@ -2197,5 +2270,30 @@ export default {
   to {
     transform: rotate(360deg);
   }
+}
+.nexus-history-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 12px;
+}
+.nexus-history-skeleton span {
+  display: block;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(127,127,127,0.15), rgba(127,127,127,0.35), rgba(127,127,127,0.15));
+  background-size: 200% 100%;
+  animation: nexus-history-shimmer 1.1s ease-in-out infinite;
+}
+.nexus-history-skeleton span:nth-child(2) { width: 72%; margin-left: auto; }
+.nexus-history-more,
+.nexus-load-older {
+  display: block;
+  margin: 4px auto 8px;
+  font-size: 12px;
+}
+@keyframes nexus-history-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
 }
 </style>
