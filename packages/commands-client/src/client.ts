@@ -1,13 +1,19 @@
+import { applySdkHeaders, type SdkAppInfo } from './client-headers.js';
 import { mapDataAccessApprovalError } from './data-access.js';
 import { mapPermissionElevationError } from './permission-elevation.js';
 import { DiscoveryNamespace } from './discovery/namespace.js';
 import { mapHttpStatusToCode, NexusError } from './errors/nexus-error.js';
 import { GrantNamespace } from './grant/namespace.js';
+import { HealthPinger } from './health/health-pinger.js';
+import type { AnxNodeHealthV1, DeprecationNotice } from './health/types.js';
+import { IDEMPOTENCY_HEADER } from './idempotency.js';
 import { LongRunningNamespace } from './long-running/namespace.js';
 import { PermissionsNamespace } from './permissions/namespace.js';
+import type { RegionRoutes } from './regions/region-routes.js';
 import { SubscriptionsNamespace } from './subscriptions/namespace.js';
 import { SubjectNamespace } from './subject/namespace.js';
 import type { IdentityContext, TokenProvider } from './token-provider.js';
+import { RoutedTransport } from './transports/routed-transport.js';
 import {
   type CommandResponse,
   type RateLimitInfo,
@@ -43,8 +49,14 @@ export type Transport = {
   }>;
 };
 
-export type NexusClientOptions = {
-  baseUrl: string;
+export type NexusClientHealthOptions = {
+  /** Reset after every successful request. Default 5 minutes. */
+  idleIntervalMs?: number;
+  onReport?: (health: AnxNodeHealthV1) => void;
+  onDeprecation?: (notice: DeprecationNotice) => void;
+};
+
+type NexusClientCoreOptions = {
   tokenProvider?: TokenProvider;
   identity?: IdentityContext | (() => IdentityContext | null);
   fetchImpl?: typeof fetch;
@@ -53,7 +65,22 @@ export type NexusClientOptions = {
   defaultTimeoutMs?: number;
   maxRetries?: number;
   docsBaseUrl?: string;
+  /** Sent as `X-Anx-App: <name>/<version>` when both tokens match `[A-Za-z0-9._-]{1,64}`. */
+  app?: SdkAppInfo;
+  /** Opt-in idle `GET /health` on the current primary. */
+  health?: NexusClientHealthOptions;
+  /**
+   * Region origins. When set and `transport` is omitted, the client builds a
+   * {@link RoutedTransport}. `baseUrl` is then optional.
+   */
+  routes?: RegionRoutes;
+  /** Caller's home region origin. Not used as a failover target unless it is also in `routes`. */
+  homeBaseUrl?: string;
 };
+
+/** `baseUrl` is required unless `routes.routes` is non-empty. */
+export type NexusClientOptions = NexusClientCoreOptions &
+  ({ baseUrl: string } | { baseUrl?: string; routes: RegionRoutes });
 
 function parseRateLimit(headers: Headers): RateLimitInfo | undefined {
   const limit = headers.get('x-nexus-ratelimit-limit');
@@ -86,10 +113,15 @@ export class NexusClient {
   readonly permissions: PermissionsNamespace;
 
   private readonly baseUrl: string;
+  private readonly homeBaseUrl?: string;
+  private readonly configuredRoutes?: RegionRoutes;
   private readonly tokenProvider?: TokenProvider;
   private readonly identity?: IdentityContext | (() => IdentityContext | null);
   private readonly fetchImpl: typeof fetch;
   private readonly transport?: Transport;
+  private readonly ownedTransport?: RoutedTransport;
+  private readonly app?: SdkAppInfo;
+  private readonly healthPinger?: HealthPinger;
   private readonly logger: Logger;
   private readonly defaultTimeoutMs: number;
   private readonly maxRetries: number;
@@ -98,16 +130,46 @@ export class NexusClient {
   private consecutiveFailures = 0;
 
   constructor(opts: NexusClientOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/$/, '');
+    const baseUrl = opts.baseUrl?.replace(/\/$/, '') ?? '';
+    const routeCount = opts.routes?.routes.length ?? 0;
+    if (!baseUrl && routeCount === 0) {
+      throw new NexusError('TRANSPORT_ERROR', 'NexusClient requires baseUrl or routes');
+    }
+    this.baseUrl = baseUrl;
+    this.homeBaseUrl = opts.homeBaseUrl?.replace(/\/$/, '');
+    this.configuredRoutes = opts.routes;
     this.tokenProvider = opts.tokenProvider;
     this.identity = opts.identity;
     this.fetchImpl = opts.fetchImpl || fetch;
-    this.transport = opts.transport;
     this.logger = opts.logger || noopLogger;
+    this.app = opts.app;
     this.defaultTimeoutMs = opts.defaultTimeoutMs ?? 30_000;
     // maxRetries = extra attempts after the first → total attempts = maxRetries + 1 (default 3).
     this.maxRetries = opts.maxRetries ?? DEFAULT_MAX_ATTEMPTS - 1;
     this.docsBaseUrl = opts.docsBaseUrl;
+    if (!opts.transport && opts.routes && routeCount > 0) {
+      this.ownedTransport = new RoutedTransport({
+        routes: opts.routes,
+        fetchImpl: this.fetchImpl,
+        logger: this.logger,
+      });
+      this.transport = this.ownedTransport;
+    } else {
+      this.transport = opts.transport;
+    }
+    if (opts.health) {
+      const health = opts.health;
+      this.healthPinger = new HealthPinger({
+        getBaseUrl: () => this.getBaseUrl(),
+        idleIntervalMs: health.idleIntervalMs,
+        onReport: health.onReport,
+        onDeprecation: health.onDeprecation,
+        logger: this.logger,
+        fetchImpl: this.fetchImpl,
+        getHeaders: () => this.healthHeaders(),
+      });
+      this.healthPinger.start();
+    }
     this.grant = new GrantNamespace(this);
     this.subscriptions = new SubscriptionsNamespace(this);
     this.discovery = new DiscoveryNamespace(this);
@@ -116,20 +178,36 @@ export class NexusClient {
     this.permissions = new PermissionsNamespace(this);
   }
 
+  /** Current primary origin, without a trailing slash. */
   getBaseUrl(): string {
-    return this.baseUrl;
+    const routed = this.ownedTransport?.getPrimaryOrigin().replace(/\/$/, '');
+    if (routed) return routed;
+    if (this.baseUrl) return this.baseUrl;
+    const fallback = [...(this.configuredRoutes?.routes ?? [])].sort((a, b) => a.priority - b.priority)[0];
+    return fallback?.url.replace(/\/$/, '') ?? '';
+  }
+
+  getHomeBaseUrl(): string | undefined {
+    return this.homeBaseUrl;
+  }
+
+  /** Stop the health pinger and owned route probes. */
+  dispose(): void {
+    this.healthPinger?.stop();
+    this.ownedTransport?.stop();
   }
 
   async getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = await this.tokenProvider?.getAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
-    const { status, text } = await this.rawRequest({
+    const { status, text, headers: responseHeaders } = await this.rawRequest({
       method: 'GET',
       path,
       headers,
       signal,
     });
+    this.observeResponse(responseHeaders, undefined, status < 400);
     if (status >= 400) {
       throw new NexusError(mapHttpStatusToCode(status), `GET ${path} failed: ${status}`, {
         docsBaseUrl: this.docsBaseUrl,
@@ -153,7 +231,7 @@ export class NexusClient {
       (options.autoIdempotency !== false && !isRead ? createIdempotencyKey() : undefined);
 
     const identity = this.resolveIdentity(options.identity);
-    const envelope = {
+    const envelope: Record<string, unknown> = {
       command,
       payload,
       requestId,
@@ -162,6 +240,9 @@ export class NexusClient {
       identity,
       responseExpected: options.responseExpected !== false,
     };
+    if (typeof options.commandVersion === 'number' && Number.isFinite(options.commandVersion)) {
+      envelope.commandVersion = options.commandVersion;
+    }
 
     this.logger.debug?.('send', redactForLog({ command, requestId, traceId }) as Record<string, unknown>);
 
@@ -403,7 +484,7 @@ export class NexusClient {
           'X-Trace-Id': String(envelope.traceId || envelope.requestId),
         };
         if (envelope.idempotencyKey) {
-          headers['Idempotency-Key'] = String(envelope.idempotencyKey);
+          headers[IDEMPOTENCY_HEADER] = String(envelope.idempotencyKey);
         }
         const token = await this.tokenProvider?.getAccessToken();
         if (token) headers.Authorization = `Bearer ${token}`;
@@ -418,6 +499,7 @@ export class NexusClient {
         clearTimeout(timeout);
 
         if (result.status === 401) {
+          this.observeResponse(result.headers, command, false);
           throw new NexusError('UNAUTHORIZED', 'Unauthorized', {
             docsBaseUrl: this.docsBaseUrl,
           });
@@ -436,6 +518,7 @@ export class NexusClient {
         }
 
         this.consecutiveFailures = 0;
+        this.observeResponse(result.headers, command, result.status < 400);
         return { status: result.status, headers: result.headers, body: result.text };
       } catch (err) {
         clearTimeout(timeout);
@@ -460,6 +543,32 @@ export class NexusClient {
     );
   }
 
+  private async healthHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    applySdkHeaders(headers, this.app);
+    try {
+      const token = await this.tokenProvider?.getAccessToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    } catch (err) {
+      this.logger.warn?.('health_token_unavailable', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return headers;
+  }
+
+  private observeResponse(headers: Headers, command: string | undefined, ok: boolean): void {
+    if (!this.healthPinger) return;
+    try {
+      this.healthPinger.noteResponseHeaders(headers, command);
+      if (ok) this.healthPinger.touch();
+    } catch (err) {
+      this.logger.warn?.('health_observe_failed', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private async rawRequest(input: {
     method: string;
     path: string;
@@ -467,14 +576,17 @@ export class NexusClient {
     body?: string;
     signal?: AbortSignal;
   }): Promise<{ status: number; headers: Headers; text: string }> {
+    const headers = { ...input.headers };
+    applySdkHeaders(headers, this.app);
+    const next = { ...input, headers };
     if (this.transport) {
-      return this.transport.request(input);
+      return this.transport.request(next);
     }
-    const res = await this.fetchImpl(`${this.baseUrl}${input.path}`, {
-      method: input.method,
-      headers: input.headers,
-      body: input.body,
-      signal: input.signal,
+    const res = await this.fetchImpl(`${this.baseUrl}${next.path}`, {
+      method: next.method,
+      headers: next.headers,
+      body: next.body,
+      signal: next.signal,
     });
     return {
       status: res.status,

@@ -9,6 +9,8 @@ export type CommandEnvelope = {
   idempotencyKey?: string;
   identity?: Record<string, unknown>;
   responseExpected?: boolean;
+  /** Catalog version of `command` the caller is speaking. Omitted when unset. */
+  commandVersion?: number;
 };
 
 export type CommandResponse = {
@@ -175,6 +177,8 @@ export type SendOptions = {
   identity?: Record<string, unknown>;
   /** Treat as read (no auto idempotency). Auto-detected from command suffix when omitted. */
   isRead?: boolean;
+  /** When set, included on the command envelope as `commandVersion`. */
+  commandVersion?: number;
   /** Internal: set after a single 401→refresh retry to prevent recursion. */
   _authRetried?: boolean;
 };

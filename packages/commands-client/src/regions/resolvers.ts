@@ -85,8 +85,17 @@ export class CountryRegionResolver implements RegionResolver {
 }
 
 /**
- * Declared for the future gateway hashed-login discovery flow.
- * Throws NOT_IMPLEMENTED until anx-gateway ships.
+ * Planned gateway contract (not implemented — throws NOT_IMPLEMENTED):
+ *
+ * The client sends an encrypted login envelope sealed to the target region's
+ * public key (`publicKeyId`). The gateway forwards that ciphertext and does
+ * not learn the login hint. The region's response is a {@link RegionRoutes}
+ * document: `slug`, prioritized https origins (`priority`, optional `kind`),
+ * and optional `home`, `issuer`, and `publicKeyId`.
+ *
+ * Use {@link StaticRegionIndex}, {@link CountryRegionResolver}, or a token
+ * `anx_region` / login `region` payload parsed with `parseRegionRoutes` until
+ * anx-gateway ships this flow.
  */
 export class GatewayRegionResolver implements RegionResolver {
   constructor(private _gatewayUrl: string) {}

@@ -1,4 +1,12 @@
-export { NexusClient, type NexusClientOptions, type Transport } from './client.js';
+export {
+  NexusClient,
+  type NexusClientOptions,
+  type NexusClientHealthOptions,
+  type Transport,
+} from './client.js';
+export { SDK_VERSION } from './version.js';
+export { applySdkHeaders, sdkAppHeaderValue, sdkClientHeaderValue, type SdkAppInfo } from './client-headers.js';
+export { IDEMPOTENCY_HEADER, IDEMPOTENCY_HEADER_ALT, hasIdempotencyHeader } from './idempotency.js';
 export {
   mapDataAccessApprovalError,
   type DataAccessApprovalPrompt,
@@ -76,6 +84,15 @@ export {
   type RegionPublicEndpoints,
 } from './regions/resolvers.js';
 export {
+  parseRegionRoutes,
+  kindWeightFromPriority,
+  canonicalRouteUrl,
+  type RegionRoute,
+  type RegionRouteKind,
+  type RegionRoutes,
+  type ParseRegionRoutesOptions,
+} from './regions/region-routes.js';
+export {
   generatePkce,
   generateOAuthState,
   buildAuthorizeUrl,
@@ -147,6 +164,7 @@ export {
   RouteMonitor,
   pickRedundantRoutes,
   DEFAULT_COMMAND_REDUNDANCY,
+  RoutedTransport,
   type RouteKind,
   type RouteCandidateInput,
   type ResolvedRoute,
@@ -158,4 +176,20 @@ export {
   type CommandRedundancyConfig,
   type RouteMonitorClock,
   type RouteMonitorOptions,
+  type RoutedTransportOptions,
+  type RoutedTransportRequest,
+  type RoutedRouteSnapshot,
+  type RouteSwitchHandler,
+  type RegionRedirectHandler,
+  type RegionRedirectEvent,
 } from './transports/index.js';
+export {
+  HealthPinger,
+  type HealthPingerOptions,
+} from './health/health-pinger.js';
+export { parseAnxNodeHealth } from './health/parse-health.js';
+export {
+  type AnxNodeHealthV1,
+  type DeprecationNotice,
+  type DeprecationCommandNotice,
+} from './health/types.js';

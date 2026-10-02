@@ -25,3 +25,14 @@ export {
   type RouteMonitorClock,
   type RouteMonitorOptions,
 } from './route-monitor.js';
+export {
+  RoutedTransport,
+  type RoutedTransportOptions,
+  type RoutedTransportRequest,
+  type RoutedTransportResponse,
+  type RoutedRouteSnapshot,
+  type RouteSwitchHandler,
+  type RegionRedirectHandler,
+  type RegionRedirectEvent,
+  type RouteClassifyFn,
+} from './routed-transport.js';

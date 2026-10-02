@@ -1,4 +1,12 @@
+import { createRequire } from 'node:module';
 import { defineConfig } from 'tsup';
+
+const require = createRequire(import.meta.url);
+const { version } = require('./package.json') as { version: string };
+
+const define = {
+  __NEXUS_SDK_VERSION__: JSON.stringify(version),
+};
 
 export default defineConfig([
   {
@@ -9,6 +17,7 @@ export default defineConfig([
     clean: true,
     splitting: false,
     treeshake: true,
+    define,
   },
   {
     entry: { 'testing/index': 'src/testing/index.ts' },
@@ -18,5 +27,6 @@ export default defineConfig([
     clean: false,
     splitting: false,
     treeshake: true,
+    define,
   },
 ]);

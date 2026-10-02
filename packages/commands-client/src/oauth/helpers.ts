@@ -1,3 +1,4 @@
+import { parseRegionRoutes, type RegionRoutes } from '../regions/region-routes.js';
 import { createRequestId } from '../utils.js';
 
 export type PkcePair = {
@@ -74,7 +75,21 @@ export type TokenResponse = {
   subject_type?: string;
   org_id?: string;
   membership_id?: string;
+  /** Present when the token body includes a valid `anx_region` document. */
+  anx_region?: RegionRoutes;
 };
+
+function attachRegion(raw: unknown): TokenResponse {
+  const token = (raw ?? {}) as TokenResponse;
+  if (!raw || typeof raw !== 'object') return token;
+  const region = parseRegionRoutes(raw);
+  if (region) {
+    token.anx_region = region;
+  } else if ('anx_region' in (raw as Record<string, unknown>)) {
+    delete token.anx_region;
+  }
+  return token;
+}
 
 export async function exchangeAuthorizationCode(opts: {
   issuer: string;
@@ -104,7 +119,7 @@ export async function exchangeAuthorizationCode(opts: {
     const text = await res.text();
     throw new Error(`token exchange failed: ${res.status} ${text}`);
   }
-  return (await res.json()) as TokenResponse;
+  return attachRegion(await res.json());
 }
 
 export async function refreshAccessToken(opts: {
@@ -131,7 +146,7 @@ export async function refreshAccessToken(opts: {
     const text = await res.text();
     throw new Error(`refresh failed: ${res.status} ${text}`);
   }
-  return (await res.json()) as TokenResponse;
+  return attachRegion(await res.json());
 }
 
 export type IntrospectionResponse = {
