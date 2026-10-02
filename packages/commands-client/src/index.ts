@@ -165,6 +165,7 @@ export {
   pickRedundantRoutes,
   DEFAULT_COMMAND_REDUNDANCY,
   RoutedTransport,
+  classifyCommandRequest,
   type RouteKind,
   type RouteCandidateInput,
   type ResolvedRoute,

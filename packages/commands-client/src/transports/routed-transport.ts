@@ -32,6 +32,8 @@ export type RoutedTransportRequest = {
   headers: Record<string, string>;
   body?: string;
   signal?: AbortSignal;
+  /** Caller's read hint (e.g. `SendOptions.isRead`); consumed by `classify`. */
+  isRead?: boolean;
 };
 
 export type RoutedTransportResponse = {

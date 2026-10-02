@@ -9,6 +9,7 @@
 - `NexusClient` accepts `routes` (baseUrl optional when routes are set) and sends `X-Anx-Client: @nexus/commands-client/<version>`. Optional `app` sends `X-Anx-App`. `commandVersion` is included on the envelope when set.
 - Opt-in `health` idle pinger (`GET /health`, default 5 minutes, reset on successful traffic, backoff 5s–5min). `Deprecation`, `Sunset`, and `Link` headers and health `deprecations.warning` fire `onDeprecation` once per catalog fingerprint + signature. `dispose()` stops the pinger and route probes.
 - `SDK_VERSION` is injected from package.json at build time.
+- `NexusClient` classifies read commands (`SendOptions.isRead`, else `isLikelyReadCommand`) as reads for failover, so they fail over on timeout or connection reset without an idempotency key. Writes still need one.
 
 ## 0.3.0
 

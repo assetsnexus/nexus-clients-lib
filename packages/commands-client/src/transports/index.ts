@@ -25,6 +25,7 @@ export {
   type RouteMonitorClock,
   type RouteMonitorOptions,
 } from './route-monitor.js';
+export { classifyCommandRequest, commandNameFromPath } from './command-classify.js';
 export {
   RoutedTransport,
   type RoutedTransportOptions,

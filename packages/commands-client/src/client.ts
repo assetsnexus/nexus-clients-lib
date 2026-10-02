@@ -13,6 +13,7 @@ import type { RegionRoutes } from './regions/region-routes.js';
 import { SubscriptionsNamespace } from './subscriptions/namespace.js';
 import { SubjectNamespace } from './subject/namespace.js';
 import type { IdentityContext, TokenProvider } from './token-provider.js';
+import { classifyCommandRequest } from './transports/command-classify.js';
 import { RoutedTransport } from './transports/routed-transport.js';
 import {
   type CommandResponse,
@@ -42,6 +43,8 @@ export type Transport = {
     headers: Record<string, string>;
     body?: string;
     signal?: AbortSignal;
+    /** Read hint for failover classification (reads carry no idempotency key). */
+    isRead?: boolean;
   }): Promise<{
     status: number;
     headers: Headers;
@@ -152,6 +155,7 @@ export class NexusClient {
         routes: opts.routes,
         fetchImpl: this.fetchImpl,
         logger: this.logger,
+        classify: classifyCommandRequest,
       });
       this.transport = this.ownedTransport;
     } else {
@@ -251,6 +255,7 @@ export class NexusClient {
         command,
         envelope,
         options,
+        isRead,
       );
       const rateLimit = parseRateLimit(headers);
 
@@ -450,6 +455,7 @@ export class NexusClient {
     command: string,
     envelope: Record<string, unknown>,
     options: SendOptions,
+    isRead: boolean,
   ): Promise<{ status: number; headers: Headers; body: string }> {
     if (Date.now() < this.circuitOpenUntil) {
       throw new NexusError('TRANSPORT_ERROR', 'Circuit breaker open', {
@@ -495,6 +501,7 @@ export class NexusClient {
           headers,
           body: JSON.stringify(envelope),
           signal,
+          isRead,
         });
         clearTimeout(timeout);
 
@@ -575,6 +582,7 @@ export class NexusClient {
     headers: Record<string, string>;
     body?: string;
     signal?: AbortSignal;
+    isRead?: boolean;
   }): Promise<{ status: number; headers: Headers; text: string }> {
     const headers = { ...input.headers };
     applySdkHeaders(headers, this.app);
