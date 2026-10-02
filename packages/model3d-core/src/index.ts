@@ -6,6 +6,7 @@ export * from './ops';
 export * from './history';
 export * from './rig';
 export * from './generator';
+export * from './generator-chunks';
 export * from './export-model';
 export * from './import-model';
 export * from './three-group';

@@ -1,4 +1,5 @@
 import { modelBoundsMm } from './geometry';
+import { compareChunks } from './generator-chunks';
 import { OPAQUE_TYPES, type VisualModel } from './schema';
 
 export interface OutlineShape {
@@ -29,7 +30,14 @@ export interface ModelOutline {
   };
   bounds: ReturnType<typeof modelBoundsMm>;
   shapes: OutlineShape[];
-  generator: { dirty: boolean; hasSource: boolean; manualEdits: string[] } | null;
+  generator: {
+    dirty: boolean;
+    hasSource: boolean;
+    manualEdits: string[];
+    /** Authoring index only. These records are not shapes and have no parentId. */
+    chunks: Array<{ id: string; order: number; title: string; description: string }>;
+    note: string;
+  } | null;
 }
 
 export function outlineModel(model: VisualModel): ModelOutline {
@@ -65,7 +73,18 @@ export function outlineModel(model: VisualModel): ModelOutline {
       };
     }),
     generator: model.generator
-      ? { dirty: model.generator.dirty, hasSource: !!model.generator.source, manualEdits: model.generator.manualEdits.slice(-40) }
+      ? {
+          dirty: model.generator.dirty,
+          hasSource: !!(model.generator.source || (model.generator.chunks || []).some((chunk) => chunk.source)),
+          manualEdits: model.generator.manualEdits.slice(-40),
+          chunks: [...(model.generator.chunks || [])].sort(compareChunks).map((chunk) => ({
+            id: chunk.id,
+            order: chunk.order,
+            title: chunk.title,
+            description: chunk.description,
+          })),
+          note: 'Chunk order is script authoring structure, not the model object tree. Titles are ignored when the script runs.',
+        }
       : null,
   };
 }

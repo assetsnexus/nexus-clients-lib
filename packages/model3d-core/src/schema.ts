@@ -138,10 +138,26 @@ export interface ShapeDef {
   colorMetricConfig: unknown;
 }
 
+/**
+ * One piece of an agent-written generator script.
+ * `order` is source-file order only. It is not a parent/child link in the model.
+ * `title` and `description` are notes the agent writes for a later agent. Execution ignores them.
+ */
+export interface GeneratorChunk {
+  id: string;
+  order: number;
+  title: string;
+  description: string;
+  source: string;
+}
+
 export interface GeneratorDef {
   language: 'js';
   apiVersion: 1;
+  /** Whole script used only when `chunks` is empty. Not a mirror of the chunk bodies. */
   source: string;
+  /** Authoring records. Empty means the legacy single `source` string. */
+  chunks: GeneratorChunk[];
   updatedAt: string | null;
   updatedBy: string | null;
   lastRunAt: string | null;
@@ -235,6 +251,7 @@ export function emptyGenerator(source = ''): GeneratorDef {
     language: 'js',
     apiVersion: 1,
     source,
+    chunks: [],
     updatedAt: null,
     updatedBy: null,
     lastRunAt: null,
@@ -242,6 +259,29 @@ export function emptyGenerator(source = ''): GeneratorDef {
     dirty: false,
     manualEdits: [],
   };
+}
+
+/** Keep stored chunk records. Does not invent titles or split `source`. */
+function normalizeChunks(raw: unknown): GeneratorChunk[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GeneratorChunk[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length; i += 1) {
+    const row = asRecord(raw[i]);
+    if (!row) continue;
+    const id = typeof row.id === 'string' ? row.id.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const order = Number(row.order);
+    out.push({
+      id,
+      order: Number.isFinite(order) ? order : i,
+      title: typeof row.title === 'string' ? row.title : '',
+      description: typeof row.description === 'string' ? row.description : '',
+      source: typeof row.source === 'string' ? row.source : '',
+    });
+  }
+  return out;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -492,6 +532,7 @@ export function normalizeModel(raw: unknown): VisualModel {
           language: 'js',
           apiVersion: 1,
           source: typeof gen.source === 'string' ? gen.source : '',
+          chunks: normalizeChunks(gen.chunks),
           updatedAt: typeof gen.updatedAt === 'string' ? gen.updatedAt : null,
           updatedBy: typeof gen.updatedBy === 'string' ? gen.updatedBy : null,
           lastRunAt: typeof gen.lastRunAt === 'string' ? gen.lastRunAt : null,
