@@ -1,0 +1,39 @@
+{
+  "name": "@nexus/model3d-core",
+  "version": "0.1.0",
+  "description": "Framework-free ANX composition kernel: Z-up millimetre schema, ops, history, rig conversion, CAD export slots. Three.js renderer takes an injected THREE.",
+  "license": "UNLICENSED",
+  "publishConfig": { "access": "public" },
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "acorn": "^8.14.0"
+  },
+  "peerDependencies": {
+    "three": "*"
+  },
+  "peerDependenciesMeta": {
+    "three": { "optional": true }
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
