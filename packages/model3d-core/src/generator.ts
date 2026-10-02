@@ -72,16 +72,19 @@ export function checkGeneratorScript(source: string): ScriptCheck {
 }
 
 export const GENERATOR_API_DOC = [
-  'api.box({ name, sizeMm:[w,d,h], positionMm:{x,y,z}, rotationDeg, color, parentId, surface })',
-  'api.cylinder({ name, radiusMm, heightMm, positionMm, rotationDeg, color, parentId })',
-  'api.sphere / api.disk / api.tube / api.prism / api.group / api.instance({ productId })',
-  'api.list() returns the shapes created in this run',
+  'api.box({ id, name, sizeMm:[w,d,h], positionMm:{x,y,z}, rotationDeg, color, parentId, surface })',
+  'api.cylinder({ id, name, radiusMm, heightMm, positionMm, rotationDeg, color, parentId })',
+  'api.sphere / api.disk / api.tube / api.prism / api.group / api.instance({ id, productId, parentId })',
+  'api.interface({ shapeId, interfaceId, type, side, name }) marks that shape as an interface. A mesh is not an interface without this call.',
+  'api.network({ id, name, type, kind }) kind is point_to_point or bus (shared_multidrop tree).',
+  'api.edge({ id, networkId, from, to }) from and to are interface ids, not shape ids or chunk ids.',
+  'api.list() returns the ops created in this run',
   'Coordinates are Z-up millimetres, +Y forward, +X right. Return value is ignored; calls record ops.',
 ].join('\n');
 
 /** Ops the sandboxed script is allowed to emit. The parent validates them again. */
 export interface ScriptCall {
-  op: 'add' | 'addGroup' | 'addPrism' | 'instance';
+  op: 'add' | 'addGroup' | 'addPrism' | 'instance' | 'markInterface' | 'addNetwork' | 'addEdge';
   type?: string;
   name?: string;
   positionMm?: { x: number; y: number; z: number };
@@ -92,6 +95,15 @@ export interface ScriptCall {
   parentId?: string | null;
   surface?: 'floor' | 'wall' | 'roof' | null;
   productId?: string;
+  shapeId?: string;
+  interfaceId?: string;
+  side?: string;
+  medium?: string;
+  networkId?: string;
+  kind?: string;
+  fromInterfaceId?: string;
+  toInterfaceId?: string;
+  label?: string;
 }
 
 export function scriptCallToOp(call: ScriptCall): ScriptCall {

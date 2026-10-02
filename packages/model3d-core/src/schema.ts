@@ -1,4 +1,12 @@
 import {
+  type CompositionNetwork,
+  type InterfaceSide,
+  type NetworkMedium,
+  interfaceSide,
+  networkMedium,
+  normalizeNetworks,
+} from './network-schema';
+import {
   PRECISION_MM,
   type Vec3,
   quantizeMm,
@@ -172,6 +180,10 @@ export interface InterfaceMarker {
   partId: string | null;
   position: Vec3;
   label: string;
+  /** Connector gender. Null on older markers; treated as terminal when an edge is checked. */
+  side: InterfaceSide | null;
+  /** Medium family used to accept or reject an edge. */
+  medium: NetworkMedium | null;
 }
 
 export interface VisualModel {
@@ -182,6 +194,11 @@ export interface VisualModel {
   opacity: number;
   shapes: ShapeDef[];
   interfaceMarkers: InterfaceMarker[];
+  /**
+   * Cables inside this composition. Endpoints are interface ids.
+   * `point_to_point` is one edge. `shared_multidrop` is a tree of edges.
+   */
+  networks: CompositionNetwork[];
   generator: GeneratorDef | null;
   globalColorMetricKey: string | null;
   globalColorMetricConfig: unknown;
@@ -238,6 +255,7 @@ export function defaultModel(): VisualModel {
     opacity: 0.92,
     shapes: [],
     interfaceMarkers: [],
+    networks: [],
     generator: null,
     globalColorMetricKey: null,
     globalColorMetricConfig: null,
@@ -524,9 +542,12 @@ export function normalizeModel(raw: unknown): VisualModel {
             partId: typeof row.partId === 'string' ? row.partId : null,
             position: readVec(row.position),
             label: String(row.label || ''),
+            side: interfaceSide(row.side),
+            medium: row.medium == null || row.medium === '' ? null : networkMedium(row.medium),
           };
         })
       : [],
+    networks: normalizeNetworks(src.networks),
     generator: gen
       ? {
           language: 'js',

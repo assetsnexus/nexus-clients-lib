@@ -1,4 +1,5 @@
 import { stretchShape } from './geometry';
+import { applyAddEdge, applyAddNetwork, applyMarkInterface } from './networks';
 import {
   type FaceKey,
   type JointDef,
@@ -46,6 +47,14 @@ export interface ModelOp {
   productId?: string;
   slotId?: string | null;
   slotInstanceId?: string | null;
+  interfaceId?: string;
+  side?: string;
+  medium?: string;
+  networkId?: string;
+  kind?: string;
+  fromInterfaceId?: string;
+  toInterfaceId?: string;
+  label?: string;
   source?: HistorySource;
   count?: number;
   stepMm?: Partial<Vec3>;
@@ -125,6 +134,15 @@ function applyOne(model: VisualModel, op: ModelOp): { warning?: string; shapeIds
     if (op.parentId && !findShape(model, op.parentId)) return { warning: `unknown parent ${op.parentId}`, shapeIds: [] };
     model.shapes.push(shape);
     return { shapeIds: [shape.id] };
+  }
+
+  if (op.op === 'markInterface' || op.op === 'addNetwork' || op.op === 'addEdge') {
+    const warning = op.op === 'markInterface'
+      ? applyMarkInterface(model, op)
+      : op.op === 'addNetwork'
+        ? applyAddNetwork(model, op)
+        : applyAddEdge(model, op);
+    return warning ? { warning, shapeIds: [] } : { shapeIds: op.shapeId ? [op.shapeId] : [] };
   }
 
   const shape = id ? findShape(model, id) : undefined;

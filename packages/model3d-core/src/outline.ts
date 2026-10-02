@@ -30,6 +30,8 @@ export interface ModelOutline {
   };
   bounds: ReturnType<typeof modelBoundsMm>;
   shapes: OutlineShape[];
+  interfaces: Array<{ interfaceId: string; shapeId: string; side: string | null; medium: string | null }>;
+  networks: Array<{ id: string; name: string; type: string; kind: string; edges: Array<{ id: string; fromInterfaceId: string; toInterfaceId: string }> }>;
   generator: {
     dirty: boolean;
     hasSource: boolean;
@@ -51,6 +53,25 @@ export function outlineModel(model: VisualModel): ModelOutline {
       note: 'Origin at the footprint centre on the ground. Rotations are degrees, XYZ, in the parent frame. joint.restDeg 0 is the authored pose.',
     },
     bounds: modelBoundsMm(model),
+    interfaces: (model.interfaceMarkers || [])
+      .filter((marker) => marker.interfaceId && marker.shapeId)
+      .map((marker) => ({
+        interfaceId: marker.interfaceId,
+        shapeId: marker.shapeId as string,
+        side: marker.side,
+        medium: marker.medium,
+      })),
+    networks: (model.networks || []).map((network) => ({
+      id: network.id,
+      name: network.name,
+      type: network.type,
+      kind: network.kind,
+      edges: network.edges.map((edge) => ({
+        id: edge.id,
+        fromInterfaceId: edge.fromInterfaceId,
+        toInterfaceId: edge.toInterfaceId,
+      })),
+    })),
     shapes: model.shapes.map((shape) => {
       const opaque = OPAQUE_TYPES.has(shape.type);
       return {

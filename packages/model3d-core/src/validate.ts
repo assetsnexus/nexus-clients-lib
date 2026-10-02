@@ -98,6 +98,7 @@ export interface OpLike {
 
 /** Returns a warning string when the op must be skipped. */
 export function rejectOp(model: VisualModel, op: OpLike): string | null {
+  if (op.op === 'markInterface' || op.op === 'addNetwork' || op.op === 'addEdge') return null;
   const id = op.id || op.shapeId;
   const shape = id ? findShape(model, id) : undefined;
   if (op.op !== 'add' && op.op !== 'addGroup' && op.op !== 'addPrism' && op.op !== 'instance' && op.op !== 'delete' && !shape && op.op !== 'pattern') {

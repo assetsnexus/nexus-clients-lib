@@ -1,3 +1,4 @@
+import { networkRouteSegments } from './networks';
 import { ancestorHidden, type ShapeDef, type VisualModel } from './schema';
 import { deg2rad } from './units';
 
@@ -13,15 +14,26 @@ export interface ThreeLike {
   CylinderGeometry: new (rt: number, rb: number, h: number, seg: number) => unknown;
   MeshStandardMaterial: new (params: Record<string, unknown>) => unknown;
   DoubleSide: number;
+  Vector3?: new (x?: number, y?: number, z?: number) => {
+    set: (x: number, y: number, z: number) => unknown;
+    subVectors: (a: unknown, b: unknown) => { length: () => number; normalize: () => unknown };
+    normalize: () => unknown;
+    copy?: (v: unknown) => unknown;
+    add?: (v: unknown) => unknown;
+    multiplyScalar?: (n: number) => unknown;
+  };
+  Quaternion?: new () => { setFromUnitVectors: (a: unknown, b: unknown) => unknown };
 }
 
 export interface ThreeObject {
   add: (child: ThreeObject) => void;
-  position: { set: (x: number, y: number, z: number) => void };
+  position: { set: (x: number, y: number, z: number) => void; copy?: (v: unknown) => unknown; add?: (v: unknown) => unknown; multiplyScalar?: (n: number) => unknown };
   rotation: { set: (x: number, y: number, z: number) => void; x: number };
+  quaternion?: { setFromUnitVectors: (a: unknown, b: unknown) => void };
   scale?: { set: (x: number, y: number, z: number) => void };
   userData: Record<string, unknown>;
   name: string;
+  children?: unknown[];
 }
 
 export interface BuildModelOptions {
@@ -50,6 +62,8 @@ function addShape(THREE: ThreeLike, shape: ShapeDef, opts: BuildModelOptions): T
     shapeId: shape.id,
     shapeType: shape.type,
     surface: shape.surface,
+    pickKind: shape.linkedInterfaceIds.length ? 'interface' : undefined,
+    interfaceId: shape.linkedInterfaceIds[0] || undefined,
     editable: shape.type !== 'model' && shape.type !== 'cad_ref' && shape.type !== 'component_ref',
     textureUrl: shape.material.textureFileId && opts.resolveTextureUrl ? opts.resolveTextureUrl(shape.material.textureFileId) : null,
   };
@@ -125,5 +139,43 @@ export function buildModelGroup(THREE: ThreeLike, model: VisualModel, opts: Buil
     if (parent) parent.add(node);
     else basis.add(node);
   }
+  for (const segment of networkRouteSegments(model)) {
+    addRouteLine(THREE, basis, segment);
+  }
   return basis;
+}
+
+/** Cable between two interface shapes. Endpoints are those shapes, in Z-up scene units. */
+function addRouteLine(THREE: ThreeLike, parent: ThreeObject, segment: ReturnType<typeof networkRouteSegments>[number]): void {
+  const ax = segment.fromMm.x * UNIT;
+  const ay = segment.fromMm.y * UNIT;
+  const az = segment.fromMm.z * UNIT;
+  const bx = segment.toMm.x * UNIT;
+  const by = segment.toMm.y * UNIT;
+  const bz = segment.toMm.z * UNIT;
+  const length = Math.hypot(bx - ax, by - ay, bz - az);
+  if (length < 1e-4) return;
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, length, 8),
+    new THREE.MeshStandardMaterial({ color: segment.color, roughness: 0.35, metalness: 0.2 }),
+  );
+  mesh.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+  mesh.name = segment.edgeId;
+  mesh.userData = {
+    pickKind: 'edge',
+    networkId: segment.networkId,
+    edgeId: segment.edgeId,
+    fromInterfaceId: segment.fromInterfaceId,
+    toInterfaceId: segment.toInterfaceId,
+    fromShapeId: segment.fromShapeId,
+    toShapeId: segment.toShapeId,
+    fromMm: segment.fromMm,
+    toMm: segment.toMm,
+  };
+  if (THREE.Vector3 && THREE.Quaternion && mesh.quaternion) {
+    const direction = new THREE.Vector3(bx - ax, by - ay, bz - az);
+    direction.normalize();
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+  }
+  parent.add(mesh);
 }
