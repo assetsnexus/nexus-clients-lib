@@ -55,6 +55,27 @@ describe('RoutedTransport', () => {
     expect(transport.getPrimaryOrigin()).toBe('https://primary.example');
   });
 
+  it('retries a lone route on the next request after a transient failure', async () => {
+    let calls = 0;
+    const transport = track(
+      new RoutedTransport({
+        routes: routes([{ url: 'https://only.example', priority: 1, kind: 'primary' }]),
+        probeIntervalMs: 60_000,
+        fetchImpl: async (input) => {
+          if (String(input).endsWith('/health')) return jsonResponse(200, { status: 'ok' });
+          calls += 1;
+          if (calls === 1) return jsonResponse(503, { error: 'unavailable' });
+          return jsonResponse(200, { ok: true });
+        },
+      }),
+    );
+
+    const first = await transport.request({ method: 'GET', path: '/v1', headers: {} });
+    expect(first.status).toBe(503);
+    const second = await transport.request({ method: 'GET', path: '/v1', headers: {} });
+    expect(second.status).toBe(200);
+  });
+
   it('fails over a GET on HTTP 503', async () => {
     const calls: string[] = [];
     const transport = track(

@@ -56,11 +56,13 @@ describe('HealthPinger', () => {
   it('emits a deprecation once for the same catalog fingerprint and warning set', async () => {
     vi.useFakeTimers();
     const notices: string[] = [];
+    let fingerprint = 'fp-1';
     const pinger = new HealthPinger({
       getBaseUrl: () => 'https://eu.example',
       idleIntervalMs: 10,
-      onDeprecation: (notice) => notices.push(notice.signature),
-      fetchImpl: async () => new Response(JSON.stringify(healthBody), { status: 200 }),
+      onDeprecation: (notice) => notices.push(`${notice.catalogFingerprint}:${notice.signature}`),
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ ...healthBody, catalogFingerprint: fingerprint }), { status: 200 }),
     });
     pinger.start();
     await vi.advanceTimersByTimeAsync(10);
@@ -68,6 +70,11 @@ describe('HealthPinger', () => {
     await vi.advanceTimersByTimeAsync(10);
     await pinger.settle();
     expect(notices).toHaveLength(1);
+
+    fingerprint = 'fp-2';
+    await vi.advanceTimersByTimeAsync(10);
+    await pinger.settle();
+    expect(notices).toHaveLength(2);
     pinger.stop();
   });
 
@@ -143,6 +150,34 @@ describe('NexusClient version headers', () => {
     expect(seen.headers?.get('x-anx-client')).toBe(sdkClientHeaderValue());
     expect(seen.headers?.get('x-anx-app')).toBeNull();
     expect(JSON.parse(seen.body || '{}').commandVersion).toBe(1);
+    client.dispose();
+  });
+
+  it('reports Deprecation response headers from a command once', async () => {
+    const notices: string[] = [];
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ responseCode: 200, responseObject: { ok: true } }), {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          Deprecation: 'true',
+          Sunset: 'Wed, 01 Jan 2031 00:00:00 GMT',
+          Link: '<https://docs.example/next>; rel="successor-version"',
+        },
+      })) as typeof fetch;
+    const client = new NexusClient({
+      baseUrl: 'https://eu.example',
+      fetchImpl,
+      maxRetries: 0,
+      health: {
+        idleIntervalMs: 60_000,
+        onDeprecation: (notice) => notices.push(notice.signature),
+      },
+    });
+    await client.send('anx.old.command', {}, { isRead: true });
+    await client.send('anx.old.command', {}, { isRead: true });
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('anx.old.command');
     client.dispose();
   });
 });

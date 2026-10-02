@@ -132,7 +132,7 @@ export class RoutedTransport {
     this.onRouteSwitch = options.onRouteSwitch;
     this.onRegionRedirect = options.onRegionRedirect;
 
-    this.replaceRoutes(options.routes.routes, false);
+    this.replaceRoutes(options.routes.routes);
 
     const interval = this.probeIntervalMs;
     this.monitor = new RouteMonitor({
@@ -186,6 +186,7 @@ export class RoutedTransport {
     }
 
     const attempt = this.classifyAttempt(input);
+    this.reviveWhenAllFailed();
     const attempted = new Set<string>();
     let hops = 0;
     let lastError: NexusError | undefined;
@@ -254,6 +255,25 @@ export class RoutedTransport {
     );
   }
 
+  /**
+   * Failure marks last until a health probe passes. When every route is marked,
+   * a request would be refused for a whole probe interval even if the origin
+   * already recovered (a lone route is always in this state after one 503).
+   * Clear the marks so the request itself is the probe; it re-marks on failure.
+   */
+  private reviveWhenAllFailed(): void {
+    if (this.routes.size === 0) return;
+    for (const route of this.routes.values()) {
+      if (!route.failed) return;
+    }
+    for (const route of this.routes.values()) {
+      route.failed = false;
+      route.lossRatio = 0;
+    }
+    const first = this.scoreAll().find((row) => !row.failed);
+    if (first) this.activeId = first.id;
+  }
+
   private classifyAttempt(input: RoutedTransportRequest): RouteAttemptClass {
     const method = input.method.toUpperCase();
     const hinted = this.classify?.(input);
@@ -315,7 +335,7 @@ export class RoutedTransport {
 
     this.redirectAdopted = true;
     const previous = fromUrl;
-    this.replaceRoutes(next, false);
+    this.replaceRoutes(next);
     this.syncMonitorRoutes();
     this.onRegionRedirect?.({ fromUrl: previous, endpoints: next.map((route) => route.url) });
     this.logger.info?.('region_redirect', {
@@ -336,8 +356,7 @@ export class RoutedTransport {
     return next.length;
   }
 
-  private replaceRoutes(list: RegionRoute[], notify: boolean): void {
-    const previous = this.activeId ? this.routes.get(this.activeId)?.url ?? null : null;
+  private replaceRoutes(list: RegionRoute[]): void {
     this.routes = new Map();
     const sorted = [...list].sort((a, b) => a.priority - b.priority);
     for (const route of sorted) {
@@ -354,10 +373,6 @@ export class RoutedTransport {
     }
     const first = this.scoreAll().find((row) => !row.failed);
     this.activeId = first?.id ?? null;
-    if (notify && this.activeId) {
-      const active = this.routes.get(this.activeId);
-      if (active) this.fireSwitch(previous, active.url, 'routes_replaced');
-    }
   }
 
   private syncMonitorRoutes(): void {
