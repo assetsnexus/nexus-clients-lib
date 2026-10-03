@@ -14,6 +14,7 @@ export type NexusErrorCode =
   | 'ONBOARDING_REQUIRED_FOR_GRANT'
   | 'INVALID_GRANT'
   | 'INVALID_CLIENT'
+  | 'REQUIREMENTS_NOT_MET'
   | 'REGION_NOT_FOUND'
   | 'NOT_IMPLEMENTED'
   | 'UNKNOWN';
@@ -149,6 +150,14 @@ export const NEXUS_ERROR_CATALOG: Record<NexusErrorCode, NexusErrorCatalogEntry>
     meaning: 'Client authentication failed.',
     remediation: 'Check client_id / client_secret; rotate if compromised.',
     docsAnchor: 'errors#invalid_client',
+  },
+  REQUIREMENTS_NOT_MET: {
+    code: 'REQUIREMENTS_NOT_MET',
+    httpStatus: 403,
+    retryable: false,
+    meaning: 'The OAuth client loginRequirements gate is not met. The authorization code is not consumed.',
+    remediation: 'Send the user through the returned actions, then retry the same code.',
+    docsAnchor: 'integrate/login-requirements',
   },
   REGION_NOT_FOUND: {
     code: 'REGION_NOT_FOUND',

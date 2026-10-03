@@ -16,6 +16,7 @@ export {
   type GrantResourceScopeChangedData,
   type GrantRevokedData,
   type NexusWebhookEvent,
+  type NotificationActionData,
   type NexusWebhookPayload,
   type PermissionRequestDecidedData,
   type RegulatoryStatusChangedData,

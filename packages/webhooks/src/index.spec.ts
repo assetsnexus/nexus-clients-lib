@@ -79,4 +79,27 @@ describe('dispatchWebhookEvent', () => {
     expect(applied).toBe(1);
     expect(rolesVersion).toBe(3);
   });
+
+  it('routes notification.action with its typed payload', async () => {
+    const payload: NexusWebhookPayload = {
+      eventId: 'e-action',
+      event: 'notification.action',
+      eventVersion: 1,
+      clientId: 'client-1',
+      at: '2026-10-02T12:00:00.000Z',
+      data: {
+        notificationId: 'n1',
+        actionId: 'ack',
+        subject: 'pairwise-sub',
+        occurredAt: '2026-10-02T12:00:01.000Z',
+      },
+    };
+    let seen = '';
+    await dispatchWebhookEvent(payload, {
+      'notification.action': (event) => {
+        seen = `${event.data.notificationId}:${event.data.actionId}:${event.data.subject}:${event.data.occurredAt}`;
+      },
+    });
+    expect(seen).toBe('n1:ack:pairwise-sub:2026-10-02T12:00:01.000Z');
+  });
 });

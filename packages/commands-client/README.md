@@ -89,8 +89,9 @@ A single HTTP 307, or a JSON envelope with `responseCode: 307` and `errorObjects
 - OAuth PKCE helpers, JWKS cache, introspection
 - Region resolvers (static / country / gateway stub)
 - `subject` namespace: consented identities, regulatory status, field claims
+- `orgAdmin` reads `anx.compliance.security-policy.get`, `.self-status.get`, and `anx.compliance.org-overview.get` (org session or API key; an app access token is forbidden)
 - `permissions.requestBatch` and `ElevationRequiredError.waitForDecision`
-- `grant` and `subscriptions` namespaces
+- `grant` and `subscriptions` namespaces (`app-subscription.get` currently returns the fixed free tier)
 - `/testing` in-memory transport + fixtures
 - `npx nexus-commands-codegen --region <url>` typed command map
 

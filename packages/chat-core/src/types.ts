@@ -342,6 +342,8 @@ export type ChatContact = {
   assetAgentKey?: string | null;
   /** Human-readable asset name when type=asset_agent. */
   assetName?: string | null;
+  /** Owner of the asset, or an operator on someone else's asset. */
+  relation?: 'owner' | 'operator' | null;
   unreadCount?: number;
   /**
    * Agent availability when type=agent (`Agent.contactStatus`).

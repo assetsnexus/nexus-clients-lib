@@ -663,6 +663,7 @@ function mapAssetAgentContacts(rows: unknown[]): ChatContact[] {
         assetId,
         assetAgentKey,
         assetName: row?.assetName != null ? String(row.assetName) : assetId,
+        relation: row?.relation === 'operator' ? 'operator' : row?.relation === 'owner' ? 'owner' : null,
       };
     })
     .filter(Boolean) as ChatContact[];
@@ -1927,12 +1928,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     async loadContacts() {
       if (!features.contacts) return;
 
-      const [humanResult, veResult, vePublicResult, assetAgentsResult] = await Promise.all([
+      const [humanResult, veResult, vePublicResult] = await Promise.all([
         opts.client.send('anx.communicate.contacts.list', {}),
         opts.client.send('anx.ai-agents.virtual-employees.list', {}),
         opts.client.send('anx.ai-agents.virtual-employees.list-public', {}),
-        opts.client.send('anx.communicate.contacts.asset-agents.list', {}),
       ]);
+      const assetAgentsResult = opts.client.send('anx.communicate.contacts.asset-agents.list', {});
 
       const handleFail = (result: unknown, command: string) => {
         if (result && typeof result === 'object' && 'ok' in result && (result as SendResult).ok === false) {
@@ -1951,12 +1952,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       handleFail(humanResult, 'anx.communicate.contacts.list');
       handleFail(veResult, 'anx.ai-agents.virtual-employees.list');
       handleFail(vePublicResult, 'anx.ai-agents.virtual-employees.list-public');
-      handleFail(assetAgentsResult, 'anx.communicate.contacts.asset-agents.list');
 
       const humanData = unwrapData(humanResult);
       const veData = unwrapData(veResult);
       const vePublicData = unwrapData(vePublicResult);
-      const assetAgentsData = unwrapData(assetAgentsResult);
 
       const humanRows = Array.isArray(humanData.contacts)
         ? (humanData.contacts as unknown[])
@@ -1985,14 +1984,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               ? (vePublicResult as unknown[])
               : [];
 
-      const assetAgentRows: unknown[] = Array.isArray(assetAgentsData.contacts)
-        ? (assetAgentsData.contacts as unknown[])
-        : Array.isArray(assetAgentsData)
-          ? (assetAgentsData as unknown[])
-          : Array.isArray(assetAgentsResult)
-            ? (assetAgentsResult as unknown[])
-            : [];
-
       const byId = new Map<string, ChatContact>();
       // Owned VEs first — marks canConfigure so portal can deep-link to agent settings.
       const publicFilesBaseUrl = opts.publicFilesBaseUrl || null;
@@ -2005,17 +1996,42 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       for (const c of mapHumanContacts(humanRows)) {
         byId.set(c.id, c);
       }
-      for (const c of mapAssetAgentContacts(assetAgentRows)) {
-        byId.set(c.id, c);
-      }
 
-      const contacts = Array.from(byId.values());
-      store.setState({ contacts });
-      void hydrateAgentAvatars(contacts, opts.client, publicFilesBaseUrl)
+      // People and agents are ready. Asset scans stay off this critical path
+      // until they resolve, then they are merged in.
+      store.setState({ contacts: Array.from(byId.values()) });
+      void hydrateAgentAvatars(Array.from(byId.values()), opts.client, publicFilesBaseUrl)
         .then((hydrated) => {
-          if (hydrated !== contacts) store.setState({ contacts: hydrated });
+          const current = store.getState().contacts;
+          const assets = current.filter((c) => c.type === 'asset_agent');
+          const next = hydrated.filter((c) => c.type !== 'asset_agent').concat(assets);
+          store.setState({ contacts: next });
         })
         .catch(() => {});
+
+      void assetAgentsResult
+        .then((resolvedAssets) => {
+          handleFail(resolvedAssets, 'anx.communicate.contacts.asset-agents.list');
+          const assetAgentsData = unwrapData(resolvedAssets);
+          const assetAgentRows: unknown[] = Array.isArray(assetAgentsData.contacts)
+            ? (assetAgentsData.contacts as unknown[])
+            : Array.isArray(assetAgentsData)
+              ? (assetAgentsData as unknown[])
+              : Array.isArray(resolvedAssets)
+                ? (resolvedAssets as unknown[])
+                : [];
+          const merged = new Map<string, ChatContact>();
+          for (const contact of store.getState().contacts) {
+            if (contact.type !== 'asset_agent') merged.set(contact.id, contact);
+          }
+          for (const contact of mapAssetAgentContacts(assetAgentRows)) {
+            merged.set(contact.id, contact);
+          }
+          store.setState({ contacts: Array.from(merged.values()) });
+        })
+        .catch(() => {
+          // Keep people and agents when the asset scan fails.
+        });
     },
     openContact,
     listConversations: contactThreads.listConversations.bind(contactThreads),

@@ -27,23 +27,32 @@
           :title="contactName"
           @click.stop="$emit('open-details')"
         >
-          <div class="nexus-chat-panel__avatar" aria-hidden="true">
+          <div class="nexus-chat-panel__avatar-stack" aria-hidden="true">
             <img
-              v-if="contactAvatarUrl && !avatarImgFailed"
-              :key="avatarImgKey"
-              :src="contactAvatarUrl"
+              v-if="ownerAvatarUrl"
+              :key="ownerAvatarUrl"
+              class="nexus-chat-panel__owner-logo"
+              :src="ownerAvatarUrl"
               alt=""
-              @error="avatarImgFailed = true"
             />
-            <span v-else>{{ contactInitials }}</span>
-            <span
-              v-if="contactType === 'agent'"
-              class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--ai"
-            >AI</span>
-            <span
-              v-else-if="contactType === 'group'"
-              class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--group"
-            >G</span>
+            <div class="nexus-chat-panel__avatar">
+              <img
+                v-if="contactAvatarUrl && !avatarImgFailed"
+                :key="avatarImgKey"
+                :src="contactAvatarUrl"
+                alt=""
+                @error="avatarImgFailed = true"
+              />
+              <span v-else>{{ contactInitials }}</span>
+              <span
+                v-if="contactType === 'agent'"
+                class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--ai"
+              >AI</span>
+              <span
+                v-else-if="contactType === 'group'"
+                class="nexus-chat-panel__avatar-badge nexus-chat-panel__avatar-badge--group"
+              >G</span>
+            </div>
           </div>
           <div class="nexus-chat-panel__header-titles">
             <span class="nexus-chat-panel__title">{{ contactName }}</span>
@@ -710,6 +719,10 @@ export default {
     modeTransitionDurationMs: { type: Number, default: 600 },
     /** Session rows used to resolve parent conversation title in subagent chats. */
     sessions: { type: Array, default: () => [] },
+    /** Room title, else agent nickname. Empty keeps the contact-derived header name. */
+    headerTitle: { type: String, default: '' },
+    /** Owner org logo or user avatar, drawn half behind the agent avatar. */
+    ownerAvatarUrl: { type: String, default: '' },
     /** Authenticated viewer id — maps user turns to "You". */
     viewerUserId: { type: String, default: null },
     /** Auto-speak assistant replies (drives SpeakTurnWidget). */
@@ -844,6 +857,8 @@ export default {
       return mode === 'button' && !!this.resolvedPanel?.historyHasMore && !this.historyLoading;
     },
     contactName() {
+      const forced = String(this.headerTitle || '').trim()
+      if (forced) return forced
       const room = (this.rooms || []).find(
         (entry) => entry.id === this.resolvedPanel.roomId || entry.id === this.resolvedPanel.contactId,
       );
@@ -1743,8 +1758,26 @@ export default {
 .nexus-chat-panel__identity:hover .nexus-chat-panel__title {
   color: #51cbce;
 }
+.nexus-chat-panel__avatar-stack {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.nexus-chat-panel__owner-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  position: relative;
+  z-index: 0;
+  margin-right: -11px;
+  background: #f4f3ef;
+}
 .nexus-chat-panel__avatar {
   position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 2px #fff;
   width: 28px;
   height: 28px;
   border-radius: 50%;

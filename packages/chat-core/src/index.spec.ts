@@ -317,6 +317,7 @@ describe('chat-core', () => {
                     assetAgentKey: 'tank-driver',
                     name: 'Tank Driver · Tank',
                     assetName: 'Tank',
+                    relation: 'operator',
                   },
                 ],
               },
@@ -327,12 +328,15 @@ describe('chat-core', () => {
       },
     });
     await chat.loadContacts();
+    await Promise.resolve();
+    await Promise.resolve();
     const hit = chat.getState().contacts.find((c) => c.type === 'asset_agent');
     expect(hit).toMatchObject({
       id: 'asset-1:tank-driver',
       assetId: 'asset-1',
       assetAgentKey: 'tank-driver',
       assetName: 'Tank',
+      relation: 'operator',
     });
   });
 

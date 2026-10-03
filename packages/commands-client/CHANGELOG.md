@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- OAuth REST failures throw `NexusError`. `REQUIREMENTS_NOT_MET` carries `missing` and `actions`. The message never includes the response body.
+- `client.orgAdmin` reads org security policy (`requirePersonalPassword`, `membershipLoginPassword`) and `anx.compliance.org-overview.get`.
+- `client.subscriptions.getActiveTier()` returns the typed `anx.oauth2.app-subscription.get` snapshot. The region handler still returns only the free tier.
+
 ## 0.4.0
 
 - `RoutedTransport` fails commands over a prioritized `RegionRoutes` set. Lower `priority` is preferred. Network errors, timeouts, and HTTP 502/503/504 move to the next origin. HTTP 4xx does not. Writes fail over on timeout or connection reset only when `Idempotency-Key` (or `x-anx-idempotency-key`) is set.

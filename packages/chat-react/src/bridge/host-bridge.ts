@@ -28,12 +28,22 @@ export type HostOpenContactMessage = {
   contactId: string;
 };
 
+/** Host asks the WebView to fill the composer. Never a send. */
+export const HOST_PREFILL_TEXT_MAX = 4000;
+
+export type HostPrefillComposerMessage = {
+  type: 'prefillComposer';
+  text: string;
+  contactId?: string;
+};
+
 export type HostToSdkMessage =
   | HostAuthMessage
   | HostThemeMessage
   | HostLocaleMessage
   | HostRouteMessage
-  | HostOpenContactMessage;
+  | HostOpenContactMessage
+  | HostPrefillComposerMessage;
 
 export type SdkMinimizeMessage = { type: 'minimize' };
 export type SdkUnreadMessage = { type: 'unread'; count: number };
@@ -101,9 +111,20 @@ export function parseHostMessage(raw: unknown): HostToSdkMessage | null {
       };
     case 'openContact':
       return { type: 'openContact', contactId: String(value.contactId || '') };
+    case 'prefillComposer':
+      return parsePrefillComposer(value);
     default:
       return null;
   }
+}
+
+function parsePrefillComposer(value: Record<string, unknown>): HostPrefillComposerMessage | null {
+  if (typeof value.text !== 'string') return null;
+  const text = value.text.slice(0, HOST_PREFILL_TEXT_MAX);
+  if (!text.trim()) return null;
+  const contactId =
+    typeof value.contactId === 'string' && value.contactId.trim() ? value.contactId.trim() : undefined;
+  return contactId ? { type: 'prefillComposer', text, contactId } : { type: 'prefillComposer', text };
 }
 
 type HostWindow = Window & {
@@ -126,13 +147,22 @@ function writePending(next: HostToSdkMessage[]): void {
 }
 
 export function stashHostMessage(msg: HostToSdkMessage): void {
-  writePending([...readPending().filter((m) => m.type !== msg.type), msg]);
+  const pending = readPending();
+  // One slot per type. The inject script and each bridge listener both stash,
+  // so appending prefills would replay the same draft more than once.
+  writePending([...pending.filter((m) => m.type !== msg.type), msg]);
 }
 
 export function drainStashedHostMessages(): HostToSdkMessage[] {
   const queued = readPending();
-  writePending([]);
+  // Leave prefills queued. The shell bridge mounts first and would otherwise
+  // swallow them before NexusChatApp applies the composer draft.
+  writePending(queued.filter((m) => m.type === 'prefillComposer'));
   return queued;
+}
+
+export function dropStashedHostMessage(type: HostToSdkMessage['type']): void {
+  writePending(readPending().filter((m) => m.type !== type));
 }
 
 export function createHostBridge(input: {

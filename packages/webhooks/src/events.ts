@@ -29,6 +29,17 @@ export interface GrantResourceScopeChangedData {
   domain: 'storage' | 'contacts';
 }
 
+/**
+ * App callback invoked from a notification row.
+ * `subject` is the pairwise user subject used by `grant.*` events, not the internal user id.
+ */
+export interface NotificationActionData {
+  notificationId: string;
+  actionId: string;
+  subject: string;
+  occurredAt: string;
+}
+
 export interface PermissionRequestDecidedItem {
   itemId: string;
   kind: string;
@@ -123,6 +134,7 @@ export type NexusWebhookEvent =
   | 'grant.access_revoked'
   | 'grant.fields_changed'
   | 'grant.resource_scope_changed'
+  | 'notification.action'
   | 'permission_request.decided'
   | 'regulatory.status_changed'
   | 'agent_funding.changed'
@@ -159,6 +171,7 @@ export type NexusWebhookPayload =
   | Envelope<'grant.access_revoked', GrantAccessRevokedData>
   | Envelope<'grant.fields_changed', GrantFieldsChangedData>
   | Envelope<'grant.resource_scope_changed', GrantResourceScopeChangedData>
+  | Envelope<'notification.action', NotificationActionData>
   | Envelope<'permission_request.decided', PermissionRequestDecidedData>
   | Envelope<'regulatory.status_changed', RegulatoryStatusChangedData>
   | Envelope<'agent_funding.changed', AgentFundingChangedData>

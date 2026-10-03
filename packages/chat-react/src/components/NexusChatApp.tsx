@@ -19,6 +19,7 @@ import {
 } from '../features.js';
 import { useChatPanel } from '../hooks/useChatState.js';
 import { createSendQueue } from '../utils/sendQueue.js';
+import { applyPrefillComposer } from '../bridge/applyPrefillComposer.js';
 import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bridge/host-bridge.js';
 import { ContactList } from './ContactList.js';
 import { ThreadView } from './ThreadView.js';
@@ -30,6 +31,7 @@ import { ApprovalsStrip } from './ApprovalsStrip.js';
 import { SubAgentsStrip } from './SubAgentsStrip.js';
 import { SpendChip } from './SpendChip.js';
 import { AdminRoutes } from './admin/AdminRoutes.js';
+import { appendComposerDraft } from '../utils/composerDraft.js';
 import { openContactThread } from '../utils/openContactFlow.js';
 import { ModelPicker } from './ModelPicker.js';
 import { buildModelOverride, loadPickerModels } from '../models/loadPickerModels.js';
@@ -128,6 +130,8 @@ export function NexusChatApp({
   currentUserId,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const draftSetterRef = useRef<((text: string) => void) | null>(null);
+  const pendingDraftRef = useRef('');
   const features = useMemo(() => mergeReactFeatures(featuresProp), [featuresProp]);
   const sendQueueRef = useRef(createSendQueue());
   const [, bump] = useState(0);
@@ -193,6 +197,23 @@ export function NexusChatApp({
   const [scaInfo, setScaInfo] = useState<{ authRequestId: string | null; command: string } | null>(
     null,
   );
+
+  const registerDraftSetter = useCallback((setter: ((text: string) => void) | null) => {
+    draftSetterRef.current = setter;
+    if (!setter || !pendingDraftRef.current) return;
+    const pending = pendingDraftRef.current;
+    pendingDraftRef.current = '';
+    setter(pending);
+  }, []);
+
+  const applyComposerDraft = useCallback((text: string) => {
+    const setter = draftSetterRef.current;
+    if (setter) {
+      setter(text);
+      return;
+    }
+    pendingDraftRef.current = appendComposerDraft(pendingDraftRef.current, text);
+  }, []);
 
   const activeContactId = panel?.contactId || state.selectedAgentId;
   const contact = findChatContact(state.contacts, activeContactId || '') || null;
@@ -376,10 +397,18 @@ export function NexusChatApp({
         if (msg.type === 'openContact' && msg.contactId) {
           void openContactThread(chat, msg.contactId);
         }
+        if (msg.type === 'prefillComposer') {
+          applyPrefillComposer({
+            chat,
+            message: msg,
+            ensureChatRoute: () => setRoute('chat'),
+            applyDraft: applyComposerDraft,
+          });
+        }
       },
     });
     return () => bridge?.dispose();
-  }, [chat, onPostToHost]);
+  }, [applyComposerDraft, chat, onPostToHost]);
 
   const openFile = useCallback((file: ViewerFileRef) => {
     const tabId = `${file.id}:${file.name}`;
@@ -649,6 +678,7 @@ export function NexusChatApp({
                 showModelPicker={false}
                 onOpenFile={openFile}
                 hideCompact
+                onRegisterDraftSetter={registerDraftSetter}
               />
             ) : null}
           </main>

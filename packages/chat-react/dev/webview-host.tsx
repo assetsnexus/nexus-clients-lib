@@ -133,6 +133,11 @@ function WebViewHost() {
         if (msg.type === 'openContact' && msg.contactId) {
           setPendingContactId(msg.contactId);
         }
+        if (msg.type === 'prefillComposer') {
+          // Close the cluster scene so NexusChatApp mounts the composer.
+          // That app appends the draft and never sends it.
+          setScene({ open: false, clusterId: null });
+        }
         const nextScene = applyHostRoute(msg);
         if (nextScene) setScene(nextScene);
       },

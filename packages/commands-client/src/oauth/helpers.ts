@@ -1,3 +1,4 @@
+import { throwOAuthHttpFailure } from './http-error.js';
 import { parseRegionRoutes, type RegionRoutes } from '../regions/region-routes.js';
 import { createRequestId } from '../utils.js';
 
@@ -115,10 +116,7 @@ export async function exchangeAuthorizationCode(opts: {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`token exchange failed: ${res.status} ${text}`);
-  }
+  if (!res.ok) await throwOAuthHttpFailure('token exchange failed', res);
   return attachRegion(await res.json());
 }
 
@@ -142,10 +140,7 @@ export async function refreshAccessToken(opts: {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`refresh failed: ${res.status} ${text}`);
-  }
+  if (!res.ok) await throwOAuthHttpFailure('refresh failed', res);
   return attachRegion(await res.json());
 }
 
@@ -180,10 +175,7 @@ export async function introspectToken(opts: {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`introspect failed: ${res.status} ${text}`);
-  }
+  if (!res.ok) await throwOAuthHttpFailure('introspect failed', res);
   return (await res.json()) as IntrospectionResponse;
 }
 
@@ -196,10 +188,7 @@ export async function fetchUserInfo(opts: {
   const res = await fetchImpl(`${opts.issuer.replace(/\/$/, '')}/oauth2/userinfo`, {
     headers: { Authorization: `Bearer ${opts.accessToken}` },
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`userinfo failed: ${res.status} ${text}`);
-  }
+  if (!res.ok) await throwOAuthHttpFailure('userinfo failed', res);
   return (await res.json()) as Record<string, unknown>;
 }
 
@@ -223,10 +212,7 @@ export async function revokeToken(opts: {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`revoke failed: ${res.status} ${text}`);
-  }
+  if (!res.ok) await throwOAuthHttpFailure('revoke failed', res);
 }
 
 export async function fetchDiscovery(opts: {
@@ -236,10 +222,7 @@ export async function fetchDiscovery(opts: {
   const fetchImpl = opts.fetchImpl || fetch;
   const base = opts.issuer.replace(/\/$/, '');
   const res = await fetchImpl(`${base}/.well-known/openid-configuration`);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`discovery failed: ${res.status} ${text}`);
-  }
+  if (!res.ok) await throwOAuthHttpFailure('discovery failed', res);
   return (await res.json()) as Record<string, unknown>;
 }
 

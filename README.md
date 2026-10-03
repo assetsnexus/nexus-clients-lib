@@ -8,6 +8,7 @@ Publishable TypeScript packages for integrating with Nexus (Login with Nexus, co
 |---|---|
 | [`@nexus/commands-client`](packages/commands-client) | Command envelope, SCA/2FA, OAuth helpers, region discovery |
 | [`@nexus/webhooks`](packages/webhooks) | HMAC verification + typed privacy/subscription event handlers |
+| [`@nexus/notifications-core`](packages/notifications-core) | Headless notification routing, actions, and Ask AI context |
 | [`@nexus/chat-core`](packages/chat-core) | Headless chat (framework-free) |
 | [`@nexus/chat-vue2`](packages/chat-vue2) | Vue 2.7 UI adapter (portal) |
 | [`@nexus/chat-vue3`](packages/chat-vue3) | Vue 3 reference UI (docs / partners) |
@@ -38,6 +39,7 @@ Push this tree to a **single** GitLab project (recommended path: `nexus/anx-npm-
 |---|---|
 | `packages/commands-client` | `@nexus/commands-client` |
 | `packages/webhooks` | `@nexus/webhooks` |
+| `packages/notifications-core` | `@nexus/notifications-core` |
 | `packages/chat-core` | `@nexus/chat-core` |
 | `packages/chat-vue2` | `@nexus/chat-vue2` |
 | `packages/chat-vue3` | `@nexus/chat-vue3` |

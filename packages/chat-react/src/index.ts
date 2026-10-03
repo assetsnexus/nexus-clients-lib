@@ -65,9 +65,11 @@ export {
 } from './bridge/host-bridge.js';
 export type {
   HostToSdkMessage,
+  HostPrefillComposerMessage,
   SdkToHostMessage,
   HostBridge,
 } from './bridge/host-bridge.js';
+export { HOST_PREFILL_TEXT_MAX } from './bridge/host-bridge.js';
 
 export {
   parseParticipantPresenceV1,

@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatContact, ChatModelOverride, IoDescriptor, NexusChat } from '@nexus/chat-core';
 import { parseMentions, uploadOptsForChatFileDestination } from '@nexus/chat-core';
 import type { ChatSlots } from '../slots.js';
+import { appendComposerDraft } from '../utils/composerDraft.js';
 import type { SendQueue } from '../utils/sendQueue.js';
 import { ModelPicker } from './ModelPicker.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
@@ -24,6 +25,11 @@ export type ComposerProps = {
   onOpenFile?: (file: ViewerFileRef) => void;
   /** When true, hide the compact button (lives in context panel). */
   hideCompact?: boolean;
+  /**
+   * Registers the existing draft setter so host prefill can append text.
+   * Null on unmount. Does not send.
+   */
+  onRegisterDraftSetter?: (setter: ((text: string) => void) | null) => void;
 };
 
 export function Composer({
@@ -43,6 +49,7 @@ export function Composer({
   showModelPicker,
   onOpenFile,
   hideCompact = true,
+  onRegisterDraftSetter,
 }: ComposerProps) {
   const [text, setText] = useState('');
   const [pendingFiles, setPendingFiles] = useState<IoDescriptor[]>([]);
@@ -50,6 +57,14 @@ export function Composer({
   const [actionError, setActionError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const queued = sendQueue.list();
+
+  useEffect(() => {
+    if (!onRegisterDraftSetter) return;
+    onRegisterDraftSetter((incoming) => {
+      setText((prev) => appendComposerDraft(prev, incoming));
+    });
+    return () => onRegisterDraftSetter(null);
+  }, [onRegisterDraftSetter]);
 
   const mentionCandidates = useMemo(() => {
     if (mentionQuery == null) return [];

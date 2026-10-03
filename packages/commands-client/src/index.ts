@@ -110,7 +110,15 @@ export {
   type IntrospectionResponse,
 } from './oauth/helpers.js';
 export { GrantNamespace, type GrantView, type EffectiveCapability } from './grant/namespace.js';
-export { SubscriptionsNamespace } from './subscriptions/namespace.js';
+export {
+  OrgAdminNamespace,
+  type EnforcementMode,
+  type MembershipLoginPassword,
+  type OrgComplianceOverview,
+  type OrgSecurityPolicyView,
+  type SecurityPolicySelfStatus,
+} from './org-admin/namespace.js';
+export { SubscriptionsNamespace, type AppStoreListResult, type AppStoreListingSummary, type AppSubscriptionSnapshot } from './subscriptions/namespace.js';
 export {
   DiscoveryNamespace,
   type CatalogMeta,
