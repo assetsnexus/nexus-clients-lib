@@ -4,8 +4,23 @@ Framework-free TypeScript client for the Nexus commands API and Login with Nexus
 
 ## Install
 
+From the npm registry, once a version is published:
+
 ```bash
 npm i @nexus/commands-client
+```
+
+From the public GitHub repo, pinned to a release tag (pnpm 10). The tag builds `dist/` on install via `prepare`. pnpm 10 skips dependency build scripts unless the package is listed in `pnpm.onlyBuiltDependencies`:
+
+```json
+{
+  "dependencies": {
+    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.4.1&path:/packages/commands-client"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@nexus/commands-client"]
+  }
+}
 ```
 
 ## Node.js

@@ -73,3 +73,23 @@ If this project lives under group `nexus`, the instance endpoint also works: `${
 
 Local portal development keeps `file:../anx-npm-modules/packages/...` — no GitLab token required.
 
+## Install from GitHub (external apps)
+
+The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.4.1` cover `@nexus/commands-client` and `@nexus/webhooks` together. `dist/` is not in git. Each of those packages runs `prepare` (`npm run build`) on install, and its `tsconfig` does not depend on the monorepo root.
+
+pnpm 10:
+
+```json
+{
+  "dependencies": {
+    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.4.1&path:/packages/commands-client",
+    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.4.1&path:/packages/webhooks"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@nexus/commands-client", "@nexus/webhooks"]
+  }
+}
+```
+
+`onlyBuiltDependencies` is required. Without it pnpm 10 does not run `prepare`, and the install has no `dist/`. The machine that runs `pnpm install` needs `git` and outbound access to GitHub.
+
