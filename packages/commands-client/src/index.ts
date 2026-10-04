@@ -17,6 +17,7 @@ export {
 } from './permission-elevation.js';
 export {
   ElevationRequiredError,
+  parsePermissionRequestReturn,
   type PermissionRequestSnapshot,
   type PermissionRequestStatus,
   type CommandSender,

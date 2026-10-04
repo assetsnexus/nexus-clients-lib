@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createTestClient, fixtureOk } from '../testing/index.js';
-import { ElevationRequiredError } from './elevation-error.js';
+import { ElevationRequiredError, parsePermissionRequestReturn } from './elevation-error.js';
 import { PermissionBatchValidationError } from './validate-batch.js';
 
 describe('permissions namespace', () => {
@@ -75,5 +75,39 @@ describe('ElevationRequiredError', () => {
     const decided = await error!.waitForDecision(client, { timeoutMs: 5_000, pollAfterMs: 200 });
     expect(decided.status).toBe('decided');
     expect(decided.items[0]?.decision).toBe('once');
+  });
+
+  it('builds a portal redirect and reads the return query', () => {
+    const error = new ElevationRequiredError({
+      approvalUrl: '/oauth/permission-requests/req-9',
+      elevationRequestId: 'req-9',
+    });
+    const url = error.buildRedirectUrl({
+      portalOrigin: 'https://alexlab-ws-i9:3002',
+      returnTo: 'http://localhost:5173/app',
+    });
+    expect(url).toBe(
+      'https://alexlab-ws-i9:3002/oauth/permission-requests/req-9?return_to=http%3A%2F%2Flocalhost%3A5173%2Fapp',
+    );
+    expect(parsePermissionRequestReturn('http://localhost:5173/app?permission_request=req-9&status=approved')).toEqual({
+      requestId: 'req-9',
+      status: 'approved',
+    });
+    expect(parsePermissionRequestReturn('http://localhost:5173/app?status=nope')).toBeNull();
+    expect(() => error.buildRedirectUrl({
+      portalOrigin: 'https://portal.example',
+      returnTo: 'javascript:alert(1)',
+    })).toThrow(/http/);
+  });
+
+  it('rejects an approval URL on a different host', () => {
+    const error = new ElevationRequiredError({
+      approvalUrl: 'https://evil.example/oauth/permission-requests/req-9',
+      elevationRequestId: 'req-9',
+    });
+    expect(() => error.buildRedirectUrl({
+      portalOrigin: 'https://portal.example',
+      returnTo: 'http://localhost:5173/app',
+    })).toThrow(/portal origin/);
   });
 });

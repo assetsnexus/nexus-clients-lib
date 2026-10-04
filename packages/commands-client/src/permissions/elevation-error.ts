@@ -25,6 +25,39 @@ export type CommandSender = {
 };
 
 const LIST = 'anx.permission-grants.requests.list';
+const RETURN_STATUSES = new Set(['approved', 'denied', 'pending']);
+
+function requireHttpUrl(raw: string, name: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new NexusError('INVALID_RESPONSE', `${name} must be an absolute http(s) URL`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new NexusError('INVALID_RESPONSE', `${name} must use http or https`);
+  }
+  if (url.username || url.password) {
+    throw new NexusError('INVALID_RESPONSE', `${name} must not include credentials`);
+  }
+  return url;
+}
+
+/** Reads `permission_request` and `status` after the portal sends the user back. */
+export function parsePermissionRequestReturn(
+  raw: string,
+): { requestId: string; status: 'approved' | 'denied' | 'pending' } | null {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  const requestId = (url.searchParams.get('permission_request') || '').trim();
+  const status = (url.searchParams.get('status') || '').trim();
+  if (!requestId || !RETURN_STATUSES.has(status)) return null;
+  return { requestId, status: status as 'approved' | 'denied' | 'pending' };
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -94,6 +127,32 @@ export class ElevationRequiredError extends NexusError {
     this.approvalUrl = approvalUrl;
     this.elevationRequestId = input.elevationRequestId;
     this.command = input.command ?? null;
+  }
+
+  /**
+   * Portal URL for the permission-request page, with `return_to` for the app.
+   * Relative approval paths stay on `portalOrigin`. A different host is rejected.
+   */
+  buildRedirectUrl(input: { portalOrigin: string; returnTo: string }): string {
+    if (!this.approvalUrl) {
+      throw new NexusError('INVALID_RESPONSE', 'Permission request is missing approvalUrl');
+    }
+    const portal = requireHttpUrl(input.portalOrigin, 'portalOrigin');
+    const back = requireHttpUrl(input.returnTo, 'returnTo');
+    let approval: URL;
+    try {
+      approval = new URL(this.approvalUrl, `${portal.origin}/`);
+    } catch {
+      throw new NexusError('INVALID_RESPONSE', 'approvalUrl is not a URL');
+    }
+    if (approval.protocol !== 'http:' && approval.protocol !== 'https:') {
+      throw new NexusError('INVALID_RESPONSE', 'approvalUrl must use http or https');
+    }
+    if (approval.origin !== portal.origin) {
+      throw new NexusError('INVALID_RESPONSE', 'approvalUrl must stay on the portal origin');
+    }
+    approval.searchParams.set('return_to', back.toString());
+    return approval.toString();
   }
 
   static fromSendResult(result: SendResult): ElevationRequiredError | null {
