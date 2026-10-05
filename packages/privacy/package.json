@@ -1,0 +1,52 @@
+{
+  "name": "@nexus/privacy",
+  "version": "0.1.0",
+  "description": "Server-side kit that honours Nexus privacy-request webhooks",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./mongo": {
+      "types": "./dist/mongo.d.ts",
+      "import": "./dist/mongo.js",
+      "require": "./dist/mongo.cjs"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "import": "./dist/postgres.js",
+      "require": "./dist/postgres.cjs"
+    }
+  },
+  "files": ["dist", "sql", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsup src/index.ts src/mongo.ts src/postgres.ts --format esm,cjs --dts --clean",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@nexus/commands-client": ">=0.4.2",
+    "@nexus/webhooks": ">=0.4.0"
+  },
+  "devDependencies": {
+    "@nexus/commands-client": "file:../commands-client",
+    "@nexus/webhooks": "file:../webhooks",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
