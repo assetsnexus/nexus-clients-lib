@@ -106,7 +106,7 @@ describe('privacy kit', () => {
     expect(api.calls).toEqual(['ack:req-o']);
     await kit.tick();
     expect(api.calls).toEqual(['ack:req-o']);
-    await kit.completeReview('req-o', { outcome: 'rejected', rejectionReason: 'contract', legalBasis: 'art_6_1_b' });
+    await kit.completeReview('req-o', { outcome: 'rejected', rejectionReason: 'contract', legalBasis: 'art_6_1_b', summary: 'Kept for the contract' });
     await kit.tick();
     expect(api.calls).toContain('complete:req-o:rejected');
   });
@@ -156,6 +156,19 @@ describe('privacy kit', () => {
     await kit.tick();
     expect(erased).toEqual(['pairwise-sub']);
     expect(api.calls).toEqual([]);
+  });
+
+  it('acknowledges before completing a review that was recorded early', async () => {
+    const api = client();
+    const kit = createPrivacyKit({
+      client: api,
+      store: createMemoryPrivacyJobStore(),
+      sections: createSectionRegistry(),
+    });
+    await kit.handleEvent(created('rectification', 'req-r'));
+    await kit.completeReview('req-r', { outcome: 'fulfilled', summary: 'Corrected the address' });
+    await kit.tick();
+    expect(api.calls).toEqual(['ack:req-r', 'complete:req-r:fulfilled']);
   });
 
   it('reconcile enqueues an open request the webhook missed', async () => {

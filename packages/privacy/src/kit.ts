@@ -122,6 +122,10 @@ export function createPrivacyKit(options: PrivacyKitOptions) {
     }
     if (job.status === 'review') {
       if (!job.review) return;
+      if (!job.acknowledged) {
+        await options.client.privacyRequests.acknowledge(job.requestId);
+        job.acknowledged = true;
+      }
       await finishReview(job, job.review);
       return;
     }
