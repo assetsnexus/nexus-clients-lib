@@ -1,6 +1,6 @@
 export type PrivacyRequestType = 'access' | 'erasure' | 'rectification' | 'restriction' | 'objection';
 
-export type PrivacyJobStatus = 'queued' | 'review' | 'completed' | 'cancelled';
+export type PrivacyJobStatus = 'queued' | 'review' | 'completed' | 'cancelled' | 'failed';
 
 export interface RetainedCategory {
   category: string;
@@ -67,7 +67,11 @@ export interface PrivacyJobStore {
 
 export interface PrivacyCommandClient {
   privacyRequests: {
-    list(): Promise<{ items: Array<{ requestId: string; type: PrivacyRequestType; sub: string; grantId: string; details?: string; dueAt: string }> }>;
+    list(options?: { cursor?: string; limit?: number }): Promise<{
+      items: Array<{ requestId: string; type: PrivacyRequestType; sub: string; grantId: string; details?: string; dueAt: string }>;
+      nextCursor?: string | null;
+    }>;
+    get?(requestId: string): Promise<{ status: string; outcome?: 'fulfilled' | 'rejected' | null }>;
     acknowledge(requestId: string): Promise<unknown>;
     exportUploadUrl(input: {
       requestId: string;

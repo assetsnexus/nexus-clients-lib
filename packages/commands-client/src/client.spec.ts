@@ -337,6 +337,26 @@ describe('oauth helpers', () => {
     expect(url).toContain('prompt=create');
   });
 
+  it('forwards a prompt list in fixed order and rejects a contradiction', () => {
+    const url = buildAuthorizeUrl({
+      issuer: 'https://region.example',
+      clientId: 'c1',
+      redirectUri: 'https://app/cb',
+      state: 's',
+      codeChallenge: 'ch',
+      prompt: ['consent', 'login'],
+    });
+    expect(new URL(url).searchParams.get('prompt')).toBe('login consent');
+    expect(() => buildAuthorizeUrl({
+      issuer: 'https://region.example',
+      clientId: 'c1',
+      redirectUri: 'https://app/cb',
+      state: 's',
+      codeChallenge: 'ch',
+      prompt: ['login', 'create'],
+    })).toThrow(/cannot combine login and create/);
+  });
+
   it('fetchUserInfo and revokeToken call expected endpoints', async () => {
     const { fetchUserInfo, revokeToken, fetchDiscovery } = await import('./oauth/helpers.js');
     const calls: Array<{ url: string; init?: RequestInit }> = [];

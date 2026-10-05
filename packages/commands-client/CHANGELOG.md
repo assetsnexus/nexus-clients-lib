@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+- `buildAuthorizeUrl` accepts a space-separated `prompt` (`login consent`). `login` together with `create` is rejected.
+- `client.privacyRequests.list({ cursor, limit })` pages open requests. `client.privacyRequests.get(requestId)` reads one request, including a completed or cancelled one.
+- Privacy command failures throw `PrivacyCommandError` with `code`, `httpStatus`, and `details`. A finished request is `REQUEST_CLOSED`.
+
 ## 0.4.2
 
 - `buildAuthorizeUrl` accepts `prompt`: `login`, `consent`, `select_account`, or `create`.

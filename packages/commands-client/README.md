@@ -15,7 +15,7 @@ From the public GitHub repo, pinned to a release tag (pnpm 10). The tag builds `
 ```json
 {
   "dependencies": {
-    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.1&path:/packages/commands-client"
+    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.2&path:/packages/commands-client"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/commands-client"]

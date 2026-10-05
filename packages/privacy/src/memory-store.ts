@@ -17,7 +17,7 @@ export function createMemoryPrivacyJobStore(): PrivacyJobStore {
       const leased: PrivacyJob[] = [];
       for (const job of jobs.values()) {
         if (leased.length >= limit) break;
-        if (job.status === 'completed' || job.status === 'cancelled') continue;
+        if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'failed') continue;
         if (job.status === 'review' && !job.review) continue;
         if (Date.parse(job.nextAttemptAt) > now) continue;
         if (job.leaseUntil && Date.parse(job.leaseUntil) > now) continue;

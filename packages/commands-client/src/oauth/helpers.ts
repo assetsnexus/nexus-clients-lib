@@ -48,9 +48,34 @@ export type AuthorizeUrlParams = {
   codeChallengeMethod?: 'S256';
   subjectType?: 'user' | 'org_member';
   orgId?: string;
-  /** OIDC prompt. `create` opens registration on the consent page. */
-  prompt?: 'login' | 'consent' | 'select_account' | 'create';
+  /**
+   * OIDC prompt. One value or a space-separated list: `login`, `consent`,
+   * `select_account`, `create`. `create` opens registration. `login` and
+   * `create` together are rejected.
+   */
+  prompt?: AuthorizePrompt | readonly AuthorizePrompt[];
 };
+
+export const AUTHORIZE_PROMPT_VALUES = ['login', 'consent', 'select_account', 'create'] as const;
+export type AuthorizePrompt = (typeof AUTHORIZE_PROMPT_VALUES)[number];
+const AUTHORIZE_PROMPT_ORDER: AuthorizePrompt[] = ['login', 'consent', 'select_account', 'create'];
+
+/** Canonical `prompt` query value, or undefined when the caller omitted it. */
+export function authorizePromptParam(prompt: AuthorizePrompt | readonly AuthorizePrompt[] | undefined): string | undefined {
+  if (prompt == null) return undefined;
+  const tokens = (Array.isArray(prompt) ? prompt : String(prompt).trim().split(/\s+/)).filter(Boolean);
+  if (tokens.length === 0) return undefined;
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    if (!AUTHORIZE_PROMPT_VALUES.includes(token as AuthorizePrompt)) {
+      throw new Error(`prompt must be a space-separated list of ${AUTHORIZE_PROMPT_VALUES.join(', ')}`);
+    }
+    if (seen.has(token)) throw new Error(`prompt value ${token} is repeated`);
+    seen.add(token);
+  }
+  if (seen.has('login') && seen.has('create')) throw new Error('prompt cannot combine login and create');
+  return AUTHORIZE_PROMPT_ORDER.filter((item) => seen.has(item)).join(' ');
+}
 
 export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
   const base = params.issuer.replace(/\/$/, '');
@@ -62,7 +87,8 @@ export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
   url.searchParams.set('code_challenge', params.codeChallenge);
   url.searchParams.set('code_challenge_method', params.codeChallengeMethod || 'S256');
   if (params.scope) url.searchParams.set('scope', params.scope);
-  if (params.prompt) url.searchParams.set('prompt', params.prompt);
+  const prompt = authorizePromptParam(params.prompt);
+  if (prompt) url.searchParams.set('prompt', prompt);
   if (params.subjectType) url.searchParams.set('subject_type', params.subjectType);
   if (params.orgId) url.searchParams.set('org_id', params.orgId);
   return url.toString();

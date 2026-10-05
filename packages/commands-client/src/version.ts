@@ -6,4 +6,4 @@
 export const SDK_VERSION: string =
   typeof __NEXUS_SDK_VERSION__ === 'string' && __NEXUS_SDK_VERSION__.length > 0
     ? __NEXUS_SDK_VERSION__
-    : '0.4.2';
+    : '0.4.3';

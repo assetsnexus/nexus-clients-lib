@@ -38,9 +38,26 @@ export type PrivacyCompleteInput = {
   retainedCategories?: Array<{ category: string; legalBasis: string }>;
 };
 
+export class PrivacyCommandError extends Error {
+  readonly code: string;
+  readonly httpStatus: number;
+  readonly details?: Record<string, unknown>;
+
+  constructor(error: { code?: string; message?: string; details?: Record<string, unknown> }, httpStatus = 400) {
+    super(error.message || error.code || 'privacy command failed');
+    this.name = 'PrivacyCommandError';
+    this.code = error.code || 'PRIVACY_COMMAND_FAILED';
+    this.httpStatus = httpStatus;
+    this.details = error.details;
+  }
+}
+
 async function unwrap<T>(pending: Promise<SendResult<T>>): Promise<T> {
   const res = await pending;
-  if (!res.ok) throw new Error(res.error?.message || 'privacy command failed');
+  if (!res.ok) {
+    const httpStatus = 'response' in res && res.response?.responseCode ? res.response.responseCode : 400;
+    throw new PrivacyCommandError(res.error || {}, httpStatus);
+  }
   return res.data;
 }
 
@@ -48,13 +65,25 @@ async function unwrap<T>(pending: Promise<SendResult<T>>): Promise<T> {
 export class PrivacyRequestsNamespace {
   constructor(private client: NexusClient) {}
 
-  async list(): Promise<{ items: PrivacyRequestView[] }> {
-    const data = await unwrap(this.client.send<{ items?: PrivacyRequestView[] }>(
+  async list(options: { cursor?: string; limit?: number } = {}): Promise<{
+    items: PrivacyRequestView[];
+    nextCursor: string | null;
+    limit?: number;
+  }> {
+    const payload: Record<string, unknown> = {};
+    if (options.cursor) payload.cursor = options.cursor;
+    if (options.limit != null) payload.limit = options.limit;
+    const data = await unwrap(this.client.send<{ items?: PrivacyRequestView[]; nextCursor?: string | null; limit?: number }>(
       'anx.oauth2.privacy.request.partner.list',
-      {},
+      payload,
       { isRead: true },
     ));
-    return { items: data.items || [] };
+    return { items: data.items || [], nextCursor: data.nextCursor ?? null, limit: data.limit };
+  }
+
+  get(requestId: string): Promise<PrivacyRequestView> {
+    if (!requestId.trim()) throw new PrivacyCommandError({ code: 'INVALID_INPUT', message: 'requestId is required' }, 400);
+    return unwrap(this.client.send('anx.oauth2.privacy.request.partner.get', { requestId }, { isRead: true }));
   }
 
   acknowledge(requestId: string): Promise<PrivacyRequestView> {

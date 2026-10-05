@@ -181,8 +181,112 @@ describe('privacy kit', () => {
       items: [{ requestId: 'missed', type: 'access', sub: 'pairwise-sub', grantId: 'g1', dueAt: '2026-11-05T00:00:00.000Z' }],
     });
     const kit = createPrivacyKit({ client: api, store: createMemoryPrivacyJobStore(), sections: createSectionRegistry() });
-    expect(await kit.reconcile()).toEqual({ enqueued: 1 });
-    expect(await kit.reconcile()).toEqual({ enqueued: 0 });
+    expect(await kit.reconcile()).toEqual({ enqueued: 1, truncated: false });
+    expect(await kit.reconcile()).toEqual({ enqueued: 0, truncated: false });
+  });
+
+  it('walks every partner-list page and stops on a repeated cursor', async () => {
+    const api = client();
+    const cursors: Array<string | undefined> = [];
+    api.privacyRequests.list = async (options) => {
+      cursors.push(options?.cursor);
+      if (!options?.cursor) {
+        return {
+          items: [{ requestId: 'p1', type: 'erasure', sub: 'pairwise-sub', grantId: 'g1', dueAt: '2026-11-01T00:00:00.000Z' }],
+          nextCursor: 'page-2',
+        };
+      }
+      if (options.cursor === 'page-2') {
+        return {
+          items: [{ requestId: 'p2', type: 'access', sub: 'pairwise-sub', grantId: 'g1', dueAt: '2026-11-02T00:00:00.000Z' }],
+          nextCursor: null,
+        };
+      }
+      return { items: [], nextCursor: options.cursor };
+    };
+    const kit = createPrivacyKit({ client: api, store: createMemoryPrivacyJobStore(), sections: createSectionRegistry() });
+    expect(await kit.reconcile()).toEqual({ enqueued: 2, truncated: false });
+    expect(cursors).toEqual([undefined, 'page-2']);
+
+    api.privacyRequests.list = async () => ({
+      items: [],
+      nextCursor: 'again',
+    });
+    const stuck = createPrivacyKit({ client: api, store: createMemoryPrivacyJobStore(), sections: createSectionRegistry() });
+    expect(await stuck.reconcile()).toEqual({ enqueued: 0, truncated: true });
+  });
+
+  it('closes the job when complete was already applied and the response was lost', async () => {
+    const api = client();
+    api.privacyRequests.complete = async () => {
+      api.calls.push('complete:req-1:fulfilled');
+      const error = new Error('privacy request is completed') as Error & { code: string; details: { status: string } };
+      error.code = 'REQUEST_CLOSED';
+      error.details = { status: 'completed' };
+      throw error;
+    };
+    const store = createMemoryPrivacyJobStore();
+    const kit = createPrivacyKit({ client: api, store, sections: createSectionRegistry() });
+    await kit.handleEvent(created('erasure'));
+    expect(await kit.tick()).toEqual({ processed: 1, failed: 0 });
+    expect((await store.get('req-1'))?.status).toBe('completed');
+    expect(await kit.tick()).toEqual({ processed: 0, failed: 0 });
+  });
+
+  it('cancels the job when the region closed it as cancelled', async () => {
+    const api = client();
+    api.privacyRequests.acknowledge = async () => {
+      const error = new Error('privacy request is cancelled') as Error & { code: string; details: { status: string } };
+      error.code = 'REQUEST_CLOSED';
+      error.details = { status: 'cancelled' };
+      throw error;
+    };
+    const store = createMemoryPrivacyJobStore();
+    const kit = createPrivacyKit({ client: api, store, sections: createSectionRegistry() });
+    await kit.handleEvent(created('erasure'));
+    expect(await kit.tick()).toEqual({ processed: 1, failed: 0 });
+    expect((await store.get('req-1'))?.status).toBe('cancelled');
+  });
+
+  it('reads the request when the closed error has no status, and stops after repeated failures', async () => {
+    const api = client();
+    api.privacyRequests.get = async () => ({ status: 'rejected', outcome: 'rejected' });
+    api.privacyRequests.complete = async () => {
+      const error = new Error('closed') as Error & { code: string };
+      error.code = 'REQUEST_CLOSED';
+      throw error;
+    };
+    const store = createMemoryPrivacyJobStore();
+    const kit = createPrivacyKit({
+      client: api,
+      store,
+      sections: createSectionRegistry(),
+      now: () => new Date('2026-10-05T12:00:00.000Z'),
+    });
+    await kit.handleEvent(created('erasure'));
+    expect(await kit.tick()).toEqual({ processed: 1, failed: 0 });
+    expect((await store.get('req-1'))?.status).toBe('completed');
+
+    const failing = client();
+    failing.privacyRequests.acknowledge = async () => {
+      throw new Error('region down');
+    };
+    const failingStore = createMemoryPrivacyJobStore();
+    let clock = Date.parse('2026-10-05T12:00:00.000Z');
+    const retryKit = createPrivacyKit({
+      client: failing,
+      store: failingStore,
+      sections: createSectionRegistry(),
+      now: () => new Date(clock),
+    });
+    await retryKit.handleEvent(created('erasure', 'req-fail'));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      clock += 16 * 60_000;
+      await retryKit.tick();
+    }
+    expect((await failingStore.get('req-fail'))?.status).toBe('failed');
+    clock += 16 * 60_000;
+    expect(await retryKit.tick()).toEqual({ processed: 0, failed: 0 });
   });
 
   it('retries a failed upload with backoff', async () => {

@@ -58,6 +58,6 @@ assertSectionCoverage(sections.ids(), ['profiles']);
 
 ## Worker
 
-`handleEvent` is safe to call again for the same `requestId` or `eventId`. `tick` leases due jobs, acknowledges them, and either uploads an access export, runs erasure, or waits for `completeReview` on rectification, restriction, and objection. `reconcile` polls `privacyRequests.list()` for webhooks that never arrived.
+`handleEvent` is safe to call again for the same `requestId` or `eventId`. `tick` leases due jobs, acknowledges them, and either uploads an access export, runs erasure, or waits for `completeReview` on rectification, restriction, and objection. A `REQUEST_CLOSED` error closes the local job instead of retrying. Eight failures mark the job `failed`. `reconcile` follows `privacyRequests.list()` `nextCursor` until the last page.
 
 Call `tick` and `reconcile` from one worker with a lock so two processes do not upload the same export.

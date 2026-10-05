@@ -11,6 +11,18 @@ import type {
 } from './types.js';
 
 const REVIEW_TYPES = new Set<PrivacyRequestType>(['rectification', 'restriction', 'objection']);
+const MAX_JOB_ATTEMPTS = 8;
+const RECONCILE_PAGE = 100;
+const RECONCILE_MAX_PAGES = 200;
+
+type CommandFailure = { code?: string; details?: { status?: string } };
+
+function commandFailure(err: unknown): CommandFailure | null {
+  if (!err || typeof err !== 'object' || !('code' in err)) return null;
+  const code = (err as { code?: unknown }).code;
+  const details = (err as { details?: { status?: string } }).details;
+  return { code: typeof code === 'string' ? code : undefined, details };
+}
 
 function backoffMs(attempts: number): number {
   return Math.min(30_000 * Math.max(attempts, 1), 15 * 60_000);
@@ -91,17 +103,31 @@ export function createPrivacyKit(options: PrivacyKitOptions) {
         metrics.counter?.('nexus_privacy_jobs_total', { type: job.type, result: 'ok' }, 1);
         metrics.histogram?.('nexus_privacy_job_seconds', { type: job.type }, (Date.now() - started) / 1000);
       } catch (err) {
+        const closed = await settleClosed(job, err);
+        if (closed) {
+          processed += 1;
+          metrics.counter?.('nexus_privacy_jobs_total', { type: job.type, result: 'closed' }, 1);
+          continue;
+        }
         failed += 1;
         const message = err instanceof Error ? err.message : String(err);
         const attempts = job.attempts + 1;
+        const giveUp = attempts >= MAX_JOB_ATTEMPTS;
         await options.store.save(stamp(job, {
+          status: giveUp ? 'failed' : job.status,
           attempts,
           lastError: message,
           nextAttemptAt: new Date(now().getTime() + backoffMs(attempts)).toISOString(),
           leaseOwner: job.leaseOwner,
         }));
-        log.error?.('privacy job failed', { requestId: job.requestId, type: job.type, message });
-        metrics.counter?.('nexus_privacy_jobs_total', { type: job.type, result: 'error' }, 1);
+        log.error?.('privacy job failed', {
+          requestId: job.requestId,
+          type: job.type,
+          message,
+          attempts,
+          gaveUp: giveUp,
+        });
+        metrics.counter?.('nexus_privacy_jobs_total', { type: job.type, result: giveUp ? 'failed' : 'error' }, 1);
       }
     }
     return { processed, failed };
@@ -240,7 +266,9 @@ export function createPrivacyKit(options: PrivacyKitOptions) {
   async function completeReview(requestId: string, outcome: PrivacyReviewOutcome): Promise<void> {
     const job = await options.store.get(requestId);
     if (!job) throw new Error('privacy job not found');
-    if (job.status === 'completed' || job.status === 'cancelled') throw new Error(`privacy job is ${job.status}`);
+    if (job.status === 'completed' || job.status === 'cancelled' || job.status === 'failed') {
+      throw new Error(`privacy job is ${job.status}`);
+    }
     await options.store.save(stamp(job, {
       status: 'review',
       review: outcome,
@@ -249,31 +277,95 @@ export function createPrivacyKit(options: PrivacyKitOptions) {
     }));
   }
 
-  async function reconcile(): Promise<{ enqueued: number }> {
-    const listed = await options.client.privacyRequests.list();
-    let enqueued = 0;
-    for (const item of listed.items) {
-      const existing = await options.store.get(item.requestId);
-      if (existing) continue;
-      const at = now().toISOString();
-      const result = await options.store.enqueue({
-        requestId: item.requestId,
-        eventId: `reconcile:${item.requestId}`,
-        kind: 'privacy_request.created',
-        type: item.type,
-        sub: item.sub,
-        grantId: item.grantId,
-        details: item.details,
-        dueAt: item.dueAt,
-        status: 'queued',
-        attempts: 0,
-        nextAttemptAt: at,
-        updatedAt: at,
-      });
-      if (result === 'inserted') enqueued += 1;
+  async function settleClosed(job: PrivacyJob, err: unknown): Promise<boolean> {
+    const failure = commandFailure(err);
+    if (failure?.code !== 'REQUEST_CLOSED') return false;
+    let status = failure.details?.status;
+    if (status !== 'completed' && status !== 'rejected' && status !== 'cancelled') {
+      if (!options.client.privacyRequests.get) {
+        log.error?.('privacy request closed but the client cannot read it', { requestId: job.requestId });
+        return false;
+      }
+      try {
+        status = (await options.client.privacyRequests.get(job.requestId)).status;
+      } catch (readErr) {
+        const read = commandFailure(readErr);
+        if (read?.code === 'NOT_FOUND') {
+          await options.store.save(stamp(job, {
+            status: 'cancelled',
+            lastError: 'request_not_visible',
+            leaseOwner: job.leaseOwner,
+          }));
+          log.warn?.('privacy request is not visible to this client', { requestId: job.requestId });
+          return true;
+        }
+        log.error?.('privacy close read failed', {
+          requestId: job.requestId,
+          message: readErr instanceof Error ? readErr.message : String(readErr),
+        });
+        return false;
+      }
     }
-    if (enqueued) log.info?.('privacy reconcile enqueued missed requests', { enqueued });
-    return { enqueued };
+    if (status === 'completed' || status === 'rejected') {
+      await options.store.save(stamp(job, { status: 'completed', lastError: undefined, leaseOwner: job.leaseOwner }));
+      log.info?.('privacy job already closed on the region', { requestId: job.requestId, status });
+      return true;
+    }
+    if (status === 'cancelled') {
+      await options.store.save(stamp(job, { status: 'cancelled', leaseOwner: job.leaseOwner }));
+      log.info?.('privacy job cancelled on the region', { requestId: job.requestId });
+      return true;
+    }
+    log.error?.('region reported a closed privacy request that is still open', { requestId: job.requestId, status });
+    return false;
+  }
+
+  async function reconcile(): Promise<{ enqueued: number; truncated: boolean }> {
+    let enqueued = 0;
+    let cursor: string | undefined;
+    let truncated = false;
+    const seen = new Set<string>();
+    for (let page = 0; page < RECONCILE_MAX_PAGES; page += 1) {
+      const listed = await options.client.privacyRequests.list({ cursor, limit: RECONCILE_PAGE });
+      for (const item of listed.items) {
+        const existing = await options.store.get(item.requestId);
+        if (existing) continue;
+        const at = now().toISOString();
+        const result = await options.store.enqueue({
+          requestId: item.requestId,
+          eventId: `reconcile:${item.requestId}`,
+          kind: 'privacy_request.created',
+          type: item.type,
+          sub: item.sub,
+          grantId: item.grantId,
+          details: item.details,
+          dueAt: item.dueAt,
+          status: 'queued',
+          attempts: 0,
+          nextAttemptAt: at,
+          updatedAt: at,
+        });
+        if (result === 'inserted') enqueued += 1;
+      }
+      const next = listed.nextCursor || undefined;
+      if (!next) {
+        cursor = undefined;
+        break;
+      }
+      if (seen.has(next)) {
+        truncated = true;
+        log.error?.('privacy reconcile cursor repeated', { cursor: next });
+        break;
+      }
+      seen.add(next);
+      cursor = next;
+    }
+    if (cursor) {
+      truncated = true;
+      log.error?.('privacy reconcile stopped before the last page', { pages: RECONCILE_MAX_PAGES });
+    }
+    if (enqueued || truncated) log.info?.('privacy reconcile finished', { enqueued, truncated });
+    return { enqueued, truncated };
   }
 
   return { handleEvent, tick, reconcile, completeReview };

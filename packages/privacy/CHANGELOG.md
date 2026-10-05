@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- A lost `complete` response (`REQUEST_CLOSED`) closes the local job as completed, rejected, or cancelled. The kit reads `privacyRequests.get` when the error has no status. A request that is not visible is cancelled locally. Eight failed attempts mark the job `failed` and stop the retry.
+- `reconcile` follows `nextCursor` until the last page. A repeated cursor or 200 pages stops the walk and reports `truncated`.
+
 ## 0.1.1
 
 - The access export PUT sends one `content-type`. 0.1.0 merged the region `Content-Type` with its own lower-case default, so `fetch` sent `application/json, application/json` and the presigned upload failed its signature check.
