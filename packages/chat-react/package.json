@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
+    "prepare": "npm run build",
     "build:webview": "vite build --config vite.webview.config.ts",
     "dev": "vite --config vite.dev.config.ts",
     "test": "vitest run",
