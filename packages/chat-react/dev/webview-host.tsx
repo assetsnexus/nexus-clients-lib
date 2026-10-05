@@ -18,12 +18,14 @@ import {
   type HostToSdkMessage,
   type SdkToHostMessage,
   type NexusChat,
+  type ChatIdentitySession,
 } from '@nexus/chat-react';
 
 type AuthState = {
   token: string;
   identity: Record<string, unknown>;
   apiBaseUrl: string;
+  identities: ChatIdentitySession[];
 };
 
 type SceneRouteState = {
@@ -107,6 +109,9 @@ const chromeBtn: CSSProperties = {
 };
 
 function WebViewHost() {
+  useEffect(() => {
+    postToNative({ type: 'ready' });
+  }, []);
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [pendingContactId, setPendingContactId] = useState<string | null>(null);
   const [chat, setChat] = useState<NexusChat | null>(null);
@@ -128,6 +133,7 @@ function WebViewHost() {
             token: msg.token,
             identity: msg.identity,
             apiBaseUrl,
+            identities: msg.identities || [],
           });
         }
         if (msg.type === 'openContact' && msg.contactId) {
@@ -280,6 +286,7 @@ function WebViewHost() {
           chat={chat}
           client={client || undefined}
           features={{ adminPanels: false }}
+          identities={auth.identities}
           collapsed={scene.open}
           onPostToHost={postToNative}
         />

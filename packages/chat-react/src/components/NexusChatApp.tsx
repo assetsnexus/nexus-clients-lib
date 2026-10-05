@@ -8,6 +8,7 @@ import {
   type ConversationRow,
   type CreateNexusChatOptions,
   type NexusChat,
+  filterSttModelsForPicker,
 } from '@nexus/chat-core';
 import { applyThemeToElement } from '../theme.js';
 import type { NexusChatTheme } from '../theme.js';
@@ -34,14 +35,23 @@ import { AdminRoutes } from './admin/AdminRoutes.js';
 import { appendComposerDraft } from '../utils/composerDraft.js';
 import { openContactThread } from '../utils/openContactFlow.js';
 import { ModelPicker } from './ModelPicker.js';
+import {
+  autoCollapseList,
+  composerModelPickerVisible,
+  loadDictationPrefs,
+  modelAcceptsDirectAudio,
+  readStoredListCollapsed,
+  resolveDictationSelection,
+  saveDictationPrefs,
+  writeStoredListCollapsed,
+  type DictationMethod,
+  type DictationPrefs,
+} from '../dictation/dictationPlan.js';
+import { probePhoneStt } from '../dictation/phoneStt.js';
 import { buildModelOverride, loadPickerModels } from '../models/loadPickerModels.js';
 import type { PickerModel } from '../models/picker-types.js';
 import { FileViewer, type FileViewerTab } from './FileViewer.js';
-import {
-  WorkspaceStrip,
-  type WorkspaceItem,
-  type WorkspaceRow,
-} from './workspace/WorkspaceStrip.js';
+import { type WorkspaceRow } from './workspace/WorkspaceStrip.js';
 import { WorkspacePopup } from './workspace/WorkspacePopup.js';
 import {
   ClientToolGrantCard,
@@ -54,6 +64,11 @@ import {
 } from './grants/GrantCards.js';
 import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
+import type { ChatIdentitySession } from '../bridge/host-bridge.js';
+import { ConversationInbox } from './ConversationInbox.js';
+import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
+import type { InboxRow } from '../inbox/inboxRows.js';
+import { loadConversationHistory } from '../utils/openContactFlow.js';
 import '../styles.css';
 
 export type NexusChatAppProps = {
@@ -71,6 +86,7 @@ export type NexusChatAppProps = {
   /** Show avatar-assets set-validation controls. */
   isAdmin?: boolean;
   currentUserId?: string | null;
+  identities?: ChatIdentitySession[];
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -128,6 +144,7 @@ export function NexusChatApp({
   locale: localeProp,
   isAdmin,
   currentUserId,
+  identities = [],
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
@@ -178,6 +195,13 @@ export function NexusChatApp({
   const [locale, setLocale] = useState(localeProp || 'en');
   const [activeTheme, setActiveTheme] = useState(theme);
   const [conversationRows, setConversationRows] = useState<ConversationRow[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+  const [inboxRows, setInboxRows] = useState<InboxRow[]>([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [hiddenIdentityKeys, setHiddenIdentityKeys] = useState<string[]>([]);
+  const [activeInboxId, setActiveInboxId] = useState<string | null>(null);
+  const [voiceView, setVoiceView] = useState<'background' | 'transcript' | 'avatar'>('background');
+  const [moreOpen, setMoreOpen] = useState(false);
   const [catalog, setCatalog] = useState<PickerModel[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -189,6 +213,9 @@ export function NexusChatApp({
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspacePopupOpen, setWorkspacePopupOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [listCollapsed, setListCollapsed] = useState(false);
+  const [dictationPrefs, setDictationPrefs] = useState<DictationPrefs | null>(null);
+  const [phoneSttAvailable, setPhoneSttAvailable] = useState(true);
 
   const [clientToolReq, setClientToolReq] = useState<ClientToolRequest | null>(null);
   const [dataAccessPrompt, setDataAccessPrompt] = useState<DataAccessPromptModel | null>(null);
@@ -216,7 +243,19 @@ export function NexusChatApp({
   }, []);
 
   const activeContactId = panel?.contactId || state.selectedAgentId;
-  const contact = findChatContact(state.contacts, activeContactId || '') || null;
+  const activeInbox = inboxRows.find((row) => row.id === activeInboxId) || null;
+  const listedContact = findChatContact(state.contacts, activeContactId || activeInbox?.contactId || '') || null;
+  const contact =
+    listedContact ||
+    (activeInbox
+      ? {
+          id: activeInbox.contactId || activeInbox.conversationId,
+          name: activeInbox.title,
+          type: activeInbox.kind === 'agent' ? ('agent' as const) : activeInbox.kind === 'human' ? ('user' as const) : ('group' as const),
+          avatarUrl: activeInbox.avatarUrl,
+          agentId: activeInbox.kind === 'agent' ? activeInbox.contactId : null,
+        }
+      : null);
   const sheetContact = findChatContact(state.contacts, sheetContactId || '') || null;
   const conversationId = panel?.conversationId || state.conversationId;
 
@@ -282,19 +321,98 @@ export function NexusChatApp({
     if (rootRef.current) applyThemeToElement(rootRef.current, activeTheme || {});
   }, [activeTheme]);
 
-  useEffect(() => {
-    void chat.loadContacts().then(async () => {
+  const reloadLists = useCallback(async () => {
+    setListError(null);
+    if (identities.length && client) {
+      setInboxLoading(true);
       try {
-        const rows = await chat.listConversations({ status: 'active', limit: 200 });
-        setConversationRows(rows);
-      } catch {
-        setConversationRows([]);
+        const loaded = await loadIdentityInbox({
+          identities,
+          hiddenKeys: hiddenIdentityKeys,
+          send: sendWithClient(client as CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void }),
+        });
+        setInboxRows(loaded.rows);
+        if (loaded.errors.length && !loaded.rows.length) setListError(loaded.errors.join(' '));
+        else if (loaded.errors.length) setListError(loaded.errors[0]);
+      } catch (error) {
+        setListError(error instanceof Error ? error.message : 'Could not load conversations');
+      } finally {
+        setInboxLoading(false);
       }
-    });
-  }, [chat]);
+      return;
+    }
+    try {
+      await chat.loadContacts();
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'Could not load contacts');
+      return;
+    }
+    try {
+      const rows = await chat.listConversations({ status: 'active', limit: 200 });
+      setConversationRows(rows);
+    } catch (error) {
+      setConversationRows([]);
+      setListError(error instanceof Error ? error.message : 'Could not load conversations');
+    }
+  }, [chat, client, identities, hiddenIdentityKeys]);
 
   useEffect(() => {
-    if (!features.modelPicker) return;
+    void reloadLists();
+  }, [reloadLists]);
+
+  const openInboxRow = useCallback(
+    async (row: InboxRow) => {
+      const identity = identities.find((item) => item.key === row.identityKey);
+      const region = client as (CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void }) | undefined;
+      if (identity && region?.updateAuth) {
+        region.updateAuth({
+          identity: {
+            token: identity.token,
+            userId: identity.userId,
+            orgId: identity.orgId,
+            role: identity.role,
+            deviceId: identity.deviceId,
+          },
+        });
+      }
+      setActiveInboxId(row.id);
+      if (!row.conversationId || !client) return;
+      try {
+        await loadConversationHistory(client, chat, row.conversationId);
+        await chat.streamInit({ conversationId: row.conversationId, contactId: row.contactId || undefined });
+      } catch (error) {
+        setListError(error instanceof Error ? error.message : 'Could not open conversation');
+      }
+    },
+    [chat, client, identities],
+  );
+
+  useEffect(() => {
+    const storage = window.localStorage;
+    const stored = readStoredListCollapsed(storage);
+    if (stored != null) setListCollapsed(stored);
+    setDictationPrefs(loadDictationPrefs(storage));
+    let cancelled = false;
+    void probePhoneStt().then((available) => {
+      if (!cancelled) setPhoneSttAvailable(available);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const threadOpen = Boolean(conversationId || activeContactId || activeInboxId);
+    const narrow = window.matchMedia('(max-width: 720px)').matches;
+    const next = autoCollapseList({
+      stored: readStoredListCollapsed(window.localStorage),
+      narrow,
+      threadOpen,
+    });
+    if (next === true) setListCollapsed(true);
+  }, [activeContactId, activeInboxId, conversationId]);
+
+  useEffect(() => {
     let cancelled = false;
     setCatalogLoading(true);
     const agentId = contact?.agentId || undefined;
@@ -330,7 +448,7 @@ export function NexusChatApp({
     return () => {
       cancelled = true;
     };
-  }, [chat, client, contact?.agentId, features.modelPicker]);
+  }, [chat, client, contact?.agentId]);
 
   useEffect(() => {
     chat.observeSubAgents({ conversationId: conversationId || null });
@@ -455,22 +573,24 @@ export function NexusChatApp({
     chat.observeSubAgents({ conversationId: res.conversationId });
   }, [chat, contact, conversationId]);
 
-  const removeWorkspaceItem = async (item: WorkspaceItem) => {
-    if (!client?.send || !workspace?.id) return;
-    setWorkspaceError(null);
-    try {
-      const result = (await client.send('anx.workspace.items.remove', {
-        workspaceId: workspace.id,
-        itemId: item.id,
-      })) as { ok?: boolean; message?: string };
-      if (result?.ok === false) {
-        setWorkspaceError(result.message || 'Remove failed');
-        return;
-      }
-      await loadWorkspace();
-    } catch (e) {
-      setWorkspaceError(e instanceof Error ? e.message : String(e));
-    }
+  const selectedChatModel = catalog.find((model) => model.id === selectedModelId) || null;
+  const dictation = resolveDictationSelection({
+    prefs: dictationPrefs,
+    phoneAvailable: phoneSttAvailable,
+    models: catalog,
+    directSupported: modelAcceptsDirectAudio(selectedChatModel),
+  });
+  const sttChoices = filterSttModelsForPicker(catalog);
+  const updateDictation = (next: DictationPrefs) => {
+    setDictationPrefs(next);
+    saveDictationPrefs(window.localStorage, next);
+  };
+  const toggleConversationList = () => {
+    setListCollapsed((prev) => {
+      const next = !prev;
+      writeStoredListCollapsed(window.localStorage, next);
+      return next;
+    });
   };
 
   const HeaderSlot = slots?.header;
@@ -492,29 +612,31 @@ export function NexusChatApp({
           <HeaderSlot chat={chat} locale={locale} />
         ) : (
           <>
-            <strong style={{ flex: 1 }}>Nexus Chat</strong>
-            {features.modelPicker ? (
-              <ModelPicker
-                models={catalog}
-                value={selectedModelId}
-                loading={catalogLoading}
-                onChange={setSelectedModelId}
-              />
-            ) : null}
-            <button type="button" className="nexus-chat__btn" onClick={() => setConfigOpen(true)}>
-              Config
-            </button>
-            {contact ? (
-              <button type="button" className="nexus-chat__btn" onClick={() => void resetThread()}>
-                Reset
-              </button>
-            ) : null}
             <button
               type="button"
-              className={`nexus-chat__btn${showVoice ? ' nexus-chat__btn--primary' : ''}`}
-              onClick={() => setVoiceOpen((v) => !v)}
+              className="nexus-chat__btn"
+              aria-label={listCollapsed ? 'Show conversations' : 'Hide conversations'}
+              aria-expanded={!listCollapsed}
+              onClick={toggleConversationList}
             >
-              Voice
+              {listCollapsed ? 'Chats' : 'Hide'}
+            </button>
+            <strong style={{ flex: 1 }}>{contact?.name || 'Nexus Chat'}</strong>
+            {contact ? (
+              <button
+                type="button"
+                className="nexus-chat__btn"
+                aria-label="Call"
+                onClick={() => {
+                  setVoiceOpen(true);
+                  setVoiceView('background');
+                }}
+              >
+                Call
+              </button>
+            ) : null}
+            <button type="button" className="nexus-chat__btn" aria-label="Config" onClick={() => setMoreOpen(true)}>
+              Config
             </button>
             {features.adminPanels ? (
               <button
@@ -542,7 +664,7 @@ export function NexusChatApp({
         <AdminRoutes />
       ) : (
         <div className="nexus-chat__shell">
-          {!collapsed ? (
+          {!collapsed && !listCollapsed ? (
             <aside className="nexus-chat__sidebar">
               <div className="nexus-chat__tabs">
                 <button
@@ -562,15 +684,41 @@ export function NexusChatApp({
                   </button>
                 ) : null}
               </div>
-              {sidebarTab === 'contacts' ? (
-                <ContactList
-                  chat={chat}
-                  contacts={state.contacts}
-                  conversationRows={conversationRows}
-                  activeContactId={activeContactId}
-                  slots={slots}
-                  onActionSheet={(id) => setSheetContactId(id)}
+              {sidebarTab === 'contacts' && identities.length ? (
+                <ConversationInbox
+                  identities={identities}
+                  hiddenKeys={hiddenIdentityKeys}
+                  rows={inboxRows}
+                  loading={inboxLoading}
+                  error={listError}
+                  activeRowId={activeInboxId}
+                  onToggleIdentity={(key) =>
+                    setHiddenIdentityKeys((prev) =>
+                      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+                    )
+                  }
+                  onOpen={(row) => void openInboxRow(row)}
+                  onRetry={() => void reloadLists()}
                 />
+              ) : sidebarTab === 'contacts' ? (
+                <>
+                  {listError ? (
+                    <div className="nexus-chat__banner" role="alert">
+                      <span>{listError}</span>
+                      <button type="button" className="nexus-chat__btn" onClick={() => void reloadLists()}>
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
+                  <ContactList
+                    chat={chat}
+                    contacts={state.contacts}
+                    conversationRows={conversationRows}
+                    activeContactId={activeContactId}
+                    slots={slots}
+                    onActionSheet={(id) => setSheetContactId(id)}
+                  />
+                </>
               ) : (
                 <RoomsPanel chat={chat} />
               )}
@@ -578,12 +726,17 @@ export function NexusChatApp({
           ) : null}
 
           <main className="nexus-chat__main">
-            <SpendChip
-              panel={panel}
-              chat={chat}
-              client={client}
-              conversationId={conversationId}
-            />
+            {voiceOpen && voiceView === 'background' ? (
+              <div className="nexus-chat__callbar" role="status">
+                <span>{contact?.name || 'Call'}</span>
+                <button type="button" className="nexus-chat__btn" onClick={() => setVoiceView('transcript')}>
+                  Transcript
+                </button>
+                <button type="button" className="nexus-chat__btn" onClick={() => setVoiceView('avatar')}>
+                  Avatar
+                </button>
+              </div>
+            ) : null}
             <ScaRequiredBanner info={scaInfo} />
             {clientToolReq ? (
               <ClientToolGrantCard
@@ -609,31 +762,14 @@ export function NexusChatApp({
               />
             ) : null}
             <ApprovalsStrip chat={chat} turns={panel?.turns || state.turns} />
-            <div className="nexus-chat__toolbar-row">
-              <SubAgentsStrip
-                chat={chat}
-                client={client}
-                turns={panel?.turns || state.turns}
-              />
-            </div>
-            <WorkspaceStrip
-              items={workspace?.items || []}
-              loading={workspaceLoading}
-              error={workspaceError}
-              onOpenPopup={() => setWorkspacePopupOpen(true)}
-              onOpenItem={(item) =>
-                openFile({
-                  id: item.fileId || item.id,
-                  name: item.label || item.fileId || item.id,
-                  mimeType: item.mimeType,
-                  url: item.url || item.previewUrl || item.downloadUrl,
-                  downloadUrl: item.downloadUrl || item.url,
-                })
-              }
-              onRemoveItem={(item) => void removeWorkspaceItem(item)}
+            <SubAgentsStrip
+              chat={chat}
+              client={client}
+              turns={panel?.turns || state.turns}
             />
             <div className="nexus-chat__thread-row">
               {showVoice ? (
+                <div style={voiceView === 'background' ? { display: 'none' } : undefined}>
                 <VoiceLayout
                   chat={chat}
                   client={client}
@@ -641,9 +777,25 @@ export function NexusChatApp({
                   turns={panel?.turns || []}
                   streaming={panel?.streaming || state.streaming}
                   collapsed={voiceCollapsed}
+                  view={voiceView}
+                  autoStart
+                  onView={setVoiceView}
                   onVoiceActive={(active) => onPostToHost?.({ type: 'voiceActive', active })}
+                  onVoiceState={(state) =>
+                    onPostToHost?.({
+                      type: 'voiceState',
+                      active: state.active,
+                      muted: state.muted,
+                      status: state.status,
+                      title: contact?.name || 'Call',
+                      avatarUrl: contact?.avatarUrl || null,
+                      errorMessage: state.errorMessage,
+                    })
+                  }
                 />
-              ) : (
+                </div>
+              ) : null}
+              {voiceView === 'background' || !showVoice ? (
                 <ThreadView
                   turns={panel?.turns || state.turns}
                   streaming={panel?.streaming || state.streaming}
@@ -652,7 +804,7 @@ export function NexusChatApp({
                   conversationId={conversationId}
                   onOpenFile={openFile}
                 />
-              )}
+              ) : null}
               <FileViewer
                 tabs={viewerTabs}
                 activeTabId={activeViewerTabId}
@@ -675,7 +827,11 @@ export function NexusChatApp({
                 selectedModelId={selectedModelId}
                 onSelectModel={setSelectedModelId}
                 modelOverride={modelOverride}
-                showModelPicker={false}
+                showModelPicker={composerModelPickerVisible()}
+                dictationMethod={dictation.method}
+                sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
+                dictationNote={dictation.note}
+                commandClient={client}
                 onOpenFile={openFile}
                 hideCompact
                 onRegisterDraftSetter={registerDraftSetter}
@@ -718,6 +874,91 @@ export function NexusChatApp({
           setWorkspacePopupOpen(false);
         }}
       />
+
+      {moreOpen ? (
+        <div className="nexus-chat__sheet" role="dialog" aria-label="Chat options">
+          <div className="nexus-chat__sheet-handle" />
+          <fieldset className="nexus-chat__dictation">
+            <legend>Voice input</legend>
+            <label>
+              <input
+                type="radio"
+                name="dictation-method"
+                checked={dictation.method === 'phone'}
+                disabled={!phoneSttAvailable}
+                onChange={() => updateDictation({ method: 'phone', sttModelId: dictationPrefs?.sttModelId || null })}
+              />
+              Phone
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="dictation-method"
+                checked={dictation.method === 'model'}
+                disabled={!sttChoices.length}
+                onChange={() =>
+                  updateDictation({
+                    method: 'model' satisfies DictationMethod,
+                    sttModelId: dictation.sttModel?.id || sttChoices[0]?.id || null,
+                  })
+                }
+              />
+              Speech model
+            </label>
+            {dictation.method === 'model' && sttChoices.length ? (
+              <select
+                aria-label="Speech model"
+                value={dictation.sttModel?.id || ''}
+                onChange={(event) =>
+                  updateDictation({ method: 'model', sttModelId: event.target.value || null })
+                }
+              >
+                {sttChoices.map((model) => (
+                  <option key={model.id || model.modelRef} value={model.id || model.modelRef}>
+                    {model.label || model.id}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <label>
+              <input
+                type="radio"
+                name="dictation-method"
+                checked={dictation.method === 'direct'}
+                disabled={!modelAcceptsDirectAudio(selectedChatModel)}
+                onChange={() =>
+                  updateDictation({ method: 'direct', sttModelId: dictationPrefs?.sttModelId || null })
+                }
+              />
+              Send audio to this model
+            </label>
+            {dictation.note ? <p className="nexus-chat__hint">{dictation.note}</p> : null}
+          </fieldset>
+          <button type="button" className="nexus-chat__btn" onClick={() => setConfigOpen(true)}>
+            Avatar config
+          </button>
+          {contact ? (
+            <button type="button" className="nexus-chat__btn" onClick={() => void resetThread()}>
+              Reset conversation
+            </button>
+          ) : null}
+          <button type="button" className="nexus-chat__btn" onClick={() => setWorkspacePopupOpen(true)}>
+            Workspace
+          </button>
+          {features.modelPicker ? (
+            <ModelPicker
+              models={catalog}
+              value={selectedModelId}
+              loading={catalogLoading}
+              onChange={setSelectedModelId}
+            />
+          ) : null}
+          <SpendChip panel={panel} chat={chat} client={client} conversationId={conversationId} />
+          <button type="button" className="nexus-chat__btn" onClick={() => setMoreOpen(false)}>
+            Close
+          </button>
+        </div>
+      ) : null}
 
       <ConfigSheet
         open={configOpen}

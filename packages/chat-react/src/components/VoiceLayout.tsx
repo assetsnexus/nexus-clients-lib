@@ -36,6 +36,10 @@ export type VoiceLayoutProps = {
     },
   ) => void;
   onVoiceActive?: (active: boolean) => void;
+  view?: 'background' | 'transcript' | 'avatar';
+  onView?: (view: 'background' | 'transcript' | 'avatar') => void;
+  onVoiceState?: (state: { active: boolean; muted: boolean; status: string; errorMessage: string | null }) => void;
+  autoStart?: boolean;
 };
 
 const presenceStore = createPresenceStore('nexus-chat-react');
@@ -51,6 +55,10 @@ export function VoiceLayout({
   presence: presenceProp,
   onPlaybackStream,
   onVoiceActive,
+  view,
+  onView,
+  onVoiceState,
+  autoStart,
 }: VoiceLayoutProps) {
   const voiceMode = useMemo(() => createVoiceModeState({ layout: 'split', splitRatio: 0.45 }), []);
   const [modeState, setModeState] = useState(voiceMode.get());
@@ -101,8 +109,14 @@ export function VoiceLayout({
     });
   }, [chat, emitPlayback]);
 
+  const [notice, setNotice] = useState<string | null>(null);
+
   const startCall = useCallback(async () => {
-    if (!contact || (contact.type !== 'agent' && contact.type !== 'asset_agent')) return;
+    if (!contact || (contact.type !== 'agent' && contact.type !== 'asset_agent')) {
+      setNotice('Open an agent conversation before starting a call.');
+      return;
+    }
+    setNotice(null);
     const agentId = contact.agentId || contact.id;
     const conversationId = chat.getState().conversationId;
     onVoiceActive?.(true);
@@ -120,7 +134,7 @@ export function VoiceLayout({
         emitPlayback(existing, { agentId, conversationId, source: 'webrtc' });
       }
     } catch {
-      // TTS fallback when WebRTC is unavailable: speak last assistant turn (or greeting).
+      setNotice('The call could not start. Speaking the last reply instead.');
       onVoiceActive?.(false);
       voiceMode.set({ active: false });
       const lastAssistant = [...turns].reverse().find((t) => t.role === 'assistant' && t.text?.trim());
@@ -162,14 +176,44 @@ export function VoiceLayout({
     }
   }, [chat, client, contact, emitPlayback, onVoiceActive, turns, voiceMode]);
 
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!autoStart || autoStarted.current) return;
+    autoStarted.current = true;
+    void startCall();
+  }, [autoStart, startCall]);
+
+  useEffect(() => {
+    const onMsg = (event: MessageEvent) => {
+      const data = event.data as { type?: string; action?: string } | null;
+      if (!data || data.type !== 'voiceCommand') return;
+      if (data.action === 'mute') chat.toggleMute();
+      if (data.action === 'expand') onView?.('transcript');
+      if (data.action === 'hangup') {
+        const agentId = contact?.agentId || contact?.id || '';
+        if (surface.callSid) void chat.endCall({ agentId, callSid: surface.callSid });
+        onVoiceActive?.(false);
+        onView?.('background');
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [chat, contact, onView, onVoiceActive, surface.callSid]);
+
   useEffect(() => {
     const live = surface.status === 'live' || surface.status === 'connecting';
+    onVoiceState?.({
+      active: live,
+      muted: Boolean(surface.muted),
+      status: surface.status,
+      errorMessage: notice || surface.errorMessage || null,
+    });
     onVoiceActive?.(live);
     const current = voiceMode.get();
     if (current.active !== live) {
       voiceMode.set({ active: live });
     }
-  }, [onVoiceActive, surface.status, voiceMode]);
+  }, [notice, onVoiceActive, onVoiceState, surface.errorMessage, surface.muted, surface.status, voiceMode]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -216,14 +260,30 @@ export function VoiceLayout({
 
   const controls = (
     <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-      {(['avatar', 'transcript', 'split'] as VoiceLayoutMode[]).map((layout) => (
+      {(
+        [
+          ['background', 'Background'],
+          ['transcript', 'Transcript'],
+          ['avatar', 'Avatar'],
+        ] as const
+      ).map(([id, label]) => (
         <button
-          key={layout}
+          key={id}
           type="button"
-          className={`nexus-chat__btn${modeState.layout === layout ? ' nexus-chat__btn--primary' : ''}`}
-          onClick={() => setLayout(layout)}
+          className={`nexus-chat__btn${(view || 'avatar') === id ? ' nexus-chat__btn--primary' : ''}`}
+          onClick={() => {
+            if (id === 'background') onView?.('background');
+            if (id === 'transcript') {
+              onView?.('transcript');
+              setLayout('transcript');
+            }
+            if (id === 'avatar') {
+              onView?.('avatar');
+              setLayout('avatar');
+            }
+          }}
         >
-          {layout}
+          {label}
         </button>
       ))}
       <button type="button" className="nexus-chat__btn nexus-chat__btn--primary" onClick={() => void startCall()}>
@@ -293,7 +353,7 @@ export function VoiceLayout({
           {avatarPane}
           {controls}
           <div style={{ fontSize: 12, color: 'var(--nx-chat-muted)', marginTop: 8 }}>
-            {surface.errorMessage || `Status: ${surface.status}`}
+            {notice || surface.errorMessage || `Status: ${surface.status}`}
           </div>
         </div>
       </div>
@@ -319,7 +379,7 @@ export function VoiceLayout({
         {avatarPane}
         {controls}
         <div style={{ fontSize: 12, color: 'var(--nx-chat-muted)', marginTop: 8 }}>
-          {surface.errorMessage || `Status: ${surface.status}`}
+          {notice || surface.errorMessage || `Status: ${surface.status}`}
         </div>
       </div>
       <div

@@ -68,6 +68,7 @@ export type {
   HostPrefillComposerMessage,
   SdkToHostMessage,
   HostBridge,
+  ChatIdentitySession,
 } from './bridge/host-bridge.js';
 export { HOST_PREFILL_TEXT_MAX } from './bridge/host-bridge.js';
 

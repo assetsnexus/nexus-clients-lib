@@ -1,10 +1,23 @@
 import type { NexusChatTheme } from '../theme.js';
 
+export type ChatIdentitySession = {
+  key: string;
+  label: string;
+  userId: string;
+  orgId: string | null;
+  role: string | null;
+  deviceId: string | null;
+  token: string;
+  avatarUrl: string | null;
+  orgLogo: string | null;
+};
+
 export type HostAuthMessage = {
   type: 'auth';
   token: string;
   identity: Record<string, unknown>;
   apiBaseUrl?: string;
+  identities?: ChatIdentitySession[];
 };
 
 export type HostThemeMessage = {
@@ -37,19 +50,37 @@ export type HostPrefillComposerMessage = {
   contactId?: string;
 };
 
+export type HostVoiceCommandMessage = {
+  type: 'voiceCommand';
+  action: 'mute' | 'hangup' | 'expand';
+};
+
 export type HostToSdkMessage =
   | HostAuthMessage
   | HostThemeMessage
   | HostLocaleMessage
   | HostRouteMessage
   | HostOpenContactMessage
-  | HostPrefillComposerMessage;
+  | HostPrefillComposerMessage
+  | HostVoiceCommandMessage;
 
 export type SdkMinimizeMessage = { type: 'minimize' };
 export type SdkUnreadMessage = { type: 'unread'; count: number };
 export type SdkOpenSceneMessage = { type: 'openScene'; clusterId: string };
 export type SdkCloseSceneMessage = { type: 'closeScene' };
 export type SdkVoiceActiveMessage = { type: 'voiceActive'; active: boolean };
+
+export type SdkVoiceStateMessage = {
+  type: 'voiceState';
+  active: boolean;
+  muted: boolean;
+  status: string;
+  title: string;
+  avatarUrl: string | null;
+  errorMessage?: string | null;
+};
+export type SdkReadyMessage = { type: 'ready' };
+
 export type SdkVrShellMessage = {
   type: 'vrShell';
   action: 'lockLandscape' | 'unlockOrientation';
@@ -68,6 +99,8 @@ export type SdkToHostMessage =
   | SdkOpenSceneMessage
   | SdkCloseSceneMessage
   | SdkVoiceActiveMessage
+  | SdkVoiceStateMessage
+  | SdkReadyMessage
   | SdkVrShellMessage
   | SdkScaRequiredMessage;
 
@@ -78,6 +111,29 @@ export type HostBridge = {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object';
+}
+
+function parseIdentitySessions(raw: unknown): ChatIdentitySession[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ChatIdentitySession[] = [];
+  for (const row of raw) {
+    if (!isRecord(row) || typeof row.token !== 'string' || !row.token) continue;
+    const userId = String(row.userId || '');
+    if (!userId) continue;
+    const orgId = row.orgId ? String(row.orgId) : null;
+    out.push({
+      key: String(row.key || `${userId}:${orgId || 'private'}`),
+      label: String(row.label || (orgId ? 'Organization' : 'Private')),
+      userId,
+      orgId,
+      role: row.role ? String(row.role) : null,
+      deviceId: row.deviceId ? String(row.deviceId) : null,
+      token: row.token,
+      avatarUrl: typeof row.avatarUrl === 'string' ? row.avatarUrl : null,
+      orgLogo: typeof row.orgLogo === 'string' ? row.orgLogo : null,
+    });
+  }
+  return out;
 }
 
 export function parseHostMessage(raw: unknown): HostToSdkMessage | null {
@@ -93,12 +149,17 @@ export function parseHostMessage(raw: unknown): HostToSdkMessage | null {
   switch (value.type) {
     case 'auth':
       if (typeof value.token !== 'string') return null;
+      const identities = parseIdentitySessions(value.identities);
       return {
         type: 'auth',
         token: value.token,
         identity: isRecord(value.identity) ? value.identity : {},
         apiBaseUrl: typeof value.apiBaseUrl === 'string' ? value.apiBaseUrl : undefined,
+        ...(identities ? { identities } : {}),
       };
+    case 'voiceCommand':
+      if (value.action !== 'mute' && value.action !== 'hangup' && value.action !== 'expand') return null;
+      return { type: 'voiceCommand', action: value.action };
     case 'theme':
       return { type: 'theme', theme: isRecord(value.theme) ? (value.theme as NexusChatTheme) : {} };
     case 'locale':

@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatContact, ChatModelOverride, IoDescriptor, NexusChat } from '@nexus/chat-core';
-import { parseMentions, uploadOptsForChatFileDestination } from '@nexus/chat-core';
+import { parseMentions, transcribeOrNull, uploadOptsForChatFileDestination } from '@nexus/chat-core';
 import type { ChatSlots } from '../slots.js';
 import { appendComposerDraft } from '../utils/composerDraft.js';
 import type { SendQueue } from '../utils/sendQueue.js';
-import { ModelPicker } from './ModelPicker.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
+import type { DictationMethod } from '../dictation/dictationPlan.js';
+import { holdReleaseAction, pointerLeftTarget } from '../dictation/dictationPlan.js';
+import {
+  cancelNativeRecognition,
+  nativeSpeechBridgeAvailable,
+  startNativeRecognition,
+  startWebRecognition,
+  stopNativeRecognition,
+  webSpeechAvailable,
+} from '../dictation/phoneStt.js';
+import { blobToInlineAudio, startMicCapture } from '../dictation/recordAudio.js';
 
 export type ComposerProps = {
   chat: NexusChat;
@@ -21,7 +31,12 @@ export type ComposerProps = {
   selectedModelId?: string | null;
   onSelectModel?: (id: string | null) => void;
   modelOverride?: ChatModelOverride | null;
+  /** Ignored. The model picker lives in the config sheet. */
   showModelPicker?: boolean;
+  dictationMethod?: DictationMethod;
+  sttModelId?: string | null;
+  dictationNote?: string | null;
+  commandClient?: { send: (command: string, payload?: Record<string, unknown>) => Promise<unknown> };
   onOpenFile?: (file: ViewerFileRef) => void;
   /** When true, hide the compact button (lives in context panel). */
   hideCompact?: boolean;
@@ -41,12 +56,11 @@ export function Composer({
   slots,
   sendQueue,
   onFlushQueue,
-  models = [],
-  modelsLoading,
-  selectedModelId,
-  onSelectModel,
   modelOverride,
-  showModelPicker,
+  dictationMethod = 'phone',
+  sttModelId = null,
+  dictationNote = null,
+  commandClient,
   onOpenFile,
   hideCompact = true,
   onRegisterDraftSetter,
@@ -55,7 +69,14 @@ export function Composer({
   const [pendingFiles, setPendingFiles] = useState<IoDescriptor[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [holdPhase, setHoldPhase] = useState<'idle' | 'recording' | 'cancel' | 'working'>('idle');
   const fileRef = useRef<HTMLInputElement>(null);
+  const holdRef = useRef<HTMLButtonElement>(null);
+  const sessionRef = useRef<{
+    cancel: () => void;
+    finish: (commit: boolean) => Promise<void>;
+  } | null>(null);
+  const releasedRef = useRef<'commit' | 'cancel' | null>(null);
   const queued = sendQueue.list();
 
   useEffect(() => {
@@ -136,6 +157,150 @@ export function Composer({
     setMentionQuery(null);
   };
 
+  const appendTranscript = useCallback((said: string) => {
+    const next = said.trim();
+    if (!next) return;
+    setText((prev) => (prev ? `${prev} ${next}` : next));
+  }, []);
+
+  const beginHold = useCallback(async () => {
+    if (sessionRef.current) return;
+    releasedRef.current = null;
+    setActionError(null);
+    setHoldPhase('recording');
+    try {
+      if (dictationMethod === 'phone' && (webSpeechAvailable() || nativeSpeechBridgeAvailable())) {
+        if (webSpeechAvailable()) {
+          const rec = startWebRecognition(typeof navigator !== 'undefined' ? navigator.language : 'en-US');
+          sessionRef.current = {
+            cancel: () => rec.abort(),
+            finish: async (commit) => {
+              if (!commit) {
+                rec.abort();
+                return;
+              }
+              appendTranscript(rec.stop());
+            },
+          };
+        } else {
+        const requestId = `stt_${Date.now()}`;
+        const pending = startNativeRecognition(requestId);
+        pending.catch((error) => {
+          console.warn('anx.chat.dictation native speech ended', error);
+        });
+        sessionRef.current = {
+          cancel: () => cancelNativeRecognition(requestId),
+          finish: async (commit) => {
+            if (!commit) {
+              cancelNativeRecognition(requestId);
+              return;
+            }
+            stopNativeRecognition(requestId);
+            appendTranscript(await pending);
+          },
+        };
+        }
+      } else if (dictationMethod === 'phone') {
+        throw new Error(dictationNote || 'Speech recognition is not available on this device.');
+      } else {
+      const capture = await startMicCapture();
+      sessionRef.current = {
+        cancel: () => capture.cancel(),
+        finish: async (commit) => {
+          if (!commit) {
+            capture.cancel();
+            return;
+          }
+          const blob = await capture.stop();
+          if (!blob.size) throw new Error('The recording was empty.');
+          if (dictationMethod === 'direct') {
+            const audio = await blobToInlineAudio(blob, 'voice-message.webm');
+            const result = await chat.sendMessage('Voice message', {
+              conversationId: conversationId || undefined,
+              contactId: contactId || undefined,
+              attachments: [audio],
+              ...(modelOverride ? { modelOverride } : {}),
+            });
+            if (!result.ok) throw new Error(result.message || 'Could not send the recording.');
+            return;
+          }
+          if (!commandClient || !sttModelId) {
+            throw new Error(dictationNote || 'No speech model is available on this subscription.');
+          }
+          setHoldPhase('working');
+          const transcribed = await transcribeOrNull(commandClient, { modelId: sttModelId, audioBlob: blob });
+          if (!transcribed.text) throw new Error('The speech model returned no transcript.');
+          appendTranscript(transcribed.text);
+        },
+      };
+      }
+      const early = releasedRef.current;
+      if (early && sessionRef.current) {
+        const session = sessionRef.current;
+        sessionRef.current = null;
+        await session.finish(early === 'commit');
+        setHoldPhase('idle');
+      }
+    } catch (error) {
+      sessionRef.current = null;
+      setHoldPhase('idle');
+      const message = error instanceof Error ? error.message : 'Could not start the microphone.';
+      console.warn('anx.chat.dictation start failed', message);
+      setActionError(message);
+    }
+  }, [
+    appendTranscript,
+    chat,
+    commandClient,
+    contactId,
+    conversationId,
+    dictationMethod,
+    dictationNote,
+    modelOverride,
+    sttModelId,
+  ]);
+
+  const endHold = useCallback(async (commit: boolean) => {
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    if (!session) {
+      releasedRef.current = commit ? 'commit' : 'cancel';
+      setHoldPhase('idle');
+      return;
+    }
+    setHoldPhase(commit ? 'working' : 'idle');
+    try {
+      await session.finish(commit);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Speech recognition failed.';
+      console.warn('anx.chat.dictation finish failed', message);
+      setActionError(message);
+    } finally {
+      setHoldPhase('idle');
+    }
+  }, []);
+
+  const onHoldPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    void beginHold();
+  };
+
+  const onHoldPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (holdPhase !== 'recording' && holdPhase !== 'cancel') return;
+    const rect = holdRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const left = pointerLeftTarget(rect, event.clientX, event.clientY);
+    setHoldPhase(left ? 'cancel' : 'recording');
+  };
+
+  const onHoldPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const rect = holdRef.current?.getBoundingClientRect();
+    const left = rect ? pointerLeftTarget(rect, event.clientX, event.clientY) : false;
+    void endHold(holdReleaseAction({ leftTarget: left }) === 'commit');
+  };
+
   if (slots?.composer) {
     const Custom = slots.composer;
     return (
@@ -149,16 +314,10 @@ export function Composer({
     );
   }
 
+  const holdLabel = holdPhase === 'cancel' ? 'Cancel' : holdPhase === 'working' ? '…' : 'Hold';
+
   return (
     <div className="nexus-chat__composer">
-      {showModelPicker ? (
-        <ModelPicker
-          models={models}
-          value={selectedModelId || null}
-          loading={modelsLoading}
-          onChange={(id) => onSelectModel?.(id)}
-        />
-      ) : null}
       {queued.length ? (
         <div className="nexus-chat__queue">
           <span>
@@ -215,12 +374,25 @@ export function Composer({
             ))}
           </div>
         ) : null}
+        {holdPhase === 'recording' || holdPhase === 'cancel' ? (
+          <div className="nexus-chat__record" role="status">
+            {holdPhase === 'cancel' ? 'Release to cancel' : 'Recording… release to insert, slide off to cancel'}
+          </div>
+        ) : null}
         <div className="nexus-chat__composer-row">
+          <button
+            type="button"
+            className="nexus-chat__btn"
+            onClick={() => fileRef.current?.click()}
+            aria-label="Attach files"
+          >
+            +
+          </button>
           <textarea
             className="nexus-chat__input"
             value={text}
-            placeholder={streaming ? 'Queued until the current turn finishes…' : 'Message…'}
-            rows={2}
+            placeholder={streaming ? 'Queued until the current turn finishes…' : 'Message'}
+            rows={1}
             onChange={(e) => {
               setText(e.target.value);
               detectMention(e.target.value);
@@ -232,41 +404,44 @@ export function Composer({
               }
             }}
           />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <button
+            ref={holdRef}
+            type="button"
+            className={`nexus-chat__btn nexus-chat__hold${holdPhase === 'recording' ? ' nexus-chat__hold--recording' : ''}${holdPhase === 'cancel' ? ' nexus-chat__hold--cancel' : ''}`}
+            aria-label="Hold to talk"
+            disabled={holdPhase === 'working'}
+            onPointerDown={onHoldPointerDown}
+            onPointerMove={onHoldPointerMove}
+            onPointerUp={onHoldPointerUp}
+            onPointerCancel={() => void endHold(false)}
+            onContextMenu={(event) => event.preventDefault()}
+          >
+            {holdLabel}
+          </button>
+          {conversationId && streaming ? (
             <button
               type="button"
               className="nexus-chat__btn"
-              onClick={() => fileRef.current?.click()}
-              aria-label="Attach files"
+              onClick={() => {
+                setActionError(null);
+                void chat
+                  .cancelConversation({ conversationId })
+                  .catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
+              }}
             >
-              📎
+              Stop
             </button>
-            <button
-              type="button"
-              className="nexus-chat__btn nexus-chat__btn--primary"
-              onClick={() => void sendNow()}
-            >
-              {streaming ? 'Queue' : 'Send'}
-            </button>
-          </div>
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {conversationId && streaming ? (
+          ) : null}
           <button
             type="button"
-            className="nexus-chat__btn"
-            onClick={() => {
-              setActionError(null);
-              void chat
-                .cancelConversation({ conversationId })
-                .catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
-            }}
+            className="nexus-chat__btn nexus-chat__btn--primary"
+            onClick={() => void sendNow()}
           >
-            Cancel
+            {streaming ? 'Queue' : 'Send'}
           </button>
-        ) : null}
-        {!hideCompact && conversationId ? (
+        </div>
+      </div>
+      {!hideCompact && conversationId ? (
           <button
             type="button"
             className="nexus-chat__btn"
@@ -280,7 +455,6 @@ export function Composer({
             Compact
           </button>
         ) : null}
-      </div>
       {actionError ? <div className="nexus-chat__error">{actionError}</div> : null}
       <input
         ref={fileRef}

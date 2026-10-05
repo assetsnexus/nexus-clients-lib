@@ -45,16 +45,10 @@ export function createRegionCommandClient(
         responseExpected: true,
         timestamp: new Date().toISOString(),
       };
-      const res = await fetchFn(`${apiBaseUrl}/command`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${identity.token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-      const responseCode = Number(json.responseCode ?? res.status);
+      const json = nativeBridgeAvailable()
+        ? await postCommandViaNative(body)
+        : await postCommandViaFetch(fetchFn, apiBaseUrl, identity.token, body);
+      const responseCode = Number(json.responseCode ?? json.status ?? 0);
       const data = json.responseObject ?? json.data ?? json;
       return {
         ok: responseCode >= 200 && responseCode < 300,
@@ -71,4 +65,59 @@ export function createRegionCommandClient(
       if (next.identity) identity = { ...identity, ...next.identity };
     },
   };
+}
+
+type NativeHost = Window & {
+  ReactNativeWebView?: { postMessage: (payload: string) => void };
+};
+
+function nativeBridgeAvailable(): boolean {
+  return typeof window !== 'undefined' && typeof (window as NativeHost).ReactNativeWebView?.postMessage === 'function';
+}
+
+async function postCommandViaFetch(
+  fetchFn: typeof fetch,
+  apiBaseUrl: string,
+  token: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetchFn(`${apiBaseUrl}/command`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (json.responseCode == null) json.responseCode = res.status;
+  return json;
+}
+
+function postCommandViaNative(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const requestId = String(body.requestId || '');
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      window.removeEventListener('message', onMessage);
+      reject(new Error('Chat command timed out'));
+    }, 20000);
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; requestId?: string; error?: string; json?: Record<string, unknown> } | null;
+      if (!data || data.type !== 'commandResult' || data.requestId !== requestId) return;
+      window.clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      if (data.error) reject(new Error(data.error));
+      else resolve(data.json || {});
+    };
+    window.addEventListener('message', onMessage);
+    (window as NativeHost).ReactNativeWebView?.postMessage(
+      JSON.stringify({
+        type: 'regionCommand',
+        requestId,
+        command: body.command,
+        payload: body.payload,
+        identity: body.identity,
+      }),
+    );
+  });
 }
