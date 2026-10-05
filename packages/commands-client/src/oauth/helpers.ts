@@ -48,6 +48,8 @@ export type AuthorizeUrlParams = {
   codeChallengeMethod?: 'S256';
   subjectType?: 'user' | 'org_member';
   orgId?: string;
+  /** OIDC prompt. `create` opens registration on the consent page. */
+  prompt?: 'login' | 'consent' | 'select_account' | 'create';
 };
 
 export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
@@ -60,6 +62,7 @@ export function buildAuthorizeUrl(params: AuthorizeUrlParams): string {
   url.searchParams.set('code_challenge', params.codeChallenge);
   url.searchParams.set('code_challenge_method', params.codeChallengeMethod || 'S256');
   if (params.scope) url.searchParams.set('scope', params.scope);
+  if (params.prompt) url.searchParams.set('prompt', params.prompt);
   if (params.subjectType) url.searchParams.set('subject_type', params.subjectType);
   if (params.orgId) url.searchParams.set('org_id', params.orgId);
   return url.toString();

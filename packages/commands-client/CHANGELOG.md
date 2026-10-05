@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- `buildAuthorizeUrl` accepts `prompt`: `login`, `consent`, `select_account`, or `create`.
+- `client.privacyRequests` lists, acknowledges, extends, and completes partner privacy requests, and requests a presigned export upload.
+
 ## 0.4.1
 
 - OAuth REST failures throw `NexusError`. `REQUIREMENTS_NOT_MET` carries `missing` and `actions`. The message never includes the response body.

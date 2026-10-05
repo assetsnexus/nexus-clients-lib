@@ -112,6 +112,13 @@ export {
 } from './oauth/helpers.js';
 export { GrantNamespace, type GrantView, type EffectiveCapability } from './grant/namespace.js';
 export {
+  PrivacyRequestsNamespace,
+  type PrivacyCompleteInput,
+  type PrivacyExportUpload,
+  type PrivacyRequestType,
+  type PrivacyRequestView,
+} from './privacy/namespace.js';
+export {
   OrgAdminNamespace,
   type EnforcementMode,
   type MembershipLoginPassword,

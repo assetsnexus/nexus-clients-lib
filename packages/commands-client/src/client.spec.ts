@@ -322,6 +322,19 @@ describe('oauth helpers', () => {
     expect(url).toContain('/oauth2/authorize');
     expect(url).toContain('client_id=c1');
     expect(url).toContain('code_challenge_method=S256');
+    expect(url).not.toContain('prompt=');
+  });
+
+  it('forwards a typed authorize prompt', () => {
+    const url = buildAuthorizeUrl({
+      issuer: 'https://region.example',
+      clientId: 'c1',
+      redirectUri: 'https://app/cb',
+      state: 's',
+      codeChallenge: 'ch',
+      prompt: 'create',
+    });
+    expect(url).toContain('prompt=create');
   });
 
   it('fetchUserInfo and revokeToken call expected endpoints', async () => {

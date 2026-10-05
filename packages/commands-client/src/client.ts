@@ -9,6 +9,7 @@ import type { AnxNodeHealthV1, DeprecationNotice } from './health/types.js';
 import { IDEMPOTENCY_HEADER } from './idempotency.js';
 import { LongRunningNamespace } from './long-running/namespace.js';
 import { OrgAdminNamespace } from './org-admin/namespace.js';
+import { PrivacyRequestsNamespace } from './privacy/namespace.js';
 import { PermissionsNamespace } from './permissions/namespace.js';
 import type { RegionRoutes } from './regions/region-routes.js';
 import { SubscriptionsNamespace } from './subscriptions/namespace.js';
@@ -116,6 +117,7 @@ export class NexusClient {
   readonly subject: SubjectNamespace;
   readonly permissions: PermissionsNamespace;
   readonly orgAdmin: OrgAdminNamespace;
+  readonly privacyRequests: PrivacyRequestsNamespace;
 
   private readonly baseUrl: string;
   private readonly homeBaseUrl?: string;
@@ -183,6 +185,7 @@ export class NexusClient {
     this.subject = new SubjectNamespace(this);
     this.permissions = new PermissionsNamespace(this);
     this.orgAdmin = new OrgAdminNamespace(this);
+    this.privacyRequests = new PrivacyRequestsNamespace(this);
   }
 
   /** Current primary origin, without a trailing slash. */

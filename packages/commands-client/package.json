@@ -1,6 +1,6 @@
 {
   "name": "@nexus/commands-client",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Nexus commands client: envelope, routed region transport, health ping, SCA/2FA, elevation, OAuth PKCE, region discovery",
   "license": "UNLICENSED",
   "publishConfig": {
