@@ -35,4 +35,4 @@ app.post('/webhooks/nexus', expressAdapter({
 
 Idempotency: the adapter checks `has(eventId)` first and calls `add(eventId)` only after your handler resolved. A throwing handler answers `500`, Nexus retries the same `eventId`, and the retry runs the handler again. `createIdempotencyStore()` is in-process and bounded. Use a shared store when you run more than one instance.
 
-Delivered events: `grant.revoked`, `grant.fields_changed`, `permission_request.decided`, `regulatory.status_changed`, `notification.action`, `account.erased`. `account.erased` data is `clientId`, `grantIds`, `subs`, and `reason: user_erasure`.
+Delivered events: `grant.revoked`, `grant.fields_changed`, `permission_request.decided`, `regulatory.status_changed`, `notification.action`, `account.erased`, `privacy_request.created`, `privacy_request.cancelled`, `app_roles.changed`. `account.erased` data is `clientId`, `grantIds`, `subs`, and `reason: user_erasure`. `app_roles.changed` data is pairwise `sub`, `grantId`, `clientId`, `app_roles`, `app_roles_v`, and optional `app_tenant_org`. Apply it only when `isNewerVersion` reports a newer `app_roles_v`. Payloads carry no platform user id.

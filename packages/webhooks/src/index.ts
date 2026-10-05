@@ -3,6 +3,7 @@ import type { NexusWebhookPayload } from './events.js';
 
 export {
   type AccountErasedData,
+  type AppRolesChangedData,
   type GrantFieldsChangedData,
   type GrantRevokedData,
   type NexusWebhookEvent,
@@ -14,6 +15,8 @@ export {
   type PrivacyRequestType,
   type RegulatoryStatusChangedData,
   isAccountErased,
+  isAppRolesChanged,
+  isNewerVersion,
   isPrivacyRequestCancelled,
   isPrivacyRequestCreated,
 } from './events.js';

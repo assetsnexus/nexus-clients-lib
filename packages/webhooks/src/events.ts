@@ -80,6 +80,16 @@ export interface PrivacyRequestCancelledData {
   reason: string;
 }
 
+/** Pairwise only. `app_roles` is empty when the subject no longer has a role. */
+export interface AppRolesChangedData {
+  grantId: string;
+  clientId: string;
+  sub: string;
+  app_roles: string[];
+  app_roles_v: number;
+  app_tenant_org?: string;
+}
+
 export type NexusWebhookEvent =
   | 'grant.revoked'
   | 'grant.fields_changed'
@@ -88,7 +98,8 @@ export type NexusWebhookEvent =
   | 'regulatory.status_changed'
   | 'account.erased'
   | 'privacy_request.created'
-  | 'privacy_request.cancelled';
+  | 'privacy_request.cancelled'
+  | 'app_roles.changed';
 
 type Envelope<E extends string, D> = {
   eventId: string;
@@ -107,7 +118,8 @@ export type NexusWebhookPayload =
   | Envelope<'regulatory.status_changed', RegulatoryStatusChangedData>
   | Envelope<'account.erased', AccountErasedData>
   | Envelope<'privacy_request.created', PrivacyRequestCreatedData>
-  | Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData>;
+  | Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData>
+  | Envelope<'app_roles.changed', AppRolesChangedData>;
 
 export function isPrivacyRequestCreated(
   payload: NexusWebhookPayload,
@@ -119,6 +131,19 @@ export function isPrivacyRequestCancelled(
   payload: NexusWebhookPayload,
 ): payload is Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData> {
   return payload.event === 'privacy_request.cancelled';
+}
+
+export function isAppRolesChanged(
+  payload: NexusWebhookPayload,
+): payload is Envelope<'app_roles.changed', AppRolesChangedData> {
+  return payload.event === 'app_roles.changed';
+}
+
+/** True when `incoming` is a newer monotonic `app_roles_v` than `stored`. */
+export function isNewerVersion(stored: number | undefined, incoming: number): boolean {
+  if (!Number.isInteger(incoming) || incoming < 1) return false;
+  if (stored === undefined || !Number.isInteger(stored)) return true;
+  return incoming > stored;
 }
 
 export function isAccountErased(

@@ -4,6 +4,8 @@ import {
   createIdempotencyStore,
   dispatchWebhookEvent,
   expressAdapter,
+  isAppRolesChanged,
+  isNewerVersion,
   verifySignature,
   type NexusWebhookPayload,
 } from './index.js';
@@ -182,5 +184,27 @@ describe('dispatchWebhookEvent', () => {
       },
     });
     expect(seen).toBe('n1:ack:pairwise-sub:2026-10-02T12:00:01.000Z');
+  });
+
+  it('accepts a newer app role version and ignores a stale one', () => {
+    const payload: NexusWebhookPayload = {
+      eventId: 'e-roles',
+      event: 'app_roles.changed',
+      eventVersion: 1,
+      clientId: 'client-1',
+      at: '2026-10-05T12:00:00.000Z',
+      data: {
+        grantId: 'g1',
+        clientId: 'client-1',
+        sub: 'pairwise-sub',
+        app_roles: ['app_admin'],
+        app_roles_v: 2,
+      },
+    };
+    expect(isAppRolesChanged(payload)).toBe(true);
+    expect(JSON.stringify(payload.data)).not.toContain('userId');
+    expect(isNewerVersion(1, 2)).toBe(true);
+    expect(isNewerVersion(2, 2)).toBe(false);
+    expect(isNewerVersion(undefined, 1)).toBe(true);
   });
 });

@@ -1,3 +1,7 @@
+## 0.4.1
+- `app_roles.changed` (`sub`, `grantId`, `clientId`, `app_roles`, `app_roles_v`, optional `app_tenant_org`). No platform user id.
+- `isAppRolesChanged` and `isNewerVersion` for monotonic `app_roles_v`.
+
 ## 0.4.0
 - Typed `privacy_request.created` and `privacy_request.cancelled` payloads. `sub` is the pairwise subject. There is no platform user id.
 - `isPrivacyRequestCreated`, `isPrivacyRequestCancelled`, and `isAccountErased` narrow a verified envelope.
