@@ -111,6 +111,86 @@ describe('chat-core', () => {
     });
   });
 
+  it('does not paint the previous assistant reply when the socket is down', async () => {
+    let listCalls = 0;
+    const chat = createNexusChat({
+      replyPoll: { intervalMs: 0, maxAttempts: 4 },
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.stream-init') {
+            return { ok: true, data: { endpoints: [], token: null, resourceId: 'c1' } };
+          }
+          if (command === 'anx.communicate.message.send') {
+            return { ok: true, data: { conversationId: 'c1' } };
+          }
+          if (command === 'anx.communicate.conversations.messages.list') {
+            listCalls += 1;
+            const previous = {
+              id: 'old',
+              role: 'assistant',
+              content: 'Hello again!',
+              createdAt: '2020-01-01T00:00:00.000Z',
+            };
+            if (listCalls < 3) {
+              return { ok: true, data: { messages: [previous] } };
+            }
+            return {
+              ok: true,
+              data: {
+                messages: [
+                  previous,
+                  { id: 'new', role: 'assistant', content: 'Fresh reply' },
+                ],
+              },
+            };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.sendMessage('ping', { conversationId: 'c1' });
+    const assistant = chat.getState().turns.find((turn) => turn.role === 'assistant');
+    expect(assistant?.text).toBe('Fresh reply');
+  });
+
+  it('shows a timeout instead of the previous reply when no new assistant row arrives', async () => {
+    const errors: string[] = [];
+    const chat = createNexusChat({
+      replyPoll: { intervalMs: 0, maxAttempts: 2 },
+      hooks: {
+        onError: (err) => {
+          errors.push(err instanceof Error ? err.message : String(err));
+        },
+      },
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.stream-init') {
+            return { ok: true, data: { endpoints: [], token: null, resourceId: 'c1' } };
+          }
+          if (command === 'anx.communicate.message.send') {
+            return { ok: true, data: { conversationId: 'c1' } };
+          }
+          if (command === 'anx.communicate.conversations.messages.list') {
+            return {
+              ok: true,
+              data: {
+                messages: [{ id: 'old', role: 'assistant', content: 'Hello again!' }],
+              },
+            };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    const result = await chat.sendMessage('ping', { conversationId: 'c1' });
+    expect(result.ok).toBe(true);
+    const assistant = chat.getState().turns.find((turn) => turn.role === 'assistant');
+    expect(assistant?.text).toContain('did not arrive');
+    expect(assistant?.text).not.toContain('Hello again');
+    expect(errors.some((message) => message.includes('did not arrive'))).toBe(true);
+    expect(chat.getState().streaming).toBe(false);
+  });
+
   it('keeps previewUrl on the optimistic turn and strips it from the command', async () => {
     const sentPayloads: Array<{ command: string; payload?: Record<string, unknown> }> = [];
     const chat = createNexusChat({
@@ -121,7 +201,7 @@ describe('chat-core', () => {
             return { ok: true, data: { endpoints: [], token: null, resourceId: 'c1' } };
           }
           if (command === 'anx.communicate.message.send') {
-            return { ok: true, data: { conversationId: 'c1' } };
+            return { ok: true, data: { text: 'ok', conversationId: 'c1' } };
           }
           return { ok: true, data: {} };
         },

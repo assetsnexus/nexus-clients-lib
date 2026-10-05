@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applyStreamEventToTurns, isEmptyAssistantTurn, parseStreamMessage } from './stream-events.js';
+import {
+  applyStreamEventToTurns,
+  isEmptyAssistantTurn,
+  isGenerationStartStreamEvent,
+  parseStreamMessage,
+  shouldDropReplayedStreamEvent,
+} from './stream-events.js';
 import { mergeToolStreamEvents, rehydrateToolRunsFromHistory, patchToolRunStatus } from './tool-events.js';
 import type { ChatTurn } from '../state.js';
 
@@ -87,6 +93,23 @@ describe('stream-events', () => {
       },
     ]);
     expect(runs[0]?.args?.command).toBe('anx.notes.create');
+  });
+
+  it('drops replayed assistant_final until generationStart', () => {
+    const finalEvent = { type: 'assistant_final', data: { content: 'Hello again!' } };
+    expect(shouldDropReplayedStreamEvent(finalEvent, false)).toBe(true);
+    expect(shouldDropReplayedStreamEvent({ type: 'token', data: { text: 'old' } }, false)).toBe(true);
+    expect(shouldDropReplayedStreamEvent({ type: 'turn_snapshot', data: { text: 'old' } }, false)).toBe(true);
+    expect(isGenerationStartStreamEvent({ type: 'conversation', data: { generationStart: true } })).toBe(
+      true,
+    );
+    expect(
+      shouldDropReplayedStreamEvent(
+        { type: 'conversation', data: { generationStart: true } },
+        false,
+      ),
+    ).toBe(false);
+    expect(shouldDropReplayedStreamEvent(finalEvent, true)).toBe(false);
   });
 
   it('clears stale assistant text on generationStart', () => {

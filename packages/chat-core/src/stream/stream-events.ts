@@ -4,6 +4,31 @@ import { classifyChatBillingIssue } from '../billing/classify-billing-issue.js';
 
 export type StreamEvent = { type: string; data?: unknown };
 
+/** Text-bearing events from a previous turn must not fill the new bubble. */
+const REPLAY_DROPPED_UNTIL_GENERATION_START = new Set([
+  'token',
+  'sub_agent_token',
+  'turn_snapshot',
+  'assistant_final',
+]);
+
+export function isGenerationStartStreamEvent(ev: { type?: string; data?: unknown }): boolean {
+  if (ev.type !== 'conversation' || !ev.data || typeof ev.data !== 'object') return false;
+  return (ev.data as { generationStart?: unknown }).generationStart === true;
+}
+
+/**
+ * `requireGenerationStart` drops replay until this turn's marker. Attach leaves
+ * the gate open because that buffer is the in-flight turn.
+ */
+export function shouldDropReplayedStreamEvent(
+  ev: { type?: string; data?: unknown },
+  acceptStreamTokens: boolean,
+): boolean {
+  if (acceptStreamTokens || isGenerationStartStreamEvent(ev)) return false;
+  return REPLAY_DROPPED_UNTIL_GENERATION_START.has(String(ev.type || ''));
+}
+
 export function parseStreamMessage(raw: unknown): StreamEvent | null {
   try {
     const ev = typeof raw === 'string' ? JSON.parse(raw) : raw;

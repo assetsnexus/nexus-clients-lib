@@ -91,6 +91,13 @@ export class StreamEndpointResolver {
       const ws = new WebSocket(url);
       let settled = false;
 
+      const fail = (message: string, closeCode: number | null) => {
+        const error = new Error(message) as Error & { url?: string; closeCode?: number | null };
+        error.url = url;
+        error.closeCode = closeCode;
+        reject(error);
+      };
+
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -99,7 +106,7 @@ export class StreamEndpointResolver {
         } catch {
           /* ignore */
         }
-        reject(new Error(`WebSocket connect timeout: ${url}`));
+        fail(`WebSocket connect timeout: ${url}`, null);
       }, 10_000);
 
       ws.onopen = (ev) => {
@@ -112,13 +119,28 @@ export class StreamEndpointResolver {
       ws.onmessage = (ev) => handlers.onMessage?.(ev);
       ws.onerror = (ev) => {
         handlers.onError?.(ev);
+        // Close usually follows error and carries the code. If it does not, fail
+        // on the next turn so a dead socket is not held until the connect timeout.
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          try {
+            ws.close();
+          } catch {
+            /* ignore */
+          }
+          fail(`WebSocket error: ${url}`, null);
+        }, 0);
+      };
+      ws.onclose = (ev) => {
+        handlers.onClose?.(ev);
         if (!settled) {
           settled = true;
           clearTimeout(timer);
-          reject(new Error(`WebSocket error: ${url}`));
+          fail(`WebSocket closed (${ev.code}) before open: ${url}`, ev.code);
         }
       };
-      ws.onclose = (ev) => handlers.onClose?.(ev);
     });
   }
 }

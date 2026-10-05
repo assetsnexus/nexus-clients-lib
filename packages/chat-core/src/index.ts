@@ -34,7 +34,16 @@ import {
   parseStreamMessage,
   applyStreamEventToTurns,
   isEmptyAssistantTurn,
+  isGenerationStartStreamEvent,
+  shouldDropReplayedStreamEvent,
 } from './stream/stream-events.js';
+import {
+  emptyWatermark,
+  pollNewerAssistantMessage,
+  watermarkFromMessages,
+  type AssistantWatermark,
+  type ListedChatMessage,
+} from './stream/pending-reply.js';
 import { applyRoomDispatchPlan, mergePrependedTurns, shouldKeepRoomAssistantPlaceholder } from './history-turns.js';
 import {
   dataAccessApprovalInfoFrom,
@@ -140,7 +149,12 @@ export type { ChatModelOverride } from './types.js';
 export { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 export { LiveAttachSession, LIVE_ATTACH_IDLE_CHECK_MS } from './stream/live-attach.js';
 export type { LiveAttachOutcome, LiveAttachResult } from './stream/live-attach.js';
-export { parseStreamMessage, applyStreamEventToTurns } from './stream/stream-events.js';
+export {
+  parseStreamMessage,
+  applyStreamEventToTurns,
+  isGenerationStartStreamEvent,
+  shouldDropReplayedStreamEvent,
+} from './stream/stream-events.js';
 export type { StreamEvent } from './stream/stream-events.js';
 export { isEmptyAssistantTurn } from './stream/stream-events.js';
 export {
@@ -424,6 +438,7 @@ export type {
 export const DEFAULT_I18N = {
   messageAccepted: '(message accepted)',
   awaitingResponse: 'Awaiting response...',
+  replyTimedOut: 'The reply did not arrive. Try again.',
 } as const;
 
 export type SendResult =
@@ -1254,6 +1269,11 @@ export type CreateNexusChatOptions = {
   i18n?: Record<string, string>;
   logger?: { debug?: Function; error?: Function; warn?: Function };
   /**
+   * When the live socket is down, poll messages.list for an assistant row
+   * that was not in the pre-send snapshot. Defaults: 500ms × 20.
+   */
+  replyPoll?: { intervalMs?: number; maxAttempts?: number };
+  /**
    * Region/gateway origin used to absolutize relative `/public-files/...`
    * and `/ai-agents/ve/...` avatar URLs (portal and region are different origins in local/dev).
    */
@@ -1434,6 +1454,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     opts.logger?.debug?.(msg, extra);
   };
 
+  const listConversationMessages = async (convId: string): Promise<ListedChatMessage[]> => {
+    const listed = await opts.client.send('anx.communicate.conversations.messages.list', {
+      conversationId: convId,
+      limit: 20,
+    });
+    const listedData = unwrapData(listed);
+    const msgs = listedData.messages;
+    return Array.isArray(msgs) ? (msgs as ListedChatMessage[]) : [];
+  };
+
   let liveAttach: LiveAttachSession | null = null;
   let liveAttachCleanup: ((outcome: LiveAttachOutcome) => void) | null = null;
   const settleLiveAttach = (fallback: LiveAttachOutcome) => {
@@ -1597,19 +1627,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       // Drop Redis replay from the previous turn until this turn's
       // generationStart marker arrives (ConversationDispatch clears
       // replay after message.send, which is after WS connect).
-      if (
-        parsed.type === 'conversation' &&
-        parsed.data &&
-        typeof parsed.data === 'object' &&
-        (parsed.data as { generationStart?: unknown }).generationStart === true
-      ) {
+      // assistant_final is included: a replayed final otherwise fills the
+      // empty bubble with the previous reply before the marker arrives.
+      if (isGenerationStartStreamEvent(parsed)) {
         acceptStreamTokens = true;
-      } else if (
-        (parsed.type === 'token' ||
-          parsed.type === 'sub_agent_token' ||
-          parsed.type === 'turn_snapshot') &&
-        !acceptStreamTokens
-      ) {
+      } else if (shouldDropReplayedStreamEvent(parsed, acceptStreamTokens)) {
         return;
       }
       // Prefer store turns so deliveryStatus patches are not clobbered.
@@ -2964,9 +2986,31 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               return true;
             })
             .catch((err) => {
-              log('ws_connect_failed', { message: String(err) });
+              const failure = err as { url?: string; closeCode?: number | null; message?: string };
+              const detail = {
+                message: err instanceof Error ? err.message : String(err),
+                url: failure.url ?? streamResolver.resolveWebSocketUrl(0),
+                closeCode: failure.closeCode ?? null,
+              };
+              log('ws_connect_failed', detail);
+              opts.logger?.warn?.('ws_connect_failed', detail);
               return false;
             });
+        }
+
+        const sentAtMs = Date.now();
+        let replyWatermark: AssistantWatermark = emptyWatermark(false);
+        const convBeforeSend = store.getState().conversationId || conversationId;
+        if (!wsConnected && convBeforeSend && !roomId) {
+          try {
+            replyWatermark = watermarkFromMessages(await listConversationMessages(convBeforeSend));
+          } catch (snapshotErr) {
+            log('reply_snapshot_failed', {
+              conversationId: convBeforeSend,
+              message: snapshotErr instanceof Error ? snapshotErr.message : String(snapshotErr),
+            });
+            replyWatermark = emptyWatermark(false);
+          }
         }
 
         const command = roomId
@@ -3108,46 +3152,68 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         turns = store.getState().turns;
 
         if (!wsConnected) {
+          const inlineText =
+            (typeof data.text === 'string' && data.text) ||
+            (typeof data.content === 'string' && data.content) ||
+            (typeof data.assistantText === 'string' && data.assistantText) ||
+            '';
           const convId = store.getState().conversationId;
-          let assistantText = '';
+          let assistantText = inlineText;
           let toolCalls: Array<Record<string, unknown>> | undefined;
-          if (convId) {
-            const listed = await opts.client.send('anx.communicate.conversations.messages.list', {
-              conversationId: convId,
-              limit: 20,
+          if (!assistantText && convId && !roomId) {
+            const newer = await pollNewerAssistantMessage({
+              list: () => listConversationMessages(convId),
+              watermark: replyWatermark,
+              sentAtMs,
+              intervalMs: opts.replyPoll?.intervalMs ?? 500,
+              maxAttempts: opts.replyPoll?.maxAttempts ?? 20,
+              onListError: (err, attempt) => {
+                log('reply_poll_failed', {
+                  conversationId: convId,
+                  attempt,
+                  message: err instanceof Error ? err.message : String(err),
+                });
+              },
             });
-            const listedData = unwrapData(listed);
-            const msgs = (listedData.messages as Array<{
-              role: string;
-              content: string;
-              toolCalls?: Array<Record<string, unknown>>;
-            }>) || [];
-            const assistant = [...msgs].reverse().find((m) => m.role === 'assistant');
-            if (assistant?.content) assistantText = assistant.content;
-            if (assistant?.toolCalls) toolCalls = assistant.toolCalls;
+            if (newer) {
+              assistantText = typeof newer.content === 'string' ? newer.content : '';
+              toolCalls = newer.toolCalls;
+            }
           }
-          if (!assistantText && data) {
-            assistantText =
-              (typeof data.text === 'string' && data.text) ||
-              (typeof data.content === 'string' && data.content) ||
-              (typeof data.assistantText === 'string' && data.assistantText) ||
-              '';
+          if (assistantText || toolCalls) {
+            turns = store.getState().turns.map((t) =>
+              t.id === assistantId
+                ? {
+                    ...t,
+                    text: assistantText,
+                    toolEvents: toolCalls
+                      ? rehydrateToolRunsFromHistory(toolCalls)
+                      : t.toolEvents,
+                  }
+                : t,
+            );
+            syncMessagesFromTurns(turns);
+            store.setState({ streaming: false });
+            patchCurrentPanel({ streaming: false });
+            opts.hooks?.onStreamState?.('idle');
+          } else if (!roomId) {
+            const timeoutMessage = translate('replyTimedOut');
+            log('reply_poll_timeout', { conversationId: convId || null });
+            opts.logger?.warn?.('reply_poll_timeout', { conversationId: convId || null });
+            turns = applyStreamEventToTurns(store.getState().turns, assistantId, {
+              type: 'error',
+              data: { message: timeoutMessage },
+            });
+            syncMessagesFromTurns(turns);
+            store.setState({ streaming: false });
+            patchCurrentPanel({ streaming: false });
+            opts.hooks?.onError?.(new Error(timeoutMessage));
+            opts.hooks?.onStreamState?.('error');
+          } else {
+            store.setState({ streaming: false });
+            patchCurrentPanel({ streaming: false });
+            opts.hooks?.onStreamState?.('idle');
           }
-          turns = store.getState().turns.map((t) =>
-            t.id === assistantId
-              ? {
-                  ...t,
-                  text: assistantText || translate('messageAccepted'),
-                  toolEvents: toolCalls
-                    ? rehydrateToolRunsFromHistory(toolCalls)
-                    : t.toolEvents,
-                }
-              : t,
-          );
-          syncMessagesFromTurns(turns);
-          store.setState({ streaming: false });
-          patchCurrentPanel({ streaming: false });
-          opts.hooks?.onStreamState?.('idle');
         }
         emitSendOutcome(opts.hooks, 'ok');
         return { ok: true };
