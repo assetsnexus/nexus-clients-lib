@@ -9,7 +9,7 @@ From the public GitHub repo, pinned to a release tag. `prepare` builds `dist/` o
 ```json
 {
   "dependencies": {
-    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.4.1&path:/packages/webhooks"
+    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.4.2&path:/packages/webhooks"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/webhooks"]
