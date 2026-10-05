@@ -36,7 +36,7 @@ export function createPostgresPrivacyJobStore(query: PrivacySqlQuery): PrivacyJo
         `UPDATE privacy_jobs SET lease_owner = $1, lease_until = $2
          WHERE request_id IN (
            SELECT request_id FROM privacy_jobs
-           WHERE status IN ('queued', 'review')
+           WHERE (status = 'queued' OR (status = 'review' AND payload->'review' IS NOT NULL))
              AND next_attempt_at <= $3
              AND (lease_until IS NULL OR lease_until <= $3)
            ORDER BY next_attempt_at

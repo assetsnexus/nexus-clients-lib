@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { NexusWebhookPayload } from '@nexus/webhooks';
-import { createPrivacyKit } from './kit.js';
+import { createPrivacyKit, uploadHeaders } from './kit.js';
 import { createMemoryPrivacyJobStore } from './memory-store.js';
 import { assertSectionCoverage, createSectionRegistry } from './sections.js';
 import type { PrivacyCommandClient, PrivacyRequestType } from './types.js';
@@ -27,7 +27,10 @@ function client(): PrivacyCommandClient & {
       async exportUploadUrl(input) {
         calls.push(`upload-url:${input.requestId}`);
         uploads.push(input);
-        return { uploadUrl: `https://files.example/${input.requestId}`, headers: { 'x-amz-server-side-encryption': 'AES256' } };
+        return {
+          uploadUrl: `https://files.example/${input.requestId}`,
+          headers: { 'Content-Type': input.contentType, 'x-amz-server-side-encryption': 'AES256' },
+        };
       },
       async complete(input) {
         calls.push(`complete:${input.requestId}:${input.outcome}`);
@@ -63,6 +66,7 @@ describe('privacy kit', () => {
         expect(body.byteLength).toBe(expected.contentLength);
         expect(createHash('sha256').update(body).digest('hex')).toBe(expected.sha256);
         expect(headers['x-amz-server-side-encryption']).toBe('AES256');
+        expect(new Headers(headers).get('content-type')).toBe('application/json');
         puts.push({ url, headers, length: body.byteLength });
         return { status: 200 };
       },
@@ -195,6 +199,14 @@ describe('privacy kit', () => {
     expect(result.failed).toBe(1);
     const again = await kit.tick();
     expect(again.processed + again.failed).toBe(0);
+  });
+
+  it('sends one content type when the region also signs Content-Type', () => {
+    const headers = uploadHeaders('application/json', { 'Content-Type': 'application/json', 'x-amz-server-side-encryption': 'AES256' });
+    expect(headers).toEqual({ 'content-type': 'application/json', 'x-amz-server-side-encryption': 'AES256' });
+    const sent = new Headers(headers);
+    expect(sent.get('content-type')).toBe('application/json');
+    expect(sent.get('x-amz-server-side-encryption')).toBe('AES256');
   });
 
   it('rejects a coverage gap', () => {

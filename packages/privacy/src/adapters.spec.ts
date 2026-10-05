@@ -46,6 +46,24 @@ describe('mongo privacy job store', () => {
     expect(leased).toHaveLength(1);
     expect(leased[0].leaseOwner).toBe('worker-1');
   });
+
+  it('does not let a worker whose lease was taken over overwrite the row', async () => {
+    const filters: Array<Record<string, unknown>> = [];
+    const store = createMongoPrivacyJobStore({
+      async findOne() {
+        return null;
+      },
+      async updateOne(filter) {
+        filters.push(filter);
+        return { matchedCount: 0 };
+      },
+      find() {
+        return { async toArray() { return []; } };
+      },
+    });
+    await store.save({ ...job(), status: 'completed', leaseOwner: 'worker-1' });
+    expect(filters[0]).toEqual({ requestId: 'req-1', $or: [{ leaseOwner: null }, { leaseOwner: 'worker-1' }] });
+  });
 });
 
 describe('postgres privacy job store', () => {
@@ -61,5 +79,15 @@ describe('postgres privacy job store', () => {
     expect(await store.enqueue(job())).toBe('exists');
     expect(await store.get('req-1')).toMatchObject({ requestId: 'req-1', sub: 'pairwise-sub' });
     expect(sql.some((line) => line.includes('privacy_jobs'))).toBe(true);
+  });
+
+  it('leases review jobs only once a review outcome is stored', async () => {
+    const sql: string[] = [];
+    const query = (async (text: string) => {
+      sql.push(text);
+      return [];
+    }) as PrivacySqlQuery;
+    await createPostgresPrivacyJobStore(query).lease('2026-10-05T12:00:00.000Z', 'worker-1', 1000, 5);
+    expect(sql[0]).toContain("status = 'review' AND payload->'review' IS NOT NULL");
   });
 });

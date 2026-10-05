@@ -1,6 +1,6 @@
 {
   "name": "@nexus/privacy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Server-side kit that honours Nexus privacy-request webhooks",
   "license": "UNLICENSED",
   "publishConfig": {

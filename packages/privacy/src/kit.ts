@@ -23,6 +23,16 @@ async function defaultPut(url: string, body: Uint8Array, headers: Record<string,
   return { status: response.status };
 }
 
+/**
+ * Headers for the presigned PUT. Names are lower-cased so a region `Content-Type`
+ * replaces the default instead of `fetch` joining both into one signed value.
+ */
+export function uploadHeaders(contentType: string, fromRegion: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': contentType };
+  for (const [name, value] of Object.entries(fromRegion)) headers[name.toLowerCase()] = value;
+  return headers;
+}
+
 export function createPrivacyKit(options: PrivacyKitOptions) {
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? 60_000;
@@ -171,7 +181,7 @@ export function createPrivacyKit(options: PrivacyKitOptions) {
       contentLength: body.byteLength,
       sha256,
     });
-    const headers = { 'content-type': 'application/json', ...(upload.headers || {}) };
+    const headers = uploadHeaders('application/json', upload.headers);
     const put = await putExport(upload.uploadUrl, body, headers);
     if (put.status < 200 || put.status >= 300) throw new Error(`export upload failed status=${put.status}`);
     await options.client.privacyRequests.complete({

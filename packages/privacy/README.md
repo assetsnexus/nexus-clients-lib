@@ -53,7 +53,7 @@ assertSectionCoverage(sections.ids(), ['profiles']);
 ## Stores
 
 - `createMemoryPrivacyJobStore()` for tests and a single process.
-- `@nexus/privacy/mongo` — pass a Mongo collection.
+- `@nexus/privacy/mongo` — pass a Mongo collection. Create a unique index on `requestId` first (`createIndex({ requestId: 1 }, { unique: true })`), otherwise two deliveries of the same webhook can both insert.
 - `@nexus/privacy/postgres` — pass a `query(sql, params)` function and apply `sql/privacy_jobs.sql`.
 
 ## Worker

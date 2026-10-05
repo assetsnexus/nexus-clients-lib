@@ -45,9 +45,10 @@ export function createMongoPrivacyJobStore(collection: PrivacyMongoCollection): 
       }
       return leased;
     },
+    /** Fenced like the Postgres store: a worker whose lease was taken over does not overwrite the row. */
     async save(job) {
       await collection.updateOne(
-        { requestId: job.requestId },
+        { requestId: job.requestId, $or: [{ leaseOwner: null }, { leaseOwner: job.leaseOwner ?? null }] },
         { $set: { ...job, leaseOwner: null, leaseUntil: null } },
       );
     },
