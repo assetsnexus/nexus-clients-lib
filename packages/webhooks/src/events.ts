@@ -60,13 +60,35 @@ export interface AccountErasedData {
   reason: 'user_erasure';
 }
 
+export type PrivacyRequestType = 'access' | 'erasure' | 'rectification' | 'restriction' | 'objection';
+
+/** Pairwise `sub` only. No platform user id. */
+export interface PrivacyRequestCreatedData {
+  requestId: string;
+  type: PrivacyRequestType;
+  sub: string;
+  grantId: string;
+  details?: string;
+  dueAt: string;
+}
+
+export interface PrivacyRequestCancelledData {
+  requestId: string;
+  type: PrivacyRequestType;
+  sub: string;
+  grantId: string;
+  reason: string;
+}
+
 export type NexusWebhookEvent =
   | 'grant.revoked'
   | 'grant.fields_changed'
   | 'notification.action'
   | 'permission_request.decided'
   | 'regulatory.status_changed'
-  | 'account.erased';
+  | 'account.erased'
+  | 'privacy_request.created'
+  | 'privacy_request.cancelled';
 
 type Envelope<E extends string, D> = {
   eventId: string;
@@ -83,4 +105,24 @@ export type NexusWebhookPayload =
   | Envelope<'notification.action', NotificationActionData>
   | Envelope<'permission_request.decided', PermissionRequestDecidedData>
   | Envelope<'regulatory.status_changed', RegulatoryStatusChangedData>
-  | Envelope<'account.erased', AccountErasedData>;
+  | Envelope<'account.erased', AccountErasedData>
+  | Envelope<'privacy_request.created', PrivacyRequestCreatedData>
+  | Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData>;
+
+export function isPrivacyRequestCreated(
+  payload: NexusWebhookPayload,
+): payload is Envelope<'privacy_request.created', PrivacyRequestCreatedData> {
+  return payload.event === 'privacy_request.created';
+}
+
+export function isPrivacyRequestCancelled(
+  payload: NexusWebhookPayload,
+): payload is Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData> {
+  return payload.event === 'privacy_request.cancelled';
+}
+
+export function isAccountErased(
+  payload: NexusWebhookPayload,
+): payload is Envelope<'account.erased', AccountErasedData> {
+  return payload.event === 'account.erased';
+}

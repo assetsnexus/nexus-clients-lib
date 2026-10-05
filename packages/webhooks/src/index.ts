@@ -9,7 +9,13 @@ export {
   type NotificationActionData,
   type NexusWebhookPayload,
   type PermissionRequestDecidedData,
+  type PrivacyRequestCancelledData,
+  type PrivacyRequestCreatedData,
+  type PrivacyRequestType,
   type RegulatoryStatusChangedData,
+  isAccountErased,
+  isPrivacyRequestCancelled,
+  isPrivacyRequestCreated,
 } from './events.js';
 
 export function verifySignature(
