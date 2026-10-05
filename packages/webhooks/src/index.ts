@@ -2,18 +2,8 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import type { NexusWebhookPayload } from './events.js';
 
 export {
-  APP_SUBSCRIPTION_EVENTS,
-  isAppSubscriptionEvent,
-  type AgentFundingChangedData,
-  type AppConfigChangedData,
-  type AppRolesChangedData,
-  type AppSubscriptionData,
-  type AppSubscriptionEvent,
-  type AppUserBlockedData,
-  type AppUserUnblockedData,
-  type GrantAccessRevokedData,
+  type AccountErasedData,
   type GrantFieldsChangedData,
-  type GrantResourceScopeChangedData,
   type GrantRevokedData,
   type NexusWebhookEvent,
   type NotificationActionData,

@@ -33,9 +33,9 @@ describe('verifySignature', () => {
 });
 
 describe('dispatchWebhookEvent', () => {
-  it('routes regulatory status and applies roles only when the version is newer', async () => {
+  it('routes regulatory status and applies account.erased only when the version is newer', async () => {
     const seen: string[] = [];
-    let rolesVersion = 2;
+    let seenVersion = 2;
     const regulatory: NexusWebhookPayload = {
       eventId: 'e-reg',
       event: 'regulatory.status_changed',
@@ -60,24 +60,30 @@ describe('dispatchWebhookEvent', () => {
     });
     expect(seen).toEqual(['revoked']);
 
-    const roles = (version: number): NexusWebhookPayload => ({
-      eventId: `e-roles-${version}`,
-      event: 'app_roles.changed',
-      eventVersion: 1,
+    const erased = (version: number): NexusWebhookPayload => ({
+      eventId: `e-erased-${version}`,
+      event: 'account.erased',
+      eventVersion: version,
       clientId: 'client-1',
       at: '2026-10-02T12:00:00.000Z',
-      data: { sub: 'pairwise', grantId: 'g1', roles: ['admin'], rolesVersion: version },
+      data: {
+        clientId: 'client-1',
+        grantIds: ['g1'],
+        subs: ['pairwise-sub'],
+        reason: 'user_erasure',
+      },
     });
     let applied = 0;
-    const onRoles = async (payload: Extract<NexusWebhookPayload, { event: 'app_roles.changed' }>) => {
-      if (!isNewerVersion(rolesVersion, payload.data.rolesVersion)) return;
-      rolesVersion = payload.data.rolesVersion;
+    const onErased = async (payload: Extract<NexusWebhookPayload, { event: 'account.erased' }>) => {
+      if (!isNewerVersion(seenVersion, payload.eventVersion)) return;
+      seenVersion = payload.eventVersion;
       applied += 1;
+      expect(payload.data).not.toHaveProperty('userId');
     };
-    await dispatchWebhookEvent(roles(2), { 'app_roles.changed': onRoles });
-    await dispatchWebhookEvent(roles(3), { 'app_roles.changed': onRoles });
+    await dispatchWebhookEvent(erased(2), { 'account.erased': onErased });
+    await dispatchWebhookEvent(erased(3), { 'account.erased': onErased });
     expect(applied).toBe(1);
-    expect(rolesVersion).toBe(3);
+    expect(seenVersion).toBe(3);
   });
 
   it('routes notification.action with its typed payload', async () => {

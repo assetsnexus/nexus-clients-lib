@@ -21,4 +21,6 @@ From the public GitHub repo, pinned to a release tag. `prepare` builds `dist/` o
 import { verifySignature, isNewerVersion, expressAdapter } from '@nexus/webhooks';
 ```
 
-`X-Nexus-Signature` is `t=<unix>,v1=<hex>`. Pass the current secret and the previous secret during rotation. Compare `rolesVersion` with `isNewerVersion` before applying `app_roles.changed`.
+`X-Nexus-Signature` is `t=<unix>,v1=<hex>`. Pass the current secret and the previous secret during rotation. `isNewerVersion` compares a stored integer with an incoming integer before applying a newer payload.
+
+Delivered events: `grant.revoked`, `grant.fields_changed`, `permission_request.decided`, `regulatory.status_changed`, `notification.action`, `account.erased`. `account.erased` data is `clientId`, `grantIds`, `subs`, and `reason: user_erasure`.
