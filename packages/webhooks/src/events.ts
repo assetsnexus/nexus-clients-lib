@@ -22,6 +22,8 @@ export interface NotificationActionData {
   notificationId: string;
   actionId: string;
   subject: string;
+  /** Same value as `subject`. */
+  sub: string;
   occurredAt: string;
 }
 

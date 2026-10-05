@@ -1,6 +1,84 @@
 import { createHmac } from 'crypto';
 import { describe, expect, it } from 'vitest';
-import { dispatchWebhookEvent, isNewerVersion, verifySignature, type NexusWebhookPayload } from './index.js';
+import {
+  createIdempotencyStore,
+  dispatchWebhookEvent,
+  expressAdapter,
+  verifySignature,
+  type NexusWebhookPayload,
+} from './index.js';
+
+function fakeRes() {
+  const res = { statusCode: 0, body: undefined as unknown };
+  return Object.assign(res, {
+    status(code: number) {
+      res.statusCode = code;
+      return { json: (b: unknown) => { res.body = b; } };
+    },
+  });
+}
+
+describe('expressAdapter', () => {
+  const secret = 'whsec_adapter';
+  const raw = JSON.stringify({
+    eventId: 'e-a',
+    event: 'grant.revoked',
+    eventVersion: 1,
+    clientId: 'c',
+    at: '2026-10-02T12:00:00.000Z',
+    data: { grantId: 'g', clientId: 'c', sub: 's', reason: 'user_revoked' },
+  });
+  const t = Math.floor(Date.now() / 1000);
+  const header = `t=${t},v1=${createHmac('sha256', secret).update(`${t}.${raw}`).digest('hex')}`;
+  const req = () => ({ rawBody: Buffer.from(raw), headers: { 'x-nexus-signature': header } });
+
+  it('returns 500 on handler failure and processes the retry', async () => {
+    let calls = 0;
+    const errors: unknown[] = [];
+    const handler = expressAdapter({
+      secret,
+      handlers: {
+        'grant.revoked': () => {
+          calls += 1;
+          if (calls === 1) throw new Error('db down');
+        },
+      },
+      onError: (e) => errors.push(e),
+    });
+    const first = fakeRes();
+    await handler(req(), first);
+    expect(first.statusCode).toBe(500);
+    expect(errors).toHaveLength(1);
+    const second = fakeRes();
+    await handler(req(), second);
+    expect(second.body).toEqual({ ok: true });
+    const third = fakeRes();
+    await handler(req(), third);
+    expect(third.body).toEqual({ ok: true, duplicate: true });
+    expect(calls).toBe(2);
+  });
+
+  it('parses the verified raw body, not req.body', async () => {
+    let sub = '';
+    const handler = expressAdapter({
+      secret,
+      handlers: { 'grant.revoked': (p) => { sub = p.data.sub; } },
+    });
+    const res = fakeRes();
+    await handler({ ...req(), body: { eventId: 'x', event: 'grant.revoked', data: { sub: 'tampered' } } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(sub).toBe('s');
+  });
+
+  it('bounds the in-process store', () => {
+    const store = createIdempotencyStore({ maxEntries: 2 });
+    store.add('a');
+    store.add('b');
+    store.add('c');
+    expect(store.has('a')).toBe(false);
+    expect(store.has('c')).toBe(true);
+  });
+});
 
 describe('verifySignature', () => {
   const secret = 'whsec_test_aaaaaaaa';
@@ -33,9 +111,8 @@ describe('verifySignature', () => {
 });
 
 describe('dispatchWebhookEvent', () => {
-  it('routes regulatory status and applies account.erased only when the version is newer', async () => {
+  it('routes regulatory status and account.erased', async () => {
     const seen: string[] = [];
-    let seenVersion = 2;
     const regulatory: NexusWebhookPayload = {
       eventId: 'e-reg',
       event: 'regulatory.status_changed',
@@ -60,10 +137,10 @@ describe('dispatchWebhookEvent', () => {
     });
     expect(seen).toEqual(['revoked']);
 
-    const erased = (version: number): NexusWebhookPayload => ({
-      eventId: `e-erased-${version}`,
+    const erased: NexusWebhookPayload = {
+      eventId: 'e-erased',
       event: 'account.erased',
-      eventVersion: version,
+      eventVersion: 1,
       clientId: 'client-1',
       at: '2026-10-02T12:00:00.000Z',
       data: {
@@ -72,18 +149,15 @@ describe('dispatchWebhookEvent', () => {
         subs: ['pairwise-sub'],
         reason: 'user_erasure',
       },
-    });
-    let applied = 0;
-    const onErased = async (payload: Extract<NexusWebhookPayload, { event: 'account.erased' }>) => {
-      if (!isNewerVersion(seenVersion, payload.eventVersion)) return;
-      seenVersion = payload.eventVersion;
-      applied += 1;
-      expect(payload.data).not.toHaveProperty('userId');
     };
-    await dispatchWebhookEvent(erased(2), { 'account.erased': onErased });
-    await dispatchWebhookEvent(erased(3), { 'account.erased': onErased });
-    expect(applied).toBe(1);
-    expect(seenVersion).toBe(3);
+    let erasedSubs: string[] = [];
+    await dispatchWebhookEvent(erased, {
+      'account.erased': (payload) => {
+        erasedSubs = payload.data.subs;
+        expect(payload.data).not.toHaveProperty('userId');
+      },
+    });
+    expect(erasedSubs).toEqual(['pairwise-sub']);
   });
 
   it('routes notification.action with its typed payload', async () => {
@@ -97,6 +171,7 @@ describe('dispatchWebhookEvent', () => {
         notificationId: 'n1',
         actionId: 'ack',
         subject: 'pairwise-sub',
+        sub: 'pairwise-sub',
         occurredAt: '2026-10-02T12:00:01.000Z',
       },
     };

@@ -11,7 +11,6 @@ export {
   type PermissionRequestDecidedData,
   type RegulatoryStatusChangedData,
 } from './events.js';
-export { isNewerVersion } from './version.js';
 
 export function verifySignature(
   rawBody: string | Buffer,
@@ -57,13 +56,30 @@ export function verifySignature(
   return false;
 }
 
-export function createIdempotencyStore() {
+/**
+ * Records processed `eventId`s. `add` is called only after the handler succeeded, so a failed
+ * handler returns 500 and the Nexus retry is processed again. Use a shared store (database, Redis)
+ * when you run more than one instance.
+ */
+export interface IdempotencyStore {
+  has(eventId: string): boolean | Promise<boolean>;
+  add(eventId: string): void | Promise<void>;
+}
+
+/** In-process store, bounded to `maxEntries` (oldest evicted first). */
+export function createIdempotencyStore(opts?: { maxEntries?: number }): IdempotencyStore {
+  const maxEntries = opts?.maxEntries ?? 10_000;
   const seen = new Set<string>();
   return {
-    seen(eventId: string): boolean {
-      if (seen.has(eventId)) return true;
+    has(eventId: string): boolean {
+      return seen.has(eventId);
+    },
+    add(eventId: string): void {
       seen.add(eventId);
-      return false;
+      while (seen.size > maxEntries) {
+        const oldest = seen.values().next().value as string;
+        seen.delete(oldest);
+      }
     },
   };
 }
@@ -87,7 +103,8 @@ export async function dispatchWebhookEvent(
 export function expressAdapter(opts: {
   secret: string | string[];
   handlers: WebhookHandlers;
-  idempotency?: ReturnType<typeof createIdempotencyStore>;
+  idempotency?: IdempotencyStore;
+  onError?: (error: unknown, payload: NexusWebhookPayload) => void;
 }) {
   const store = opts.idempotency || createIdempotencyStore();
   return async (req: any, res: any) => {
@@ -102,29 +119,29 @@ export function expressAdapter(opts: {
       res.status(401).json({ error: 'invalid_signature' });
       return;
     }
-    const payload = (typeof req.body === 'object' && req.body
-      ? req.body
-      : JSON.parse(raw)) as NexusWebhookPayload;
+    let payload: NexusWebhookPayload;
+    try {
+      payload = JSON.parse(raw) as NexusWebhookPayload;
+    } catch {
+      res.status(400).json({ error: 'invalid_payload' });
+      return;
+    }
     if (!payload || typeof payload.eventId !== 'string' || !payload.eventId || typeof payload.event !== 'string') {
       res.status(400).json({ error: 'invalid_payload' });
       return;
     }
-    if (await store.seen(payload.eventId)) {
+    if (await store.has(payload.eventId)) {
       res.status(200).json({ ok: true, duplicate: true });
       return;
     }
-    await dispatchWebhookEvent(payload, opts.handlers);
+    try {
+      await dispatchWebhookEvent(payload, opts.handlers);
+    } catch (error) {
+      opts.onError?.(error, payload);
+      res.status(500).json({ error: 'handler_failed' });
+      return;
+    }
+    await store.add(payload.eventId);
     res.status(200).json({ ok: true });
   };
-}
-
-export async function completePrivacyRequest(
-  client: { send: (cmd: string, payload: Record<string, unknown>) => Promise<unknown> },
-  requestId: string,
-  outcome: { status: 'completed' | 'refused'; artifactUrl?: string; refusalReason?: string },
-): Promise<unknown> {
-  return client.send('anx.oauth2.privacy.request.complete', {
-    requestId,
-    ...outcome,
-  });
 }
