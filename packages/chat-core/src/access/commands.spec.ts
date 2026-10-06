@@ -57,7 +57,13 @@ describe('agent access client', () => {
       grantId: 'grant-1',
     });
     expect(() =>
-      client.purchasePass({ target: { kind: 'virtual_employee', veId: 've-1' }, amountMinor: 1.5 }),
+      client.purchasePass({
+        target: { kind: 'virtual_employee', veId: 've-1' },
+        amountMinor: 1.5,
+        currency: 'EUR',
+        buyerWalletId: 'wallet-1',
+        idempotencyKey: 'idem-1234',
+      }),
     ).toThrow(/positive integer/);
   });
 });

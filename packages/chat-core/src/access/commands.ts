@@ -101,13 +101,29 @@ export function createAgentAccessClient(client: AccessCommandClient) {
       if (!grantId) throw new AgentAccessCommandError('grantId is required', 'GRANT_ID_REQUIRED', 400);
       return send<{ grantId?: string }>(client, GRANT_RENEW, { grantId });
     },
-    purchasePass(payload: { target: AgentAccessTarget; amountMinor: number }) {
+    purchasePass(payload: {
+      target: AgentAccessTarget;
+      amountMinor: number;
+      currency: string;
+      buyerWalletId: string;
+      idempotencyKey: string;
+    }) {
       if (!Number.isInteger(payload.amountMinor) || payload.amountMinor <= 0) {
         throw new AgentAccessCommandError('amountMinor must be a positive integer', 'PASS_AMOUNT_INVALID', 400);
       }
-      return send<{ passId?: string; grantId?: string }>(client, PASS_PURCHASE, {
+      if (!payload.currency || !payload.buyerWalletId || !payload.idempotencyKey || payload.idempotencyKey.length < 8) {
+        throw new AgentAccessCommandError(
+          'currency, buyerWalletId, and idempotencyKey are required',
+          'PASS_PURCHASE_INCOMPLETE',
+          400,
+        );
+      }
+      return send<{ pass?: { _id?: string } }>(client, PASS_PURCHASE, {
         target: payload.target,
         amountMinor: payload.amountMinor,
+        currency: payload.currency,
+        buyerWalletId: payload.buyerWalletId,
+        idempotencyKey: payload.idempotencyKey,
       });
     },
     attachToRoom(roomId: string, grantId: string) {
