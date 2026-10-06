@@ -30,9 +30,10 @@ export function fundingQuickSelectModel(state: FundingGateState, exponent = 2): 
   const decision = state.decision;
   const caller = decision && decision.mode === 'caller_required' ? decision : null;
   const alternate = state.phase === 'switch' ? state.switchOffer?.alternateFunding : null;
-  const showByo = Boolean(caller?.options.byo) || alternate === 'byo';
-  const showResale = Boolean(caller?.options.ownerResale) || alternate === 'owner_resale';
-  const visible = state.phase === 'open' || state.phase === 'switch' || state.phase === 'meter';
+  const loginRequired = state.phase === 'login_required';
+  const showByo = !loginRequired && (Boolean(caller?.options.byo) || alternate === 'byo');
+  const showResale = !loginRequired && (Boolean(caller?.options.ownerResale) || alternate === 'owner_resale');
+  const visible = state.phase === 'open' || state.phase === 'switch' || state.phase === 'meter' || loginRequired;
   let meter: string | null = null;
   if (decision && decision.mode === 'sponsored') {
     const daily = decision.allowanceMillicents?.daily;
@@ -63,7 +64,7 @@ export function fundingQuickSelectModel(state: FundingGateState, exponent = 2): 
   const marginBps = caller?.options.byo?.marginBps ?? caller?.options.ownerResale?.marginBps ?? 0;
   return {
     visible,
-    blocking: state.phase === 'open' || state.phase === 'switch' || state.phase === 'denied',
+    blocking: state.phase === 'open' || state.phase === 'switch' || state.phase === 'denied' || state.phase === 'login_required',
     meter,
     showByo,
     showResale,

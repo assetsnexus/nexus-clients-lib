@@ -120,6 +120,7 @@ import ActivePhoneChip from './voice/ActivePhoneChip.vue';
 import CallModeChooserModal from './voice/CallModeChooserModal.vue';
 import DialInInstructions from './voice/DialInInstructions.vue';
 import FundingQuickSelect from './panel/FundingQuickSelect.vue';
+import GuestContinue from './panel/GuestContinue.vue';
 
 export {
   NexusChatPanel,
@@ -139,6 +140,7 @@ export {
   CallModeChooserModal,
   DialInInstructions,
   FundingQuickSelect,
+  GuestContinue,
 }
 export {
   MAX_ROOM_ORCHESTRATION_RULES,

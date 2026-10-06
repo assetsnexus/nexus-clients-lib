@@ -38,6 +38,8 @@ export { CheckBackCard } from './components/grants/CheckBackCard.js';
 
 export { FundingQuickSelect } from './components/FundingQuickSelect.js';
 export type { FundingQuickSelectProps } from './components/FundingQuickSelect.js';
+export { GuestContinue } from './components/GuestContinue.js';
+export type { GuestContinueProps } from './components/GuestContinue.js';
 export { ModelPicker } from './components/ModelPicker.js';
 export type { ModelPickerProps } from './components/ModelPicker.js';
 export { loadPickerModels, buildModelOverride, mergePickerModels } from './models/loadPickerModels.js';

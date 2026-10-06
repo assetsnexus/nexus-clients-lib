@@ -17,7 +17,10 @@
     },
     "./style.css": "./dist/style.css"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
     "test": "vitest run",
@@ -25,11 +28,12 @@
   },
   "dependencies": {
     "dompurify": "^3.3.2",
-    "marked": "^15.0.0"
+    "marked": "^15.0.0",
+    "qrcode": "^1.5.4"
   },
   "peerDependencies": {
-    "vue": "^2.7.0",
-    "@nexus/chat-core": "*"
+    "@nexus/chat-core": "*",
+    "vue": "^2.7.0"
   },
   "devDependencies": {
     "@nexus/chat-core": "file:../chat-core",

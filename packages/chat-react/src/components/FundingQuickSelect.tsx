@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import {
   fundingQuickSelectModel,
+  guestContinuePresentation,
   type FundingGateState,
 } from '@nexus/chat-core';
+import { GuestContinue } from './GuestContinue.js';
 
 export type FundingQuickSelectProps = {
   gate: FundingGateState;
@@ -21,10 +23,16 @@ export function FundingQuickSelect({
   onSelectFunding,
   onRenew,
   onByok,
-}: FundingQuickSelectProps) {
+  surface = 'browser',
+}: FundingQuickSelectProps & { surface?: 'browser' | 'kiosk' }) {
   const model = fundingQuickSelectModel(gate, currencyExponent);
   const [passAmount, setPassAmount] = useState('');
-  if (!model.visible && gate.phase !== 'denied') return null;
+  const continuePresentation = guestContinuePresentation({
+    outcome: gate.phase === 'login_required' ? 'login_required' : 'chat',
+    loginUrl: gate.loginUrl,
+    surface,
+  });
+  if (!model.visible && gate.phase !== 'denied' && gate.phase !== 'login_required') return null;
   const resale = gate.decision && gate.decision.mode === 'caller_required' ? gate.decision.options.ownerResale : null;
   return (
     <section className="nexus-funding-quick" role="dialog" aria-label="How this chat is paid">
@@ -72,6 +80,7 @@ export function FundingQuickSelect({
       {model.resalePrices.map((row) => (
         <p key={row.modality} className="nexus-funding-quick__gap">{row.label}</p>
       ))}
+      <GuestContinue presentation={continuePresentation} />
     </section>
   );
 }

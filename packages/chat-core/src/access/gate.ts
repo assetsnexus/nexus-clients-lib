@@ -9,6 +9,7 @@ export function initialFundingGate(): FundingGateState {
     selectedFunding: null,
     switchOffer: null,
     reason: null,
+    loginUrl: null,
   };
 }
 
@@ -65,6 +66,7 @@ export interface TurnFundingFailure {
   code?: string;
   kind?: string;
   message?: string;
+  loginUrl?: string | null;
   switchOffer?: SubscriptionLimitSwitch | null;
 }
 
@@ -83,6 +85,17 @@ function isExpired(failure: TurnFundingFailure): boolean {
  */
 export function applyTurnFailure(state: FundingGateState, failure: TurnFundingFailure): FundingGateState {
   const code = String(failure.code || '').toUpperCase();
+  if (code === 'GUEST_ALLOWANCE_EXHAUSTED' || code === 'GUEST_LOGIN_REQUIRED') {
+    const loginUrl = typeof failure.loginUrl === 'string' && failure.loginUrl.trim() ? failure.loginUrl.trim() : null;
+    return {
+      ...state,
+      phase: 'login_required',
+      loginUrl,
+      grantId: null,
+      switchOffer: null,
+      reason: code,
+    };
+  }
   if (code === 'SUBSCRIPTION_LIMIT_REACHED') {
     const offer = failure.switchOffer;
     if (!offer || offer.alternateFunding === offer.failedFunding) {

@@ -3687,6 +3687,8 @@ export {
   paidModesOffered,
   canSwitchFunding,
 } from './access/gate.js';
+export { guestContinuePresentation } from './access/guest-continue.js';
+export type { GuestContinueInput, GuestContinuePresentation, GuestContinueSurface } from './access/guest-continue.js';
 export { annotateCoverage, coverageByModality, rowCoversModality } from './access/coverage.js';
 export {
   createAgentAccessClient,

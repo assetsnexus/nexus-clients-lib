@@ -69,7 +69,7 @@ export interface SubscriptionLimitSwitch {
   message: string;
 }
 
-export type FundingGatePhase = 'closed' | 'meter' | 'open' | 'switch' | 'denied';
+export type FundingGatePhase = 'closed' | 'meter' | 'open' | 'switch' | 'denied' | 'login_required';
 
 export interface FundingGateState {
   phase: FundingGatePhase;
@@ -81,4 +81,6 @@ export interface FundingGateState {
   selectedFunding: 'byo' | 'owner_resale' | null;
   switchOffer: SubscriptionLimitSwitch | null;
   reason: string | null;
+  /** Set when an anonymous guest must sign in. The link and the QR use this URL. */
+  loginUrl: string | null;
 }

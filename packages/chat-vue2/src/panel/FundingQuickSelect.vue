@@ -11,25 +11,37 @@
       <button v-if="model.showResale" type="button" :disabled="busy" @click="$emit('select-funding', 'owner_resale')">Buy a pass</button>
     </div>
     <p v-for="row in model.resalePrices" :key="row.modality" class="nexus-funding-quick__gap">{{ row.label }}</p>
+    <guest-continue :presentation="continuePresentation" />
   </section>
 </template>
 
 <script>
-import { fundingQuickSelectModel, initialFundingGate } from '@nexus/chat-core';
+import { fundingQuickSelectModel, guestContinuePresentation, initialFundingGate } from '@nexus/chat-core';
+import GuestContinue from './GuestContinue.vue';
 
 export default {
   name: 'FundingQuickSelect',
+  components: { GuestContinue },
   props: {
     gate: { type: Object, default: null },
     currencyExponent: { type: Number, default: 2 },
     busy: { type: Boolean, default: false },
+    surface: { type: String, default: 'browser' },
   },
   computed: {
     model() {
       return fundingQuickSelectModel(this.gate || initialFundingGate(), this.currencyExponent);
     },
+    continuePresentation() {
+      const gate = this.gate || initialFundingGate();
+      return guestContinuePresentation({
+        outcome: gate.phase === 'login_required' ? 'login_required' : 'chat',
+        loginUrl: gate.loginUrl,
+        surface: this.surface === 'kiosk' ? 'kiosk' : 'browser',
+      });
+    },
     visible() {
-      return this.model.visible || (this.gate && this.gate.phase === 'denied');
+      return this.model.visible || (this.gate && (this.gate.phase === 'denied' || this.gate.phase === 'login_required'));
     },
   },
 };
