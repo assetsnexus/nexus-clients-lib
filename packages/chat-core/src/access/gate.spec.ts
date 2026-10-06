@@ -105,6 +105,28 @@ describe('funding gate', () => {
     expect(switched.selectedFunding).toBe('owner_resale');
     expect(switched.activeFunding).toBe('byo');
     expect(switched.phase).toBe('open');
+
+    const fundedOnly = applyTurnFailure(
+      applyAccessDecision(initialFundingGate(), {
+        mode: 'funded',
+        grantId: 'grant-byo',
+        funding: 'byo',
+        remainingMillicents: 1000,
+      }),
+      {
+        code: 'SUBSCRIPTION_LIMIT_REACHED',
+        switchOffer: {
+          code: 'SUBSCRIPTION_LIMIT_REACHED',
+          failedFunding: 'byo',
+          alternateFunding: 'owner_resale',
+          message: 'Buy a pass to continue.',
+        },
+      },
+    );
+    const model = fundingQuickSelectModel(fundedOnly);
+    expect(model.switchMessage).toContain('Buy a pass');
+    expect(model.showResale).toBe(true);
+    expect(model.showByo).toBe(false);
   });
 
   it('denies a subscription limit when the other mode is not offered', () => {

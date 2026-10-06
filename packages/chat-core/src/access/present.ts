@@ -29,8 +29,9 @@ export interface FundingQuickSelectModel {
 export function fundingQuickSelectModel(state: FundingGateState, exponent = 2): FundingQuickSelectModel {
   const decision = state.decision;
   const caller = decision && decision.mode === 'caller_required' ? decision : null;
-  const showByo = Boolean(caller?.options.byo);
-  const showResale = Boolean(caller?.options.ownerResale);
+  const alternate = state.phase === 'switch' ? state.switchOffer?.alternateFunding : null;
+  const showByo = Boolean(caller?.options.byo) || alternate === 'byo';
+  const showResale = Boolean(caller?.options.ownerResale) || alternate === 'owner_resale';
   const visible = state.phase === 'open' || state.phase === 'switch' || state.phase === 'meter';
   let meter: string | null = null;
   if (decision && decision.mode === 'sponsored') {
