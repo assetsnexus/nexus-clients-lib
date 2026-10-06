@@ -34,7 +34,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "prepare": "npm run build",
+    "prepare": "node ../../scripts/git-prepare.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

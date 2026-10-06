@@ -15,6 +15,9 @@ coverage/
 .vitest/
 test-results/
 
+# git-prepare lock (scripts/git-prepare.mjs)
+.sdk-prepare.lock
+
 # Logs & env
 *.log
 npm-debug.log*
