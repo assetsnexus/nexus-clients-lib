@@ -36,6 +36,8 @@ export {
 } from './components/grants/GrantCards.js';
 export { CheckBackCard } from './components/grants/CheckBackCard.js';
 
+export { FundingQuickSelect } from './components/FundingQuickSelect.js';
+export type { FundingQuickSelectProps } from './components/FundingQuickSelect.js';
 export { ModelPicker } from './components/ModelPicker.js';
 export type { ModelPickerProps } from './components/ModelPicker.js';
 export { loadPickerModels, buildModelOverride, mergePickerModels } from './models/loadPickerModels.js';

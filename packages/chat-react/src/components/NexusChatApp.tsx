@@ -25,6 +25,15 @@ import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bri
 import { ContactList } from './ContactList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
+import { FundingQuickSelect } from './FundingQuickSelect.js';
+import {
+  applyAccessDecision,
+  applyTurnFailure,
+  createAgentAccessClient,
+  initialFundingGate,
+  selectFunding,
+  type FundingGateState,
+} from '@nexus/chat-core';
 import { ContactActionSheet } from './ContactActionSheet.js';
 import { VoiceLayout } from './VoiceLayout.js';
 import { RoomsPanel } from './RoomsPanel.js';
@@ -87,6 +96,8 @@ export type NexusChatAppProps = {
   isAdmin?: boolean;
   currentUserId?: string | null;
   identities?: ChatIdentitySession[];
+  /** When set, resolve caller-paid access and show FundingQuickSelect above the composer. */
+  agentTarget?: import('@nexus/chat-core').AgentAccessTarget | null;
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -145,6 +156,7 @@ export function NexusChatApp({
   isAdmin,
   currentUserId,
   identities = [],
+  agentTarget = null,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
@@ -186,6 +198,27 @@ export function NexusChatApp({
   }, [chatProp, createOptions, features]);
 
   const client = clientProp || createOptions?.client;
+  const [fundingGate, setFundingGate] = useState<FundingGateState>(initialFundingGate());
+  useEffect(() => {
+    if (!client || !agentTarget) return;
+    let cancelled = false;
+    const access = createAgentAccessClient(client);
+    void access.resolve(agentTarget).then((outcome) => {
+      if (!cancelled) setFundingGate((prev) => applyAccessDecision(prev, outcome.data));
+    }).catch((error: unknown) => {
+      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: string }).code) : '';
+      const status = error && typeof error === 'object' && 'httpStatus' in error ? Number((error as { httpStatus?: number }).httpStatus) : undefined;
+      const switchOffer = error && typeof error === 'object' && 'switchOffer' in error
+        ? (error as { switchOffer?: FundingGateState['switchOffer'] }).switchOffer
+        : null;
+      if (!cancelled) {
+        setFundingGate((prev) => applyTurnFailure(prev, { httpStatus: status, code, switchOffer }));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, agentTarget]);
 
   const { state, panel } = useChatPanel(chat);
   const [sidebarTab, setSidebarTab] = useState<'contacts' | 'rooms'>('contacts');
@@ -812,6 +845,12 @@ export function NexusChatApp({
                 onCloseTab={closeViewerTab}
               />
             </div>
+            {showComposer && agentTarget ? (
+              <FundingQuickSelect
+                gate={fundingGate}
+                onSelectFunding={(funding) => setFundingGate((prev) => selectFunding(prev, funding))}
+              />
+            ) : null}
             {showComposer ? (
               <Composer
                 chat={chat}

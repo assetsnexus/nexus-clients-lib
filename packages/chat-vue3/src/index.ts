@@ -152,6 +152,8 @@ export function realtimeCallPanelProps(surface: {
   };
 }
 
+export { default as FundingQuickSelect } from './panel/FundingQuickSelect.vue';
+
 export function activePhoneChipProps(surface: {
   status?: string;
   elapsedSec?: number;

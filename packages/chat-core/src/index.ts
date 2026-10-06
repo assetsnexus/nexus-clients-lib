@@ -3679,6 +3679,33 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   return controller;
 }
 
+export {
+  applyAccessDecision,
+  applyTurnFailure,
+  initialFundingGate,
+  selectFunding,
+  paidModesOffered,
+  canSwitchFunding,
+} from './access/gate.js';
+export { annotateCoverage, coverageByModality, rowCoversModality } from './access/coverage.js';
+export {
+  createAgentAccessClient,
+  unwrapCommand,
+  AgentAccessCommandError,
+} from './access/commands.js';
+export type { AgentAccessClient, AccessCommandClient, CommandOutcome } from './access/commands.js';
+export { formatMillicents, formatMinor, fundingQuickSelectModel } from './access/present.js';
+export type { FundingQuickSelectModel } from './access/present.js';
+export type {
+  AccessDecision,
+  AgentAccessTarget,
+  CoverageRow,
+  FundingGatePhase,
+  FundingGateState,
+  SubscriptionLimitSwitch,
+  FundedModality,
+} from './access/types.js';
+
 export function assertAiDisclosureAlwaysOn(state: ChatState): void {
   if (state.aiDisclosureVisible !== true) {
     throw new Error('AI disclosure must remain visible');
