@@ -1,14 +1,24 @@
 import { createHmac } from 'crypto';
 import { describe, expect, it } from 'vitest';
 import {
+  NEXUS_WEBHOOK_EVENTS,
   createIdempotencyStore,
   dispatchWebhookEvent,
   expressAdapter,
   isAppRolesChanged,
+  isNexusWebhookEvent,
   isNewerVersion,
   verifySignature,
+  type NexusWebhookEvent,
   type NexusWebhookPayload,
 } from './index.js';
+
+type EventsAndPayloadMatch =
+  [NexusWebhookEvent] extends [NexusWebhookPayload['event']]
+    ? [NexusWebhookPayload['event']] extends [NexusWebhookEvent]
+      ? true
+      : never
+    : never;
 
 function fakeRes() {
   const res = { statusCode: 0, body: undefined as unknown };
@@ -109,6 +119,31 @@ describe('verifySignature', () => {
   it('fails closed on missing raw body or header', () => {
     expect(verifySignature('', { 'x-nexus-signature': sign(body, secret) }, secret)).toBe(false);
     expect(verifySignature(body, {}, secret)).toBe(false);
+  });
+});
+
+describe('NEXUS_WEBHOOK_EVENTS', () => {
+  it('lists every documented event, including permission decisions and app roles', () => {
+    const aligned: EventsAndPayloadMatch = true;
+    expect(aligned).toBe(true);
+    const names = Object.values(NEXUS_WEBHOOK_EVENTS);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toEqual([
+      NEXUS_WEBHOOK_EVENTS.grantRevoked,
+      NEXUS_WEBHOOK_EVENTS.grantFieldsChanged,
+      NEXUS_WEBHOOK_EVENTS.notificationAction,
+      NEXUS_WEBHOOK_EVENTS.permissionRequestDecided,
+      NEXUS_WEBHOOK_EVENTS.regulatoryStatusChanged,
+      NEXUS_WEBHOOK_EVENTS.accountErased,
+      NEXUS_WEBHOOK_EVENTS.privacyRequestCreated,
+      NEXUS_WEBHOOK_EVENTS.privacyRequestCancelled,
+      NEXUS_WEBHOOK_EVENTS.appRolesChanged,
+    ]);
+    expect(isNexusWebhookEvent(NEXUS_WEBHOOK_EVENTS.permissionRequestDecided)).toBe(true);
+    expect(isNexusWebhookEvent(NEXUS_WEBHOOK_EVENTS.appRolesChanged)).toBe(true);
+    expect(isNexusWebhookEvent('grant.access_revoked')).toBe(false);
+    expect(isNexusWebhookEvent('app_user.blocked')).toBe(false);
+    expect(isNexusWebhookEvent('app_user.unblocked')).toBe(false);
   });
 });
 

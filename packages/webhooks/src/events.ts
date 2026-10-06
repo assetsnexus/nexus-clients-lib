@@ -90,16 +90,26 @@ export interface AppRolesChangedData {
   app_tenant_org?: string;
 }
 
-export type NexusWebhookEvent =
-  | 'grant.revoked'
-  | 'grant.fields_changed'
-  | 'notification.action'
-  | 'permission_request.decided'
-  | 'regulatory.status_changed'
-  | 'account.erased'
-  | 'privacy_request.created'
-  | 'privacy_request.cancelled'
-  | 'app_roles.changed';
+/** Wire names for every event this package documents. */
+export const NEXUS_WEBHOOK_EVENTS = {
+  grantRevoked: 'grant.revoked',
+  grantFieldsChanged: 'grant.fields_changed',
+  notificationAction: 'notification.action',
+  permissionRequestDecided: 'permission_request.decided',
+  regulatoryStatusChanged: 'regulatory.status_changed',
+  accountErased: 'account.erased',
+  privacyRequestCreated: 'privacy_request.created',
+  privacyRequestCancelled: 'privacy_request.cancelled',
+  appRolesChanged: 'app_roles.changed',
+} as const;
+
+export type NexusWebhookEvent = (typeof NEXUS_WEBHOOK_EVENTS)[keyof typeof NEXUS_WEBHOOK_EVENTS];
+
+const NEXUS_WEBHOOK_EVENT_NAMES: ReadonlySet<string> = new Set(Object.values(NEXUS_WEBHOOK_EVENTS));
+
+export function isNexusWebhookEvent(event: string): event is NexusWebhookEvent {
+  return NEXUS_WEBHOOK_EVENT_NAMES.has(event);
+}
 
 type Envelope<E extends string, D> = {
   eventId: string;
@@ -111,32 +121,32 @@ type Envelope<E extends string, D> = {
 };
 
 export type NexusWebhookPayload =
-  | Envelope<'grant.revoked', GrantRevokedData>
-  | Envelope<'grant.fields_changed', GrantFieldsChangedData>
-  | Envelope<'notification.action', NotificationActionData>
-  | Envelope<'permission_request.decided', PermissionRequestDecidedData>
-  | Envelope<'regulatory.status_changed', RegulatoryStatusChangedData>
-  | Envelope<'account.erased', AccountErasedData>
-  | Envelope<'privacy_request.created', PrivacyRequestCreatedData>
-  | Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData>
-  | Envelope<'app_roles.changed', AppRolesChangedData>;
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.grantRevoked, GrantRevokedData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.grantFieldsChanged, GrantFieldsChangedData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.notificationAction, NotificationActionData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.permissionRequestDecided, PermissionRequestDecidedData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.regulatoryStatusChanged, RegulatoryStatusChangedData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.accountErased, AccountErasedData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.privacyRequestCreated, PrivacyRequestCreatedData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.privacyRequestCancelled, PrivacyRequestCancelledData>
+  | Envelope<typeof NEXUS_WEBHOOK_EVENTS.appRolesChanged, AppRolesChangedData>;
 
 export function isPrivacyRequestCreated(
   payload: NexusWebhookPayload,
-): payload is Envelope<'privacy_request.created', PrivacyRequestCreatedData> {
-  return payload.event === 'privacy_request.created';
+): payload is Envelope<typeof NEXUS_WEBHOOK_EVENTS.privacyRequestCreated, PrivacyRequestCreatedData> {
+  return payload.event === NEXUS_WEBHOOK_EVENTS.privacyRequestCreated;
 }
 
 export function isPrivacyRequestCancelled(
   payload: NexusWebhookPayload,
-): payload is Envelope<'privacy_request.cancelled', PrivacyRequestCancelledData> {
-  return payload.event === 'privacy_request.cancelled';
+): payload is Envelope<typeof NEXUS_WEBHOOK_EVENTS.privacyRequestCancelled, PrivacyRequestCancelledData> {
+  return payload.event === NEXUS_WEBHOOK_EVENTS.privacyRequestCancelled;
 }
 
 export function isAppRolesChanged(
   payload: NexusWebhookPayload,
-): payload is Envelope<'app_roles.changed', AppRolesChangedData> {
-  return payload.event === 'app_roles.changed';
+): payload is Envelope<typeof NEXUS_WEBHOOK_EVENTS.appRolesChanged, AppRolesChangedData> {
+  return payload.event === NEXUS_WEBHOOK_EVENTS.appRolesChanged;
 }
 
 /** True when `incoming` is a newer monotonic `app_roles_v` than `stored`. */
@@ -148,6 +158,6 @@ export function isNewerVersion(stored: number | undefined, incoming: number): bo
 
 export function isAccountErased(
   payload: NexusWebhookPayload,
-): payload is Envelope<'account.erased', AccountErasedData> {
-  return payload.event === 'account.erased';
+): payload is Envelope<typeof NEXUS_WEBHOOK_EVENTS.accountErased, AccountErasedData> {
+  return payload.event === NEXUS_WEBHOOK_EVENTS.accountErased;
 }

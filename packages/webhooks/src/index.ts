@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import type { NexusWebhookPayload } from './events.js';
 
 export {
+  NEXUS_WEBHOOK_EVENTS,
   type AccountErasedData,
   type AppRolesChangedData,
   type GrantFieldsChangedData,
@@ -16,6 +17,7 @@ export {
   type RegulatoryStatusChangedData,
   isAccountErased,
   isAppRolesChanged,
+  isNexusWebhookEvent,
   isNewerVersion,
   isPrivacyRequestCancelled,
   isPrivacyRequestCreated,
