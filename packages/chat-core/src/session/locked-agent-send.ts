@@ -232,6 +232,42 @@ export function guardLockedAgentChannel(input: {
 }
 
 /**
+ * After `anx.communicate.message.send`, a locked client may store the returned
+ * conversation id only when this client already knows it belongs to the locked
+ * agent, or when this send just created that agent's conversation and the
+ * returned id is that new one. Any other id fails closed. An unlocked chat is
+ * unchanged.
+ */
+export function acceptLockedAgentSendConversation(input: {
+  locked: LockedAgent | null;
+  returnedConversationId?: string | null;
+  known: ConversationAgentNote | null;
+  createdConversationId?: string | null;
+}): LockedAgentSendDecision {
+  const returned = clean(input.returnedConversationId);
+  if (!input.locked) return { ok: true, conversationId: returned || undefined };
+  const known =
+    input.known && input.known.conversationId === returned ? input.known : null;
+  const decision = guardLockedAgentChannel({
+    locked: input.locked,
+    conversationId: returned,
+    known,
+  });
+  if (decision.ok && decision.conversationId) return decision;
+  const created = clean(input.createdConversationId);
+  if (
+    returned &&
+    created &&
+    returned === created &&
+    !decision.ok &&
+    decision.code === LOCKED_AGENT_SEND_UNKNOWN
+  ) {
+    return { ok: true, conversationId: returned };
+  }
+  return decision;
+}
+
+/**
  * Resolve a locked send against known conversation records.
  * Opens the locked agent only when the caller did not name a conversation or room.
  */

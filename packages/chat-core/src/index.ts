@@ -105,6 +105,7 @@ import {
 } from './session/locked-agent.js';
 import {
   ConversationAgentIndex,
+  acceptLockedAgentSendConversation,
   conversationAgentNoteFromContact,
   guardLockedAgentChannel,
   resolveLockedAgentSendTarget,
@@ -2773,6 +2774,30 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         };
       },
     ) {
+      const roomId =
+        typeof rehydrateOpts?.roomId === 'string' && rehydrateOpts.roomId.trim()
+          ? rehydrateOpts.roomId.trim()
+          : null;
+      const setsConversation =
+        !!rehydrateOpts &&
+        Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId');
+      const nextConversationId = setsConversation
+        ? typeof rehydrateOpts?.conversationId === 'string' &&
+          rehydrateOpts.conversationId.trim()
+          ? rehydrateOpts.conversationId.trim()
+          : null
+        : null;
+      if (lockedAgent && (roomId || setsConversation)) {
+        const gated = guardLockedChannel({
+          roomId,
+          conversationId: setsConversation ? nextConversationId : undefined,
+          requireKnownConversation: setsConversation,
+        });
+        if (!gated.ok) {
+          logLockedAgentRefusal(gated);
+          return;
+        }
+      }
       // Rebuilt rows carry no raw sub-agent stream: let the next replay refill it.
       subAgentSeq.reset(store.getState().conversationId);
       // Switching the panel to another room: the in-flight send socket belongs
@@ -2832,20 +2857,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         };
       });
       syncMessagesFromTurns(collapseRepeatedToolRows(turns));
-      const roomId =
-        typeof rehydrateOpts?.roomId === 'string' && rehydrateOpts.roomId.trim()
-          ? rehydrateOpts.roomId.trim()
-          : null;
       if (roomId) {
         store.setState({ conversationId: null });
         patchCurrentPanel({ conversationId: null, roomId, roomPurpose: 'room' });
-      } else if (rehydrateOpts && Object.prototype.hasOwnProperty.call(rehydrateOpts, 'conversationId')) {
-        const conversationId =
-          typeof rehydrateOpts.conversationId === 'string' && rehydrateOpts.conversationId.trim()
-            ? rehydrateOpts.conversationId.trim()
-            : null;
-        store.setState({ conversationId });
-        patchCurrentPanel({ conversationId, roomId: null, roomPurpose: 'conversation' });
+      } else if (setsConversation) {
+        store.setState({ conversationId: nextConversationId });
+        patchCurrentPanel({
+          conversationId: nextConversationId,
+          roomId: null,
+          roomPurpose: 'conversation',
+        });
       }
       if (rehydrateOpts?.history) {
         store.setState({
@@ -3024,6 +3045,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         pageFunctionCalls?: string[];
       } = {},
     ): Promise<SendMessageResult> {
+      let createdForLockedAgent: string | null = null;
       let conversationId = sendOpts.conversationId || store.getState().conversationId || undefined;
       const contactId = sendOpts.contactId || store.getState().selectedAgentId || undefined;
       const roomId = sendOpts.roomId;
@@ -3038,7 +3060,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               roomId,
               contact: contactId ? findChatContact(store.getState().contacts, contactId) : null,
               lookup: (id) => agentIndex.get(id),
-              openContact: async (id) => openContact(id),
+              openContact: async (id) => {
+                const opened = await openContact(id);
+                const createdId =
+                  typeof opened?.conversationId === 'string' ? opened.conversationId.trim() : '';
+                if (createdId) createdForLockedAgent = createdId;
+                return opened;
+              },
             });
           }
           if (!gated.ok) {
@@ -3093,6 +3121,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           try {
             const opened = await openContact(contactId);
             conversationId = opened.conversationId || conversationId;
+            if (lockedAgent && opened.conversationId) {
+              const createdId = String(opened.conversationId).trim();
+              if (createdId) createdForLockedAgent = createdId;
+            }
           } catch (openErr) {
             emitSendOutcome(opts.hooks, 'client_preflight');
             store.setState({ streaming: false });
@@ -3305,6 +3337,32 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             }
           }
           mergePanelPatch(panelId, { throttle: null, billingIssue: null });
+        }
+
+        if (
+          lockedAgent &&
+          command === 'anx.communicate.message.send' &&
+          data?.conversationId
+        ) {
+          const returnedId = String(data.conversationId).trim();
+          const adopted = acceptLockedAgentSendConversation({
+            locked: lockedAgent,
+            returnedConversationId: returnedId,
+            known: agentIndex.get(returnedId),
+            createdConversationId: createdForLockedAgent,
+          });
+          if (!adopted.ok) {
+            logLockedAgentRefusal(adopted);
+            store.setState({ streaming: false });
+            patchCurrentPanel({ streaming: false });
+            opts.hooks?.onStreamState?.('error');
+            closeSocket();
+            emitSendOutcome(opts.hooks, 'client_preflight');
+            const message = adopted.message;
+            markUserDeliveryFailed(id, adopted.code, message);
+            opts.hooks?.onError?.(new Error(message));
+            return { ok: false, code: adopted.code, message };
+          }
         }
 
         const linkedConversationId = String(
