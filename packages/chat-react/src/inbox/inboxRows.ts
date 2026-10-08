@@ -8,6 +8,9 @@ export type InboxRow = {
   identityLogo: string | null;
   conversationId: string;
   contactId: string | null;
+  /** Region virtual employee id when the list row included one. */
+  virtualEmployeeId: string | null;
+  agentId: string | null;
   title: string;
   summary: string;
   avatarUrl: string | null;
@@ -87,6 +90,8 @@ export function conversationToRow(
     identityLogo: identity.logo,
     conversationId,
     contactId: textOf(raw, ['contactId', 'agentId', 'peerId']) || null,
+    virtualEmployeeId: textOf(raw, ['virtualEmployeeId', 'anxVeId']) || null,
+    agentId: textOf(raw, ['agentId']) || null,
     title,
     summary: textOf(raw, ['summary', 'lastMessage', 'preview', 'lastText']),
     avatarUrl: textOf(raw, ['avatarUrl', 'photoUrl', 'imageUrl']) || null,
@@ -95,6 +100,18 @@ export function conversationToRow(
     updatedAt: timeOf(raw),
     pinned: Boolean(raw.pinned),
   };
+}
+
+/** Keep inbox rows that belong to the locked virtual employee. */
+export function filterInboxRowsForLockedAgent(rows: InboxRow[], virtualEmployeeId: string): InboxRow[] {
+  const id = virtualEmployeeId.trim();
+  if (!id) return [];
+  return rows.filter((row) => {
+    const keys = [row.virtualEmployeeId, row.agentId, row.contactId]
+      .map((value) => (value || '').trim())
+      .filter(Boolean);
+    return keys.includes(id);
+  });
 }
 
 export function sortInboxRows(rows: InboxRow[]): InboxRow[] {

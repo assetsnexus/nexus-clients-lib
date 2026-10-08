@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createNexusChat,
   findChatContact,
+  parseLockedAgent,
   type ChatHooks,
   type ChatModelOverride,
   type CommandClient,
   type ConversationRow,
   type CreateNexusChatOptions,
+  type LockedAgent,
   type NexusChat,
   filterSttModelsForPicker,
 } from '@nexus/chat-core';
@@ -75,6 +77,7 @@ import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { ConversationInbox } from './ConversationInbox.js';
+import { resolveChatChrome } from '../chrome/chat-chrome.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
 import type { InboxRow } from '../inbox/inboxRows.js';
 import { loadConversationHistory } from '../utils/openContactFlow.js';
@@ -98,6 +101,12 @@ export type NexusChatAppProps = {
   identities?: ChatIdentitySession[];
   /** When set, resolve caller-paid access and show FundingQuickSelect above the composer. */
   agentTarget?: import('@nexus/chat-core').AgentAccessTarget | null;
+  /**
+   * Talk only to this virtual employee. Hides contacts, rooms, new DMs, and
+   * the contact sheet. Forwarded into `createNexusChat` when this component
+   * builds the controller.
+   */
+  lockedAgent?: LockedAgent | null;
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -157,11 +166,25 @@ export function NexusChatApp({
   currentUserId,
   identities = [],
   agentTarget = null,
+  lockedAgent: lockedAgentProp = null,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
   const pendingDraftRef = useRef('');
   const features = useMemo(() => mergeReactFeatures(featuresProp), [featuresProp]);
+  const lockedAgent = useMemo(() => {
+    const requested = lockedAgentProp ?? createOptions?.lockedAgent ?? chatProp?.lockedAgent ?? null;
+    return parseLockedAgent(requested);
+  }, [lockedAgentProp, createOptions, chatProp]);
+  const chrome = useMemo(
+    () =>
+      resolveChatChrome({
+        contacts: features.contacts,
+        groups: features.groups,
+        lockedAgent,
+      }),
+    [features.contacts, features.groups, lockedAgent],
+  );
   const sendQueueRef = useRef(createSendQueue());
   const [, bump] = useState(0);
   const uiHooksRef = useRef<ChatHooks>({});
@@ -194,8 +217,9 @@ export function NexusChatApp({
       ...createOptions,
       hooks,
       features: { ...createOptions.features, ...coreFeaturesFromReact(features) },
+      lockedAgent: lockedAgent ?? createOptions.lockedAgent ?? null,
     });
-  }, [chatProp, createOptions, features]);
+  }, [chatProp, createOptions, features, lockedAgent]);
 
   const client = clientProp || createOptions?.client;
   const [fundingGate, setFundingGate] = useState<FundingGateState>(initialFundingGate());
@@ -355,6 +379,7 @@ export function NexusChatApp({
   }, [activeTheme]);
 
   const reloadLists = useCallback(async () => {
+    if (!chrome.showContactsTab) return;
     setListError(null);
     if (identities.length && client) {
       setInboxLoading(true);
@@ -362,6 +387,7 @@ export function NexusChatApp({
         const loaded = await loadIdentityInbox({
           identities,
           hiddenKeys: hiddenIdentityKeys,
+          lockedAgent,
           send: sendWithClient(client as CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void }),
         });
         setInboxRows(loaded.rows);
@@ -387,11 +413,15 @@ export function NexusChatApp({
       setConversationRows([]);
       setListError(error instanceof Error ? error.message : 'Could not load conversations');
     }
-  }, [chat, client, identities, hiddenIdentityKeys]);
+  }, [chat, chrome.showContactsTab, client, identities, hiddenIdentityKeys, lockedAgent]);
 
   useEffect(() => {
     void reloadLists();
   }, [reloadLists]);
+
+  useEffect(() => {
+    if (!chrome.showContactsTab && chrome.showRoomsTab) setSidebarTab('rooms');
+  }, [chrome.showContactsTab, chrome.showRoomsTab]);
 
   const openInboxRow = useCallback(
     async (row: InboxRow) => {
@@ -546,12 +576,18 @@ export function NexusChatApp({
           if (msg.route === 'scene') setVoiceOpen(true);
         }
         if (msg.type === 'openContact' && msg.contactId) {
+          if (lockedAgent && msg.contactId !== lockedAgent.virtualEmployeeId) return;
           void openContactThread(chat, msg.contactId);
         }
         if (msg.type === 'prefillComposer') {
+          const requested = msg.contactId?.trim();
+          const message =
+            lockedAgent && requested && requested !== lockedAgent.virtualEmployeeId
+              ? { ...msg, contactId: undefined }
+              : msg;
           applyPrefillComposer({
             chat,
-            message: msg,
+            message,
             ensureChatRoute: () => setRoute('chat'),
             applyDraft: applyComposerDraft,
           });
@@ -559,7 +595,7 @@ export function NexusChatApp({
       },
     });
     return () => bridge?.dispose();
-  }, [applyComposerDraft, chat, onPostToHost]);
+  }, [applyComposerDraft, chat, lockedAgent, onPostToHost]);
 
   const openFile = useCallback((file: ViewerFileRef) => {
     const tabId = `${file.id}:${file.name}`;
@@ -645,15 +681,17 @@ export function NexusChatApp({
           <HeaderSlot chat={chat} locale={locale} />
         ) : (
           <>
-            <button
-              type="button"
-              className="nexus-chat__btn"
-              aria-label={listCollapsed ? 'Show conversations' : 'Hide conversations'}
-              aria-expanded={!listCollapsed}
-              onClick={toggleConversationList}
-            >
-              {listCollapsed ? 'Chats' : 'Hide'}
-            </button>
+            {chrome.showSidebar ? (
+              <button
+                type="button"
+                className="nexus-chat__btn"
+                aria-label={listCollapsed ? 'Show conversations' : 'Hide conversations'}
+                aria-expanded={!listCollapsed}
+                onClick={toggleConversationList}
+              >
+                {listCollapsed ? 'Chats' : 'Hide'}
+              </button>
+            ) : null}
             <strong style={{ flex: 1 }}>{contact?.name || 'Nexus Chat'}</strong>
             {contact ? (
               <button
@@ -697,17 +735,19 @@ export function NexusChatApp({
         <AdminRoutes />
       ) : (
         <div className="nexus-chat__shell">
-          {!collapsed && !listCollapsed ? (
+          {chrome.showSidebar && !collapsed && !listCollapsed ? (
             <aside className="nexus-chat__sidebar">
               <div className="nexus-chat__tabs">
-                <button
-                  type="button"
-                  className={`nexus-chat__tab${sidebarTab === 'contacts' ? ' nexus-chat__tab--active' : ''}`}
-                  onClick={() => setSidebarTab('contacts')}
-                >
-                  Contacts
-                </button>
-                {features.groups ? (
+                {chrome.showContactsTab ? (
+                  <button
+                    type="button"
+                    className={`nexus-chat__tab${sidebarTab === 'contacts' ? ' nexus-chat__tab--active' : ''}`}
+                    onClick={() => setSidebarTab('contacts')}
+                  >
+                    Contacts
+                  </button>
+                ) : null}
+                {chrome.showRoomsTab ? (
                   <button
                     type="button"
                     className={`nexus-chat__tab${sidebarTab === 'rooms' ? ' nexus-chat__tab--active' : ''}`}
@@ -717,7 +757,7 @@ export function NexusChatApp({
                   </button>
                 ) : null}
               </div>
-              {sidebarTab === 'contacts' && identities.length ? (
+              {chrome.showContactsTab && sidebarTab !== 'rooms' && identities.length ? (
                 <ConversationInbox
                   identities={identities}
                   hiddenKeys={hiddenIdentityKeys}
@@ -733,7 +773,7 @@ export function NexusChatApp({
                   onOpen={(row) => void openInboxRow(row)}
                   onRetry={() => void reloadLists()}
                 />
-              ) : sidebarTab === 'contacts' ? (
+              ) : chrome.showNewDm && chrome.showContactsTab && sidebarTab !== 'rooms' ? (
                 <>
                   {listError ? (
                     <div className="nexus-chat__banner" role="alert">
@@ -749,12 +789,14 @@ export function NexusChatApp({
                     conversationRows={conversationRows}
                     activeContactId={activeContactId}
                     slots={slots}
-                    onActionSheet={(id) => setSheetContactId(id)}
+                    onActionSheet={
+                      chrome.showContactSheet ? (id) => setSheetContactId(id) : undefined
+                    }
                   />
                 </>
-              ) : (
+              ) : chrome.showRoomsTab ? (
                 <RoomsPanel chat={chat} />
-              )}
+              ) : null}
             </aside>
           ) : null}
 
@@ -880,7 +922,7 @@ export function NexusChatApp({
         </div>
       )}
 
-      {sheetContact ? (
+      {chrome.showContactSheet && sheetContact ? (
         <ContactActionSheet
           contact={sheetContact}
           chat={chat}

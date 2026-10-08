@@ -97,6 +97,13 @@ import {
 } from './attachments.js';
 import { createContactThreadApi, type ContactThreadApi } from './session/contact-thread-api.js';
 import {
+  lockedAgentAllowsContact,
+  lockedAgentContact,
+  parseLockedAgent,
+  rehydrateRowsFromMessages,
+  type LockedAgent,
+} from './session/locked-agent.js';
+import {
   listAvailableChatModels,
   type ModelsAvailableCatalog,
 } from './models/available-models.js';
@@ -237,6 +244,8 @@ export type {
 } from './session/contact-threads.js';
 export { createContactThreadApi } from './session/contact-thread-api.js';
 export type { ContactThreadApi, CommandClientLike } from './session/contact-thread-api.js';
+export { parseLockedAgent, CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID } from './session/locked-agent.js';
+export type { LockedAgent } from './session/locked-agent.js';
 export {
   createVoiceModeState,
   type VoiceLayoutMode,
@@ -391,6 +400,9 @@ export {
   isCheckBackNoPendingError,
   isCheckBackTriggerSettledError,
   buildStorageExplorerUrl,
+  toConsoleStorageExplorerUrl,
+  fileIdFromStorageExplorerUrl,
+  storageConsolePrefix,
   parsePresentFileItem,
   parsePresentFileItems,
   presentFileKind,
@@ -398,6 +410,8 @@ export {
   parseWorkloadMediaImages,
   parseMediaAudioUrl,
   parseMediaWorkloadId,
+  isWorkloadResultApiPath,
+  workloadResultPathsNeedFileUrl,
   parseUserChoiceOptions,
 } from './tools/index.js';
 export type {
@@ -1257,6 +1271,13 @@ export type NexusChat = {
     conversationId?: string;
   }) => Promise<{ ok: boolean; message?: string }>;
   features: ChatFeatures;
+  /** Set when this controller may talk to only one virtual employee. */
+  lockedAgent: LockedAgent | null;
+  /**
+   * Resolves after the locked agent conversation is opened or created.
+   * Null when `lockedAgent` was not set. Rejects if that open fails.
+   */
+  whenLockedAgentReady: Promise<{ conversationId: string; created: boolean } | null>;
   streamResolver: StreamEndpointResolver;
 };
 
@@ -1265,6 +1286,12 @@ export type CreateNexusChatOptions = {
   transport?: ChatTransport;
   agentSource?: AgentSource;
   features?: Partial<ChatFeatures>;
+  /**
+   * Talk only to this virtual employee. Skips the contact directory and rooms,
+   * filters conversation lists to that agent, and opens or creates the thread
+   * on start. Voice, attachments, approvals, and execution modes stay available.
+   */
+  lockedAgent?: LockedAgent | null;
   hooks?: ChatHooks;
   i18n?: Record<string, string>;
   logger?: { debug?: Function; error?: Function; warn?: Function };
@@ -1286,6 +1313,7 @@ export type CreateNexusChatOptions = {
  */
 export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   const features: ChatFeatures = { ...DEFAULT_FEATURES, ...(opts.features || {}) };
+  const lockedAgent = parseLockedAgent(opts.lockedAgent);
   const streamResolver = new StreamEndpointResolver();
   const translate = (key: keyof typeof DEFAULT_I18N) => opts.i18n?.[key] || DEFAULT_I18N[key];
   const store = createStore({
@@ -1448,7 +1476,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     unwrapData,
   });
 
-  const contactThreads = createContactThreadApi({ send: opts.client.send.bind(opts.client) });
+  const contactThreads = createContactThreadApi(
+    { send: opts.client.send.bind(opts.client) },
+    { lockedAgent },
+  );
 
   const log = (msg: string, extra?: Record<string, unknown>) => {
     opts.logger?.debug?.(msg, extra);
@@ -1851,6 +1882,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   };
 
   const openContact = async (contactId: string, openOpts?: { title?: string }) => {
+    if (
+      lockedAgent &&
+      !lockedAgentAllowsContact(lockedAgent, { id: contactId, virtualEmployeeId: contactId })
+    ) {
+      opts.logger?.warn?.('locked_agent_contact_rejected', {
+        virtualEmployeeId: lockedAgent.virtualEmployeeId,
+        contactId,
+      });
+      throw new Error(`Chat is locked to agent ${lockedAgent.virtualEmployeeId}`);
+    }
     const contact = findChatContact(store.getState().contacts, contactId);
     const virtualEmployeeId =
       contact?.type === 'agent' ? contact.virtualEmployeeId || contact.id : undefined;
@@ -1934,10 +1975,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     };
   };
 
+  let whenLockedAgentReady: Promise<{ conversationId: string; created: boolean } | null> =
+    Promise.resolve(null);
+
   const controller: NexusChat = {
     getState: store.getState,
     subscribe: store.subscribe,
     features,
+    lockedAgent,
+    get whenLockedAgentReady() {
+      return whenLockedAgentReady;
+    },
     streamResolver,
     getConversationSummary,
     registerTool(descriptor, handler) {
@@ -1948,6 +1996,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       return listAvailableChatModels(opts.client, input);
     },
     async loadContacts() {
+      if (lockedAgent) {
+        opts.logger?.debug?.('locked_agent_skip_contacts', {
+          virtualEmployeeId: lockedAgent.virtualEmployeeId,
+        });
+        return;
+      }
       if (!features.contacts) return;
 
       const [humanResult, veResult, vePublicResult] = await Promise.all([
@@ -2102,6 +2156,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     streamInit,
     hasLiveStream,
     async listRooms() {
+      if (lockedAgent) {
+        opts.logger?.debug?.('locked_agent_skip_rooms', {
+          virtualEmployeeId: lockedAgent.virtualEmployeeId,
+        });
+        store.setState({ rooms: [] });
+        return [];
+      }
       const result = (await opts.client.send('anx.communicate.rooms.list', {})) as SendResult | unknown;
       if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
         const fail = result as Extract<SendResult, { ok: false }>;
@@ -2166,6 +2227,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       return rooms;
     },
     async createRoom(input) {
+      if (lockedAgent) {
+        opts.logger?.warn?.('locked_agent_room_rejected', {
+          virtualEmployeeId: lockedAgent.virtualEmployeeId,
+        });
+        throw new Error(`Chat is locked to agent ${lockedAgent.virtualEmployeeId}`);
+      }
       const encryptionMode = input.encryptionMode ?? 'server_group_v1';
       const type = input.type ?? 'group';
       const title = typeof input.title === 'string' ? input.title.trim() : '';
@@ -3676,7 +3743,102 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       subAgentObserver.setTarget(conversationId);
     },
   };
+
+  if (lockedAgent) {
+    const contact = lockedAgentContact(lockedAgent);
+    store.setState({
+      contacts: [contact],
+      selectedAgentId: contact.id,
+    });
+    patchCurrentPanel({
+      contactId: contact.id,
+      contactType: 'agent',
+      roomId: null,
+      roomPurpose: 'conversation',
+    });
+    whenLockedAgentReady = ensureLockedAgentConversation(lockedAgent.virtualEmployeeId);
+  }
+
   return controller;
+
+  async function ensureLockedAgentConversation(virtualEmployeeId: string) {
+    const contact = lockedAgentContact({ virtualEmployeeId });
+    opts.logger?.debug?.('locked_agent_open_start', { virtualEmployeeId });
+    try {
+      const opened = await controller.openLatest(contact);
+      const conversationId = opened.conversationId;
+      if (conversationId && !opened.created) {
+        try {
+          const messages = await controller.listMessages(conversationId, { limit: 50 });
+          controller.rehydrateTurns(rehydrateRowsFromMessages(messages), {
+            conversationId,
+            detachStream: true,
+          });
+        } catch (err) {
+          opts.logger?.warn?.('locked_agent_history_failed', {
+            virtualEmployeeId,
+            conversationId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (conversationId) {
+        try {
+          await controller.streamInit({ conversationId, contactId: contact.id });
+        } catch (err) {
+          opts.logger?.warn?.('locked_agent_stream_init_failed', {
+            virtualEmployeeId,
+            conversationId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+        if (streamResolver.getOrderedEndpoints().length > 0) {
+          controller.observeSubAgents({ conversationId });
+          try {
+            await controller.attachLiveGeneration({ conversationId });
+          } catch (err) {
+            opts.logger?.warn?.('locked_agent_live_attach_failed', {
+              virtualEmployeeId,
+              conversationId,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        try {
+          const rows = await controller.listConversations({ status: 'active', limit: 50 });
+          const named = rows.find(
+            (row) => typeof row.agentName === 'string' && String(row.agentName).trim(),
+          );
+          const name = named ? String(named.agentName).trim() : '';
+          if (name) {
+            store.setState({
+              contacts: store.getState().contacts.map((entry) =>
+                entry.id === contact.id ? { ...entry, name } : entry,
+              ),
+            });
+          }
+        } catch (err) {
+          opts.logger?.warn?.('locked_agent_name_failed', {
+            virtualEmployeeId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      opts.logger?.debug?.('locked_agent_open_ready', {
+        virtualEmployeeId,
+        conversationId: conversationId || null,
+        created: opened.created,
+      });
+      return { conversationId, created: opened.created };
+    } catch (err) {
+      opts.logger?.warn?.('locked_agent_open_failed', {
+        virtualEmployeeId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      opts.hooks?.onError?.(err);
+      throw err;
+    }
+  }
 }
 
 export {

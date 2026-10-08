@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { conversationToRow, matchesKindFilter, sortInboxRows, unwrapList } from './inboxRows.js';
+import { conversationToRow, filterInboxRowsForLockedAgent, matchesKindFilter, sortInboxRows, unwrapList } from './inboxRows.js';
+import { loadIdentityInbox } from './loadIdentityInbox.js';
 
 describe('inbox rows', () => {
   it('unwraps nested conversation lists', () => {
@@ -29,5 +30,49 @@ describe('inbox rows', () => {
     expect(matchesKindFilter(group, 'groups')).toBe(true);
     expect(matchesKindFilter(group, 'pinned')).toBe(true);
     expect(matchesKindFilter(human, 'pinned')).toBe(false);
+  });
+
+  it('drops a conversation for a different agent from a locked inbox', async () => {
+    const identity = { key: 'k', label: 'P', logo: null };
+    const mine = conversationToRow(
+      { id: 'c-mine', virtualEmployeeId: 've-locked', title: 'Locked' },
+      identity,
+    )!;
+    const other = conversationToRow(
+      { id: 'c-other', virtualEmployeeId: 've-other', title: 'Other' },
+      identity,
+    )!;
+    expect(filterInboxRowsForLockedAgent([mine, other], 've-locked').map((row) => row.conversationId)).toEqual([
+      'c-mine',
+    ]);
+
+    const loaded = await loadIdentityInbox({
+      identities: [
+        {
+          key: 'u1',
+          label: 'Me',
+          userId: 'user-1',
+          orgId: null,
+          role: null,
+          deviceId: null,
+          token: 'token',
+          avatarUrl: null,
+          orgLogo: null,
+        },
+      ],
+      hiddenKeys: [],
+      lockedAgent: { virtualEmployeeId: 've-locked' },
+      send: async () => ({
+        ok: true,
+        data: {
+          conversations: [
+            { conversationId: 'mine', virtualEmployeeId: 've-locked', title: 'Locked' },
+            { conversationId: 'other', virtualEmployeeId: 've-other', title: 'Other' },
+          ],
+        },
+      }),
+    });
+    expect(loaded.rows.map((row) => row.conversationId)).toEqual(['mine']);
+    expect(loaded.errors).toEqual([]);
   });
 });

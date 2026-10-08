@@ -1,6 +1,12 @@
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import type { CommandClient } from '@nexus/chat-core';
-import { conversationToRow, sortInboxRows, unwrapList, type InboxRow } from './inboxRows.js';
+import {
+  conversationToRow,
+  filterInboxRowsForLockedAgent,
+  sortInboxRows,
+  unwrapList,
+  type InboxRow,
+} from './inboxRows.js';
 
 export type IdentitySend = (identity: ChatIdentitySession, command: string, payload?: Record<string, unknown>) => Promise<unknown>;
 
@@ -17,9 +23,12 @@ export async function loadIdentityInbox(input: {
   identities: ChatIdentitySession[];
   hiddenKeys: string[];
   send: IdentitySend;
+  /** When set, only conversations with this virtual employee are returned. */
+  lockedAgent?: { virtualEmployeeId: string } | null;
 }): Promise<{ rows: InboxRow[]; errors: string[] }> {
   const hidden = new Set(input.hiddenKeys);
   const visible = input.identities.filter((row) => row.token && !hidden.has(row.key));
+  const lockedId = input.lockedAgent?.virtualEmployeeId?.trim() || '';
   const errors: string[] = [];
   const rows: InboxRow[] = [];
 
@@ -37,7 +46,9 @@ export async function loadIdentityInbox(input: {
             label: identity.label,
             logo: identity.orgLogo || identity.avatarUrl,
           });
-          if (row) rows.push(row);
+          if (!row) continue;
+          if (lockedId && !filterInboxRowsForLockedAgent([row], lockedId).length) continue;
+          rows.push(row);
         }
       } catch (error) {
         errors.push(`${identity.label}: ${error instanceof Error ? error.message : 'Could not load conversations'}`);

@@ -6,6 +6,12 @@ import {
   pickLatestOpenConversation,
   type ConversationRow,
 } from './contact-threads.js';
+import {
+  filterConversationsForLockedAgent,
+  lockedAgentAllowsContact,
+  withLockedAgentListFilter,
+  type LockedAgent,
+} from './locked-agent.js';
 
 export type CommandClientLike = {
   send: (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
@@ -42,19 +48,30 @@ function buildConversationCreatePayload(contact: ContactRef, contactId?: string)
 
 async function listConversationRows(
   client: CommandClientLike,
-  opts?: { status?: 'active' | 'archived' | string; limit?: number; contactId?: string },
+  opts?: {
+    status?: 'active' | 'archived' | string;
+    limit?: number;
+    contactId?: string;
+    lockedAgent?: LockedAgent | null;
+  },
 ): Promise<ConversationRow[]> {
   const payload: Record<string, unknown> = {};
   if (opts?.status) payload.status = opts.status;
   if (opts?.limit != null) payload.limit = opts.limit;
   if (opts?.contactId) payload.contactId = opts.contactId;
 
-  const result = await client.send('anx.communicate.conversations.list', payload);
+  const result = await client.send(
+    'anx.communicate.conversations.list',
+    withLockedAgentListFilter(payload, opts?.lockedAgent ?? null),
+  );
   assertCommandOk(result, 'anx.communicate.conversations.list');
   const data = unwrapData(result);
-  if (Array.isArray(data.conversations)) return data.conversations as ConversationRow[];
-  if (Array.isArray(data.items)) return data.items as ConversationRow[];
-  return [];
+  const rows = Array.isArray(data.conversations)
+    ? (data.conversations as ConversationRow[])
+    : Array.isArray(data.items)
+      ? (data.items as ConversationRow[])
+      : [];
+  return filterConversationsForLockedAgent(rows, opts?.lockedAgent ?? null);
 }
 
 async function createConversationForContact(
@@ -80,14 +97,24 @@ async function createConversationForContact(
   return conversationId;
 }
 
-export function createContactThreadApi(client: CommandClientLike) {
+export function createContactThreadApi(
+  client: CommandClientLike,
+  options?: { lockedAgent?: LockedAgent | null },
+) {
+  const lockedAgent = options?.lockedAgent ?? null;
+
+  const assertLockedContact = (contact: ContactRef) => {
+    if (lockedAgentAllowsContact(lockedAgent, contact)) return;
+    throw new Error(`Chat is locked to agent ${lockedAgent?.virtualEmployeeId ?? ''}`);
+  };
+
   return {
     async listConversations(opts?: {
       status?: 'active' | 'archived' | string;
       limit?: number;
       contactId?: string;
     }): Promise<ConversationRow[]> {
-      return listConversationRows(client, opts);
+      return listConversationRows(client, { ...opts, lockedAgent });
     },
 
     async listMessages(
@@ -130,9 +157,11 @@ export function createContactThreadApi(client: CommandClientLike) {
       contact: ContactRef,
       opts?: { title?: string },
     ): Promise<{ conversationId: string; created: boolean; messages?: unknown[] }> {
+      assertLockedContact(contact);
       const rows = await listConversationRows(client, {
         status: 'active',
         contactId: contact.id,
+        lockedAgent,
       });
       const forContact = rows.filter((row) => conversationBelongsToContact(row, contact.id, contact));
       const latest = pickLatestOpenConversation(forContact, contact.id, contact);
@@ -147,6 +176,7 @@ export function createContactThreadApi(client: CommandClientLike) {
       contact: ContactRef,
       currentConversationId?: string | null,
     ): Promise<{ conversationId: string; archivedId: string | null }> {
+      assertLockedContact(contact);
       let archivedId: string | null = null;
       if (currentConversationId) {
         await client.send('anx.communicate.conversations.update', {
@@ -165,7 +195,8 @@ export function createContactThreadApi(client: CommandClientLike) {
       contact: ContactRef,
       opts?: { includeArchived?: boolean },
     ): Promise<ReturnType<typeof historyForContact>> {
-      const rows = await listConversationRows(client, { contactId: contact.id });
+      assertLockedContact(contact);
+      const rows = await listConversationRows(client, { contactId: contact.id, lockedAgent });
       const forContact = rows.filter((row) => conversationBelongsToContact(row, contact.id, contact));
       const filtered =
         opts?.includeArchived === false

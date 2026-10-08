@@ -124,6 +124,7 @@ export {
 export type {
   NexusChat,
   CreateNexusChatOptions,
+  LockedAgent,
   ChatContact,
   ChatTurn,
   ChatFeatures,
