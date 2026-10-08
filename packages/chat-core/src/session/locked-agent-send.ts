@@ -183,6 +183,55 @@ export function decideLockedAgentSend(input: {
 }
 
 /**
+ * Shared lock for send, room send, stream-init, and client-tool resume.
+ * Rooms are refused. A conversation is allowed only when this client already
+ * knows it belongs to the locked virtual employee. Unknown identity fails
+ * closed. An unlocked chat is unchanged.
+ *
+ * `requireKnownConversation` is for stream-init and client-tool resume: with
+ * no conversation they would post and then store a server-chosen id.
+ * sendMessage leaves it unset so the locked agent can still be opened.
+ * `adoptedConversationId` is the id stream-init returned; a different id is
+ * not a known agent and must not be written into the store.
+ */
+export function guardLockedAgentChannel(input: {
+  locked: LockedAgent | null;
+  roomId?: string | null;
+  conversationId?: string | null;
+  known: ConversationAgentNote | null;
+  requireKnownConversation?: boolean;
+  adoptedConversationId?: string | null;
+}): LockedAgentSendDecision {
+  const decision = decideLockedAgentSend({
+    locked: input.locked,
+    roomId: input.roomId,
+    conversationId: input.conversationId,
+    known: input.known,
+  });
+  if (!input.locked) return decision;
+  if (!decision.ok) return decision;
+  const adopted = clean(input.adoptedConversationId);
+  const authorized = decision.conversationId || clean(input.conversationId);
+  if (adopted && adopted !== authorized) {
+    return {
+      ok: false,
+      code: LOCKED_AGENT_SEND_UNKNOWN,
+      message: `${lockedMessage(input.locked)}; the conversation agent is unknown`,
+      conversationId: adopted,
+    };
+  }
+  if (input.requireKnownConversation && !decision.conversationId) {
+    return {
+      ok: false,
+      code: LOCKED_AGENT_SEND_UNKNOWN,
+      message: `${lockedMessage(input.locked)}; the conversation agent is unknown`,
+      conversationId: clean(input.conversationId),
+    };
+  }
+  return decision;
+}
+
+/**
  * Resolve a locked send against known conversation records.
  * Opens the locked agent only when the caller did not name a conversation or room.
  */
@@ -195,7 +244,7 @@ export async function resolveLockedAgentSendTarget(input: {
   lookup: (conversationId: string) => ConversationAgentNote | null;
   openContact?: (contactId: string) => Promise<{ conversationId?: string | null }>;
 }): Promise<LockedAgentSendDecision> {
-  const first = decideLockedAgentSend({
+  const first = guardLockedAgentChannel({
     locked: input.locked,
     roomId: input.roomId,
     conversationId: input.conversationId,
@@ -232,9 +281,10 @@ export async function resolveLockedAgentSendTarget(input: {
   }
   const opened = await input.openContact(contactId);
   const conversationId = clean(opened?.conversationId);
-  return decideLockedAgentSend({
+  return guardLockedAgentChannel({
     locked: input.locked,
     conversationId,
     known: conversationId ? input.lookup(conversationId) : null,
+    requireKnownConversation: true,
   });
 }

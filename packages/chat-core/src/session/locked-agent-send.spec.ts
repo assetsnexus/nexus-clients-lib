@@ -4,6 +4,7 @@ import {
   LOCKED_AGENT_SEND_ROOM,
   LOCKED_AGENT_SEND_UNKNOWN,
   decideLockedAgentSend,
+  guardLockedAgentChannel,
   resolveLockedAgentSendTarget,
   type ConversationAgentNote,
 } from './locked-agent-send.js';
@@ -67,6 +68,75 @@ describe('decideLockedAgentSend', () => {
       known: note({ conversationId: 'mine', agentId: 'agent-sidecar' }),
     });
     expect(sidecar).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_UNKNOWN });
+  });
+});
+
+describe('guardLockedAgentChannel', () => {
+  const known = note({ conversationId: 'mine', virtualEmployeeId: LOCKED });
+
+  it('refuses a room, another agent, and an unknown conversation', () => {
+    expect(
+      guardLockedAgentChannel({
+        locked: { virtualEmployeeId: LOCKED },
+        roomId: 'room-1',
+        conversationId: 'mine',
+        known,
+      }),
+    ).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_ROOM });
+    expect(
+      guardLockedAgentChannel({
+        locked: { virtualEmployeeId: LOCKED },
+        conversationId: 'other',
+        known: note({ conversationId: 'other', virtualEmployeeId: 've-other' }),
+      }),
+    ).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_CONVERSATION });
+    expect(
+      guardLockedAgentChannel({
+        locked: { virtualEmployeeId: LOCKED },
+        conversationId: 'missing',
+        known: null,
+        requireKnownConversation: true,
+      }),
+    ).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_UNKNOWN });
+  });
+
+  it('allows the locked conversation and refuses a server id the client does not know', () => {
+    expect(
+      guardLockedAgentChannel({
+        locked: { virtualEmployeeId: LOCKED },
+        conversationId: 'mine',
+        known,
+        requireKnownConversation: true,
+        adoptedConversationId: 'mine',
+      }),
+    ).toEqual({ ok: true, conversationId: 'mine' });
+    expect(
+      guardLockedAgentChannel({
+        locked: { virtualEmployeeId: LOCKED },
+        conversationId: 'mine',
+        known,
+        requireKnownConversation: true,
+        adoptedConversationId: 'adopted-other',
+      }),
+    ).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_UNKNOWN, conversationId: 'adopted-other' });
+  });
+
+  it('fails closed when a locked stream has no known conversation', () => {
+    expect(
+      guardLockedAgentChannel({
+        locked: { virtualEmployeeId: LOCKED },
+        known: null,
+        requireKnownConversation: true,
+      }),
+    ).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_UNKNOWN });
+    expect(
+      guardLockedAgentChannel({
+        locked: null,
+        roomId: 'room-1',
+        known: null,
+        requireKnownConversation: true,
+      }).ok,
+    ).toBe(true);
   });
 });
 

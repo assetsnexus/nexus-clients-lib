@@ -106,6 +106,7 @@ import {
 import {
   ConversationAgentIndex,
   conversationAgentNoteFromContact,
+  guardLockedAgentChannel,
   resolveLockedAgentSendTarget,
 } from './session/locked-agent-send.js';
 import {
@@ -1279,7 +1280,7 @@ export type NexusChat = {
     callId: string;
     result: unknown;
     conversationId?: string;
-  }) => Promise<{ ok: boolean; message?: string }>;
+  }) => Promise<{ ok: boolean; message?: string; code?: string }>;
   features: ChatFeatures;
   /** Set when this controller may talk to only one virtual employee. */
   lockedAgent: LockedAgent | null;
@@ -1494,6 +1495,35 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       onConversationAgents: (notes) => agentIndex.rememberAll(notes),
     },
   );
+
+  const guardLockedChannel = (input: {
+    roomId?: string | null;
+    conversationId?: string | null;
+    requireKnownConversation?: boolean;
+    adoptedConversationId?: string | null;
+  }) =>
+    guardLockedAgentChannel({
+      locked: lockedAgent,
+      roomId: input.roomId,
+      conversationId: input.conversationId,
+      known: agentIndex.get(input.conversationId),
+      requireKnownConversation: input.requireKnownConversation,
+      adoptedConversationId: input.adoptedConversationId,
+    });
+
+  const logLockedAgentRefusal = (decision: {
+    code: string;
+    conversationId?: string | null;
+    roomId?: string | null;
+  }) => {
+    if (!lockedAgent) return;
+    opts.logger?.warn?.('locked_agent_send_rejected', {
+      code: decision.code,
+      virtualEmployeeId: lockedAgent.virtualEmployeeId,
+      conversationId: decision.conversationId ?? null,
+      hasRoom: Boolean(decision.roomId),
+    });
+  };
 
   const log = (msg: string, extra?: Record<string, unknown>) => {
     opts.logger?.debug?.(msg, extra);
@@ -1864,6 +1894,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     contactId?: string;
     roomId?: string;
   }) => {
+    const gated = guardLockedChannel({
+      roomId: initOpts.roomId,
+      conversationId: initOpts.conversationId,
+      requireKnownConversation: true,
+    });
+    if (!gated.ok) {
+      logLockedAgentRefusal(gated);
+      throw new Error(gated.message);
+    }
     const result = (await opts.client.send('anx.communicate.stream-init', {
       conversationId: initOpts.conversationId,
       contactId: initOpts.contactId,
@@ -1879,6 +1918,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       throw new Error(result.message || 'stream-init failed');
     }
     const payload = unwrapData(result);
+    const resourceId = typeof payload?.resourceId === 'string' ? payload.resourceId : null;
+    const adopted = guardLockedChannel({
+      roomId: initOpts.roomId,
+      conversationId: initOpts.conversationId,
+      requireKnownConversation: true,
+      adoptedConversationId: resourceId,
+    });
+    if (!adopted.ok) {
+      logLockedAgentRefusal(adopted);
+      throw new Error(adopted.message);
+    }
     streamResolver.setFromStreamInit(payload || {});
     // Room streams are keyed by room id. Copying that into conversationId makes
     // billing and context-details look up a conversation that does not exist.
@@ -2495,6 +2545,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       };
     },
     async sendRoomMessage(roomId, text) {
+      const gated = guardLockedChannel({
+        roomId,
+        requireKnownConversation: true,
+      });
+      if (!gated.ok) {
+        logLockedAgentRefusal(gated);
+        return { ok: false, code: gated.code, message: gated.message };
+      }
       const result = await opts.client.send('anx.communicate.rooms.message.send', {
         roomId,
         text,
@@ -2971,22 +3029,20 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const roomId = sendOpts.roomId;
       if (lockedAgent) {
         try {
-          const gated = await resolveLockedAgentSendTarget({
-            locked: lockedAgent,
-            conversationId,
-            contactId,
-            roomId,
-            contact: contactId ? findChatContact(store.getState().contacts, contactId) : null,
-            lookup: (id) => agentIndex.get(id),
-            openContact: async (id) => openContact(id),
-          });
-          if (!gated.ok) {
-            opts.logger?.warn?.('locked_agent_send_rejected', {
-              code: gated.code,
-              virtualEmployeeId: lockedAgent.virtualEmployeeId,
-              conversationId: gated.conversationId || null,
-              hasRoom: Boolean(String(roomId || '').trim()),
+          let gated = guardLockedChannel({ roomId, conversationId });
+          if (gated.ok && !gated.conversationId) {
+            gated = await resolveLockedAgentSendTarget({
+              locked: lockedAgent,
+              conversationId,
+              contactId,
+              roomId,
+              contact: contactId ? findChatContact(store.getState().contacts, contactId) : null,
+              lookup: (id) => agentIndex.get(id),
+              openContact: async (id) => openContact(id),
             });
+          }
+          if (!gated.ok) {
+            logLockedAgentRefusal(gated);
             emitSendOutcome(opts.hooks, 'client_preflight');
             opts.hooks?.onError?.(new Error(gated.message));
             return { ok: false, code: gated.code, message: gated.message };
@@ -3560,6 +3616,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       }
       const callId = String(resumeOpts.callId || '').trim();
       if (!callId) return { ok: false, message: 'callId required' };
+      const gated = guardLockedChannel({
+        conversationId,
+        requireKnownConversation: true,
+      });
+      if (!gated.ok) {
+        logLockedAgentRefusal(gated);
+        return { ok: false, code: gated.code, message: gated.message };
+      }
 
       const panel = currentPanel(store.getState());
       const panelId = panel?.id;

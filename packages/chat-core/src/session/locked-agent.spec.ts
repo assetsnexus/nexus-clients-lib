@@ -184,11 +184,113 @@ describe('createNexusChat lockedAgent', () => {
       text: 'room ping',
     });
   });
+
+  it('refuses room send, foreign resume, and foreign stream-init, and still opens the locked agent', async () => {
+    const body = 'do-not-log-this-body';
+    const { chat, sent, logs } = sendHarness({ locked: true });
+    await chat.whenLockedAgentReady;
+    const conversationBefore = chat.getState().conversationId;
+    expect(conversationBefore).toBe('mine');
+
+    const beforeRoom = sent.length;
+    const room = await chat.sendRoomMessage('room-9', body);
+    expect(room).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_ROOM });
+    expect(sent.slice(beforeRoom).some((entry) => entry.command === 'anx.communicate.rooms.message.send')).toBe(false);
+
+    const turnsBefore = chat.getState().turns.map((turn) => turn.id);
+    const beforeResume = sent.length;
+    const otherResume = await chat.resumeClientTool({
+      callId: 'call-other',
+      conversationId: 'other',
+      result: { secret: body },
+    });
+    expect(otherResume).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_CONVERSATION });
+    const unknownResume = await chat.resumeClientTool({
+      callId: 'call-unknown',
+      conversationId: 'never-listed',
+      result: { secret: body },
+    });
+    expect(unknownResume).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_UNKNOWN });
+    expect(
+      sent.slice(beforeResume).some(
+        (entry) =>
+          entry.command === 'anx.communicate.client-tool.result' ||
+          entry.command === 'anx.communicate.stream-init',
+      ),
+    ).toBe(false);
+    expect(chat.getState().turns.map((turn) => turn.id)).toEqual(turnsBefore);
+    expect(chat.getState().streaming).toBe(false);
+
+    const beforeStream = sent.length;
+    await expect(chat.streamInit({ roomId: 'room-9' })).rejects.toThrow(/cannot post to a room/);
+    await expect(chat.streamInit({ conversationId: 'other' })).rejects.toThrow(
+      /^Chat is locked to agent ve-locked$/,
+    );
+    await expect(chat.streamInit({ conversationId: 'never-listed' })).rejects.toThrow(/unknown/);
+    await expect(chat.streamInit({ contactId: 've-other' })).rejects.toThrow(/unknown/);
+    expect(sent.slice(beforeStream).some((entry) => entry.command === 'anx.communicate.stream-init')).toBe(false);
+    expect(chat.getState().conversationId).toBe('mine');
+
+    const allowedStream = sent.length;
+    await chat.streamInit({ conversationId: 'mine', contactId: LOCKED });
+    expect(sent.slice(allowedStream).some((entry) => entry.command === 'anx.communicate.stream-init' && entry.payload?.conversationId === 'mine')).toBe(true);
+    expect(chat.getState().conversationId).toBe('mine');
+
+    const allowedResume = sent.length;
+    const resumed = await chat.resumeClientTool({
+      callId: 'call-mine',
+      conversationId: 'mine',
+      result: { status: 'done' },
+    });
+    expect(resumed.ok).toBe(true);
+    expect(sent.slice(allowedResume).some((entry) => entry.command === 'anx.communicate.client-tool.result' && entry.payload?.conversationId === 'mine')).toBe(true);
+    expect(sent.slice(allowedResume).some((entry) => entry.command === 'anx.communicate.stream-init' && entry.payload?.conversationId === 'mine')).toBe(true);
+
+    expect(JSON.stringify(logs)).not.toContain(body);
+    expect(sent.some((entry) => JSON.stringify(entry.payload || {}).includes(body))).toBe(false);
+  });
+
+  it('does not store a stream-init conversation id outside the locked agent', async () => {
+    let hijackResource = false;
+    const { chat, sent } = sendHarness({
+      locked: true,
+      streamResourceId: () => (hijackResource ? 'adopted-other' : null),
+    });
+    await chat.whenLockedAgentReady;
+    expect(chat.getState().conversationId).toBe('mine');
+    hijackResource = true;
+    const before = sent.length;
+    await expect(chat.streamInit({ conversationId: 'mine' })).rejects.toThrow(/unknown/);
+    expect(sent.slice(before).some((entry) => entry.command === 'anx.communicate.stream-init' && entry.payload?.conversationId === 'mine')).toBe(true);
+    expect(chat.getState().conversationId).toBe('mine');
+    expect(JSON.stringify(chat.getState())).not.toContain('adopted-other');
+  });
+
+  it('still sends a room message when the chat is unlocked', async () => {
+    const { chat, sent } = sendHarness({ locked: false });
+    const room = await chat.sendRoomMessage('room-9', 'room ping');
+    expect(room).toMatchObject({ ok: true });
+    expect(sent.find((entry) => entry.command === 'anx.communicate.rooms.message.send')?.payload).toMatchObject({
+      roomId: 'room-9',
+      text: 'room ping',
+    });
+    await chat.streamInit({ roomId: 'room-9' });
+    await chat.streamInit({ conversationId: 'never-listed' });
+    expect(chat.getState().conversationId).toBe('never-listed');
+    const resumed = await chat.resumeClientTool({
+      callId: 'call-1',
+      conversationId: 'never-listed',
+      result: { status: 'done' },
+    });
+    expect(resumed.ok).toBe(true);
+  });
 });
 
 function sendHarness(input: {
   locked: boolean;
   conversations?: ReturnType<typeof conversations>;
+  /** When set, replaces the stream-init resource id. Null keeps the requested id. */
+  streamResourceId?: () => string | null;
 }) {
   const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
   const logs: Array<{ event: string; extra?: unknown }> = [];
@@ -211,9 +313,13 @@ function sendHarness(input: {
           return { ok: true, data: { conversationId: 'created-1', agentId: 'agent-sidecar' } };
         }
         if (command === 'anx.communicate.stream-init') {
+          const override = input.streamResourceId?.() || null;
           return {
             ok: true,
-            data: { resourceId: payload?.conversationId || payload?.roomId || 'mine', endpoints: [] },
+            data: {
+              resourceId: override || payload?.conversationId || payload?.roomId || 'mine',
+              endpoints: [],
+            },
           };
         }
         if (
