@@ -3339,11 +3339,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           mergePanelPatch(panelId, { throttle: null, billingIssue: null });
         }
 
-        if (
-          lockedAgent &&
-          command === 'anx.communicate.message.send' &&
-          data?.conversationId
-        ) {
+        if (lockedAgent && data?.conversationId) {
           const returnedId = String(data.conversationId).trim();
           const adopted = acceptLockedAgentSendConversation({
             locked: lockedAgent,

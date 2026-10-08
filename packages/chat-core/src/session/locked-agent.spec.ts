@@ -321,6 +321,80 @@ describe('createNexusChat lockedAgent', () => {
     expect(panelOf(chat).conversationId).toBe('mine');
   });
 
+  it('does not adopt a conversation id returned by a raw-model send while locked', async () => {
+    const { chat, sent } = sendHarness({
+      locked: true,
+      agentSource: 'raw_models',
+      messageSendConversationId: () => 'adopted-other',
+    });
+    await chat.whenLockedAgentReady;
+    expect(chat.getState().conversationId).toBe('mine');
+    const before = sent.length;
+    const hijack = await chat.sendMessage('hello locked', {
+      conversationId: 'mine',
+      attachments: [
+        {
+          kind: 'entity',
+          entityType: 'conversation_attachment',
+          ref: 'file-foreign',
+          mimeType: 'image/png',
+          filename: 'shot.png',
+        },
+      ],
+    });
+    expect(hijack).toMatchObject({ ok: false, code: LOCKED_AGENT_SEND_UNKNOWN });
+    expect(
+      sent.slice(before).some(
+        (entry) =>
+          entry.command === 'anx.inference.chat.completions' &&
+          entry.payload?.conversationId === 'mine',
+      ),
+    ).toBe(true);
+    expect(
+      sent.slice(before).some((entry) => entry.command === 'anx.workspace.items.add'),
+    ).toBe(false);
+    expect(chat.getState().conversationId).toBe('mine');
+    expect(panelOf(chat)).toMatchObject({
+      conversationId: 'mine',
+      roomId: null,
+      roomPurpose: 'conversation',
+    });
+    expect(JSON.stringify(chat.getState())).not.toContain('adopted-other');
+  });
+
+  it('still stores a raw-model conversation id and links attachments when unlocked', async () => {
+    const { chat, sent } = sendHarness({
+      locked: false,
+      agentSource: 'raw_models',
+      messageSendConversationId: () => 'server-new',
+    });
+    const direct = await chat.sendMessage('ping', {
+      conversationId: 'other',
+      attachments: [
+        {
+          kind: 'entity',
+          entityType: 'conversation_attachment',
+          ref: 'file-1',
+          mimeType: 'image/png',
+        },
+      ],
+    });
+    expect(direct.ok).toBe(true);
+    expect(
+      sent.some((entry) => entry.command === 'anx.inference.chat.completions'),
+    ).toBe(true);
+    expect(chat.getState().conversationId).toBe('server-new');
+    expect(panelOf(chat).conversationId).toBe('server-new');
+    expect(
+      sent.some(
+        (entry) =>
+          entry.command === 'anx.workspace.items.add' &&
+          entry.payload?.conversationId === 'server-new' &&
+          entry.payload?.fileId === 'file-1',
+      ),
+    ).toBe(true);
+  });
+
   it('adopts a returned conversation id already known to belong to the locked agent', async () => {
     const { chat } = sendHarness({
       locked: true,
@@ -510,12 +584,14 @@ function sendHarness(input: {
   /** When set, replaces the conversation id returned by message.send. */
   messageSendConversationId?: () => string | null;
   messageReplyText?: () => string;
+  agentSource?: 'raw_models';
 }) {
   const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
   const logs: Array<{ event: string; extra?: unknown }> = [];
   const rows = input.conversations || conversations();
   const chat = createNexusChat({
     ...(input.locked ? { lockedAgent: { virtualEmployeeId: LOCKED } } : {}),
+    ...(input.agentSource ? { agentSource: input.agentSource } : {}),
     replyPoll: { intervalMs: 0, maxAttempts: 1 },
     logger: {
       warn: (event: string, extra?: unknown) => {
@@ -543,7 +619,8 @@ function sendHarness(input: {
         }
         if (
           command === 'anx.communicate.message.send' ||
-          command === 'anx.communicate.rooms.message.send'
+          command === 'anx.communicate.rooms.message.send' ||
+          command === 'anx.inference.chat.completions'
         ) {
           const override = input.messageSendConversationId?.() ?? null;
           return {

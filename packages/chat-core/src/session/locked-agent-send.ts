@@ -232,11 +232,11 @@ export function guardLockedAgentChannel(input: {
 }
 
 /**
- * After `anx.communicate.message.send`, a locked client may store the returned
- * conversation id only when this client already knows it belongs to the locked
- * agent, or when this send just created that agent's conversation and the
- * returned id is that new one. Any other id fails closed. An unlocked chat is
- * unchanged.
+ * After a locked send — `message.send`, raw-model completions, or any other
+ * command on that path — the client may store the returned conversation id
+ * only when this client already knows it belongs to the locked agent, or when
+ * this send just created that agent's conversation and the returned id is that
+ * new one. Any other id fails closed. An unlocked chat is unchanged.
  */
 export function acceptLockedAgentSendConversation(input: {
   locked: LockedAgent | null;
