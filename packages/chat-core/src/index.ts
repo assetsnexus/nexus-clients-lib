@@ -104,6 +104,11 @@ import {
   type LockedAgent,
 } from './session/locked-agent.js';
 import {
+  ConversationAgentIndex,
+  conversationAgentNoteFromContact,
+  resolveLockedAgentSendTarget,
+} from './session/locked-agent-send.js';
+import {
   listAvailableChatModels,
   type ModelsAvailableCatalog,
 } from './models/available-models.js';
@@ -246,6 +251,11 @@ export { createContactThreadApi } from './session/contact-thread-api.js';
 export type { ContactThreadApi, CommandClientLike } from './session/contact-thread-api.js';
 export { parseLockedAgent, CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID } from './session/locked-agent.js';
 export type { LockedAgent } from './session/locked-agent.js';
+export {
+  LOCKED_AGENT_SEND_ROOM,
+  LOCKED_AGENT_SEND_CONVERSATION,
+  LOCKED_AGENT_SEND_UNKNOWN,
+} from './session/locked-agent-send.js';
 export {
   createVoiceModeState,
   type VoiceLayoutMode,
@@ -1476,9 +1486,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     unwrapData,
   });
 
+  const agentIndex = new ConversationAgentIndex();
   const contactThreads = createContactThreadApi(
     { send: opts.client.send.bind(opts.client) },
-    { lockedAgent },
+    {
+      lockedAgent,
+      onConversationAgents: (notes) => agentIndex.rememberAll(notes),
+    },
   );
 
   const log = (msg: string, extra?: Record<string, unknown>) => {
@@ -1930,6 +1944,18 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       }
     }
     const canonicalId = contact?.id || contactId;
+    if (conversationId) {
+      agentIndex.remember(
+        conversationAgentNoteFromContact(conversationId, {
+          id: canonicalId,
+          type: contact?.type || 'agent',
+          virtualEmployeeId:
+            contact?.virtualEmployeeId ||
+            (contact?.type === 'agent' || !contact ? canonicalId : null),
+          agentId: resolvedAgentId || contact?.agentId,
+        }),
+      );
+    }
     store.setState({
       conversationId: conversationId || store.getState().conversationId,
       selectedAgentId: canonicalId,
@@ -2940,6 +2966,41 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         pageFunctionCalls?: string[];
       } = {},
     ): Promise<SendMessageResult> {
+      let conversationId = sendOpts.conversationId || store.getState().conversationId || undefined;
+      const contactId = sendOpts.contactId || store.getState().selectedAgentId || undefined;
+      const roomId = sendOpts.roomId;
+      if (lockedAgent) {
+        try {
+          const gated = await resolveLockedAgentSendTarget({
+            locked: lockedAgent,
+            conversationId,
+            contactId,
+            roomId,
+            contact: contactId ? findChatContact(store.getState().contacts, contactId) : null,
+            lookup: (id) => agentIndex.get(id),
+            openContact: async (id) => openContact(id),
+          });
+          if (!gated.ok) {
+            opts.logger?.warn?.('locked_agent_send_rejected', {
+              code: gated.code,
+              virtualEmployeeId: lockedAgent.virtualEmployeeId,
+              conversationId: gated.conversationId || null,
+              hasRoom: Boolean(String(roomId || '').trim()),
+            });
+            emitSendOutcome(opts.hooks, 'client_preflight');
+            opts.hooks?.onError?.(new Error(gated.message));
+            return { ok: false, code: gated.code, message: gated.message };
+          }
+          conversationId = gated.conversationId || conversationId;
+        } catch (openErr) {
+          emitSendOutcome(opts.hooks, 'client_preflight');
+          const message =
+            openErr instanceof Error ? openErr.message : 'Could not open agent conversation';
+          opts.hooks?.onError?.(openErr);
+          return { ok: false, code: 'client_preflight', message };
+        }
+      }
+
       const id = `m_${Date.now()}`;
       const prevTurns = store.getState().turns;
       const nowIso = new Date().toISOString();
@@ -2959,9 +3020,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       patchCurrentPanel({ streaming: true, billingIssue: null });
       opts.hooks?.onStreamState?.('streaming');
 
-      let conversationId = sendOpts.conversationId || store.getState().conversationId || undefined;
-      const contactId = sendOpts.contactId || store.getState().selectedAgentId || undefined;
-      const roomId = sendOpts.roomId;
       const panel = currentPanel(store.getState());
       const panelId = panel?.id;
       const selectedContact = contactId
