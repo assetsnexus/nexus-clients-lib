@@ -133,6 +133,7 @@ import {
   listAvailableChatModels,
   type ModelsAvailableCatalog,
 } from './models/available-models.js';
+import { discardableUnsentTurnIds } from './outgoing/unsent-turns.js';
 
 
 export type {
@@ -292,6 +293,30 @@ export type {
   FallbackChatCompletion,
   FallbackChatCard,
 } from './fallback/fallback-transport.js';
+export {
+  sessionListPresence,
+  isUnreachableLabel,
+  isGrantFailureCode,
+  unreachableLabelVisible,
+  reduceReachLatch,
+  outgoingQueueBannerText,
+  shouldAutoFlushOutgoing,
+  shouldHoldOutgoingForNexus,
+  sessionErrorAfterFailure,
+} from './outgoing/agent-reachability.js';
+export type { SessionListPresence } from './outgoing/agent-reachability.js';
+export { createOutgoingSendQueue, outgoingThreadKey } from './outgoing/outgoing-queue.js';
+export type { OutgoingQueuedMessage, OutgoingSendQueue, OutgoingHold } from './outgoing/outgoing-queue.js';
+export { flushOutgoingMessages } from './outgoing/flush-outgoing.js';
+export type { OutgoingFlushSendResult } from './outgoing/flush-outgoing.js';
+export {
+  createOutgoingQueueMetrics,
+  OUTGOING_QUEUE_METRIC,
+  OUTGOING_QUEUE_OUTCOMES,
+} from './outgoing/outgoing-queue.metrics.js';
+export type { OutgoingQueueMetrics, OutgoingQueueOutcome } from './outgoing/outgoing-queue.metrics.js';
+export { isRetryableOutgoingFailure } from './outgoing/outgoing-failure.js';
+export { isDiscardableUnsentUserTurn, discardableUnsentTurnIds, latestUnsentUserTurnId } from './outgoing/unsent-turns.js';
 export type { LockedAgent } from './session/locked-agent.js';
 export {
   LOCKED_AGENT_SEND_ROOM,
@@ -949,7 +974,7 @@ export type AiDispatchSummary = {
 
 export type SendMessageResult =
   | { ok: true; aiDispatch?: AiDispatchSummary | null; dispatched?: boolean; transport?: 'fallback' }
-  | { ok: false; code: string; message: string; kind?: string };
+  | { ok: false; code: string; message: string; kind?: string; localTurnId?: string };
 
 function readAiDispatch(data: Record<string, unknown>): AiDispatchSummary | null {
   const raw = data.aiDispatch;
@@ -1046,6 +1071,11 @@ export type NexusChat = {
         };
       }>;
       pageFunctionCalls?: string[];
+      /**
+       * Send on the Nexus command path even when the host fallback flag is set.
+       * Used when the session list would show the agent online.
+       */
+      bypassFallback?: boolean;
     },
   ) => Promise<SendMessageResult>;
   /** Compact conversation context via anx.communicate.conversations.compact. */
@@ -1101,6 +1131,11 @@ export type NexusChat = {
   streamInit: (opts: { conversationId?: string; contactId?: string; roomId?: string }) => Promise<void>;
   /** True while this controller holds an open/connecting conversation WebSocket. */
   hasLiveStream: () => boolean;
+  /**
+   * Remove local optimistic user rows that never reached the server.
+   * Sent rows and server history (no deliveryStatus) are left in place.
+   */
+  discardLocalUnsentTurns: (turnIds: string[]) => string[];
   listRooms: () => Promise<ChatRoomSummary[]>;
   createRoom: (input: {
     title?: string;
@@ -2362,6 +2397,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     history: contactThreads.history.bind(contactThreads),
     streamInit,
     hasLiveStream,
+    discardLocalUnsentTurns(turnIds: string[]) {
+      const current = store.getState().turns;
+      const remove = new Set(discardableUnsentTurnIds(current, Array.isArray(turnIds) ? turnIds : []));
+      if (!remove.size) return [];
+      syncMessagesFromTurns(current.filter((turn) => !remove.has(turn.id)));
+      opts.logger?.warn?.('outgoing_unsent_turns_discarded', { count: remove.size });
+      return [...remove];
+    },
     async listRooms() {
       if (lockedAgent) {
         opts.logger?.debug?.('locked_agent_skip_rooms', {
@@ -3178,9 +3221,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           };
         }>;
         pageFunctionCalls?: string[];
+        bypassFallback?: boolean;
       } = {},
     ): Promise<SendMessageResult> {
-      if (fallbackTransportSelected(opts.fallbackTransport)) {
+      if (!sendOpts.bypassFallback && fallbackTransportSelected(opts.fallbackTransport)) {
         return sendWithFallback(text);
       }
       let createdForLockedAgent: string | null = null;

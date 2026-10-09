@@ -376,6 +376,14 @@
   gap: 8px;
 }
 
+.nexus-chat__queue-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .nexus-chat--collapsed {
   max-height: 56px;
   overflow: hidden;

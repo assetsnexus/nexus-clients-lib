@@ -57,6 +57,27 @@ describe('fallback transport selection', () => {
     expect(sent).toContain('anx.communicate.message.send');
   });
 
+  it('uses the Nexus command path when the caller bypasses a sticky unavailable flag', async () => {
+    const complete = vi.fn(async () => ({ choices: [{ message: { content: 'chi' } }] }));
+    const sent: string[] = [];
+    const chat = createNexusChat({
+      fallbackTransport: { nexusUnavailable: () => true, complete },
+      replyPoll: { intervalMs: 1, maxAttempts: 1 },
+      client: {
+        send: async (command: string) => {
+          sent.push(command);
+          if (command === 'anx.communicate.stream-init') return { ok: true, data: { endpoints: [] } };
+          return { ok: true, data: { text: 'nexus' } };
+        },
+      },
+    });
+    const result = await chat.sendMessage('hello nexus', { conversationId: 'conv-1', bypassFallback: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.transport).not.toBe('fallback');
+    expect(complete).not.toHaveBeenCalled();
+    expect(sent).toContain('anx.communicate.message.send');
+  });
+
   it('reads a live host flag and ignores a transport that is not selected', () => {
     let unavailable = false;
     const transport: FallbackChatTransport = {

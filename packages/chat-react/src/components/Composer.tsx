@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatContact, ChatModelOverride, IoDescriptor, NexusChat } from '@nexus/chat-core';
+import type { ChatContact, ChatModelOverride, IoDescriptor, NexusChat, OutgoingSendQueue } from '@nexus/chat-core';
+import { isRetryableOutgoingFailure, latestUnsentUserTurnId } from '@nexus/chat-core';
 import { parseMentions, transcribeOrNull, uploadOptsForChatFileDestination } from '@nexus/chat-core';
 import type { ChatSlots } from '../slots.js';
 import { appendComposerDraft } from '../utils/composerDraft.js';
-import type { SendQueue } from '../utils/sendQueue.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { DictationMethod } from '../dictation/dictationPlan.js';
 import { holdReleaseAction, pointerLeftTarget } from '../dictation/dictationPlan.js';
@@ -24,8 +24,20 @@ export type ComposerProps = {
   contactId?: string | null;
   streaming?: boolean;
   slots?: ChatSlots;
-  sendQueue: SendQueue;
+  sendQueue: OutgoingSendQueue;
+  threadKey: string;
+  /** Queued copy for this thread. Empty hides the bar. */
+  queueBannerText?: string;
+  queueCount?: number;
+  /** Host says Nexus is down and the session list does not show the agent online. */
+  holdForNexus?: boolean;
+  /** Live stream or activity socket says the agent is online, so skip the fallback transport. */
+  bypassFallback?: boolean;
   onFlushQueue?: () => void;
+  onCancelQueue?: () => void;
+  onQueued?: () => void;
+  onNexusReply?: () => void;
+  onTransportFailure?: () => void;
   models?: import('../models/picker-types.js').PickerModel[];
   modelsLoading?: boolean;
   selectedModelId?: string | null;
@@ -56,7 +68,16 @@ export function Composer({
   streaming,
   slots,
   sendQueue,
+  threadKey,
+  queueBannerText = '',
+  queueCount = 0,
+  holdForNexus = false,
+  bypassFallback = false,
   onFlushQueue,
+  onCancelQueue,
+  onQueued,
+  onNexusReply,
+  onTransportFailure,
   modelOverride,
   reasoningEffort = null,
   dictationMethod = 'phone',
@@ -79,8 +100,6 @@ export function Composer({
     finish: (commit: boolean) => Promise<void>;
   } | null>(null);
   const releasedRef = useRef<'commit' | 'cancel' | null>(null);
-  const queued = sendQueue.list();
-
   useEffect(() => {
     if (!onRegisterDraftSetter) return;
     onRegisterDraftSetter((incoming) => {
@@ -105,35 +124,70 @@ export function Composer({
     if (!body && !pendingFiles.length) return;
     const mentions = parseMentions(body);
     const payloadText = mentions.cleanText || body;
-    if (streaming) {
-      sendQueue.enqueue({
+    const park = (hold: 'streaming' | 'unreachable', lastError?: string, localTurnId?: string | null) => {
+      const id = sendQueue.enqueue({
+        threadKey,
         text: payloadText,
         attachmentRefs: pendingFiles,
         modelOverride: modelOverride || undefined,
+        reasoningEffort,
+        localTurnId,
+        hold,
+        ...(lastError ? { lastError } : {}),
       });
+      if (!id) return;
+      if (localTurnId) chat.discardLocalUnsentTurns([localTurnId]);
       setText('');
       setPendingFiles([]);
+      onQueued?.();
+    };
+    if (streaming || holdForNexus) {
+      park(streaming && !holdForNexus ? 'streaming' : 'unreachable', holdForNexus
+        ? 'Nexus could not be reached. Try again shortly.'
+        : undefined);
       return;
     }
-    const result = await chat.sendMessage(payloadText, {
-      conversationId: conversationId || undefined,
-      contactId: contactId || undefined,
-      attachments: pendingFiles.length ? pendingFiles : undefined,
-      ...(modelOverride ? { modelOverride } : {}),
-      ...(reasoningEffort ? { reasoningEffort } : {}),
-    });
+    let result: Awaited<ReturnType<NexusChat['sendMessage']>>;
+    try {
+      result = await chat.sendMessage(payloadText, {
+        conversationId: conversationId || undefined,
+        contactId: contactId || undefined,
+        attachments: pendingFiles.length ? pendingFiles : undefined,
+        ...(modelOverride ? { modelOverride } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+        ...(bypassFallback ? { bypassFallback: true } : {}),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Nexus could not be reached. Try again shortly.';
+      result = { ok: false, code: 'exception', message };
+    }
     if (result.ok) {
       setText('');
       setPendingFiles([]);
+      if (result.transport !== 'fallback') onNexusReply?.();
       return;
     }
-    const qid = sendQueue.enqueue({
-      text: payloadText,
-      attachmentRefs: pendingFiles,
-      modelOverride: modelOverride || undefined,
-    });
-    sendQueue.markError(qid, result.message);
-  }, [chat, contactId, conversationId, modelOverride, pendingFiles, reasoningEffort, sendQueue, streaming, text]);
+    if (!isRetryableOutgoingFailure({ code: result.code, message: result.message })) return;
+    const localTurnId = result.localTurnId || latestUnsentUserTurnId(chat.getState().turns);
+    park('unreachable', result.message, localTurnId);
+    onTransportFailure?.();
+  }, [
+    bypassFallback,
+    chat,
+    contactId,
+    conversationId,
+    holdForNexus,
+    modelOverride,
+    onNexusReply,
+    onQueued,
+    onTransportFailure,
+    pendingFiles,
+    reasoningEffort,
+    sendQueue,
+    streaming,
+    text,
+    threadKey,
+  ]);
 
   const onPickFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -305,16 +359,33 @@ export function Composer({
     void endHold(holdReleaseAction({ leftTarget: left }) === 'commit');
   };
 
+  const queueBanner = queueCount > 0 ? (
+    <div className="nexus-chat__queue" role="status" data-nexus-queue="">
+      <span>{queueBannerText || `${queueCount} queued message${queueCount > 1 ? 's' : ''}`}</span>
+      <span className="nexus-chat__queue-actions">
+        <button type="button" className="nexus-chat__btn" onClick={() => onFlushQueue?.()}>
+          Retry
+        </button>
+        <button type="button" className="nexus-chat__btn" aria-label="Cancel queued messages" onClick={() => onCancelQueue?.()}>
+          Cancel
+        </button>
+      </span>
+    </div>
+  ) : null;
+
   if (slots?.composer) {
     const Custom = slots.composer;
     return (
-      <Custom
-        chat={chat}
-        text={text}
-        setText={setText}
-        send={sendNow}
-        streaming={streaming}
-      />
+      <div className="nexus-chat__composer">
+        {queueBanner}
+        <Custom
+          chat={chat}
+          text={text}
+          setText={setText}
+          send={sendNow}
+          streaming={streaming}
+        />
+      </div>
     );
   }
 
@@ -322,17 +393,7 @@ export function Composer({
 
   return (
     <div className="nexus-chat__composer">
-      {queued.length ? (
-        <div className="nexus-chat__queue">
-          <span>
-            {queued.length} queued message{queued.length > 1 ? 's' : ''}
-            {queued[0]?.lastError ? ` — ${queued[0].lastError}` : ''}
-          </span>
-          <button type="button" className="nexus-chat__btn" onClick={() => onFlushQueue?.()}>
-            Retry
-          </button>
-        </div>
-      ) : null}
+      {queueBanner}
       {pendingFiles.length ? (
         <div className="nexus-chat__strip">
           {pendingFiles.map((f, i) => {

@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   createNexusChat,
   findChatContact,
+  isUnreachableLabel,
   parseLockedAgent,
   resolveReasoningEffortLevels,
+  sessionErrorAfterFailure,
   type ChatHooks,
   type ChatModelOverride,
   type CommandClient,
@@ -25,7 +27,7 @@ import {
   type NexusChatReactFeatures,
 } from '../features.js';
 import { useChatPanel } from '../hooks/useChatState.js';
-import { createSendQueue } from '../utils/sendQueue.js';
+import { useOutgoingQueue } from '../hooks/useOutgoingQueue.js';
 import { applyPrefillComposer } from '../bridge/applyPrefillComposer.js';
 import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bridge/host-bridge.js';
 import { ContactList } from './ContactList.js';
@@ -235,9 +237,12 @@ export function NexusChatApp({
       }),
     [features.contacts, features.groups, lockedAgent],
   );
-  const sendQueueRef = useRef(createSendQueue());
-  const [, bump] = useState(0);
   const uiHooksRef = useRef<ChatHooks>({});
+  const reachRef = useRef({
+    presence: 'offline' as 'online' | 'offline' | 'connecting' | 'error' | 'disabled' | 'edge-online' | 'edge-offline' | 'registry-offline-edge-online' | 'both-offline',
+    nexusReplyDelivered: false,
+    sessionError: null as string | null,
+  });
 
   const chat = useMemo(() => {
     if (chatProp) return chatProp;
@@ -266,10 +271,16 @@ export function NexusChatApp({
       onError: (err) => {
         createOptions?.hooks?.onError?.(err);
         const info = chatFailureInfo(err);
-        const session =
-          info.code === 'NO_NEXUS_GRANT' || info.code === 'NEEDS_NEXUS_LOGIN' || info.code === 'NEXUS_UNAVAILABLE';
-        if (session && fallbackTransportRef.current) sessionErrorRef.current(null);
-        else sessionErrorRef.current(info.message);
+        const reach = reachRef.current;
+        const next = sessionErrorAfterFailure({
+          current: reach.sessionError,
+          message: info.message,
+          code: info.code,
+          presence: reach.presence,
+          nexusReplyDelivered: reach.nexusReplyDelivered,
+        });
+        reach.sessionError = next;
+        sessionErrorRef.current(next);
         onErrorRef.current?.(info);
       },
     };
@@ -406,6 +417,26 @@ export function NexusChatApp({
     () => buildModelOverride(selectedModelId, catalog),
     [selectedModelId, catalog],
   );
+  const threadStreaming = Boolean(panel?.streaming || state.streaming);
+  const outgoing = useOutgoingQueue({
+    chat,
+    client,
+    conversationId,
+    contactId: activeContactId,
+    contactStatus: listedContact?.contactStatus,
+    streaming: threadStreaming,
+    nexusUnavailable,
+    fallbackTransport,
+  });
+  reachRef.current = {
+    presence: outgoing.presence,
+    nexusReplyDelivered: outgoing.nexusReplyDelivered,
+    sessionError,
+  };
+  useEffect(() => {
+    if (outgoing.presence !== 'online' && !outgoing.nexusReplyDelivered) return;
+    setSessionError((prev) => (prev && isUnreachableLabel(prev) ? null : prev));
+  }, [outgoing.nexusReplyDelivered, outgoing.presence]);
 
   const handleSca = useCallback(
     (info: { authRequestId: string | null; command: string }) => {
@@ -708,23 +739,6 @@ export function NexusChatApp({
       return next;
     });
   }, []);
-
-  const flushQueue = useCallback(async () => {
-    const q = sendQueueRef.current;
-    for (const item of [...q.list()]) {
-      const queuedOverride = (item.modelOverride as ChatModelOverride | undefined) || modelOverride;
-      const result = await chat.sendMessage(item.text, {
-        conversationId: conversationId || undefined,
-        contactId: activeContactId || undefined,
-        attachments: item.attachmentRefs as never,
-        ...(queuedOverride ? { modelOverride: queuedOverride } : {}),
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-      });
-      if (result.ok) q.remove(item.id);
-      else q.markError(item.id, result.message);
-    }
-    bump((n) => n + 1);
-  }, [activeContactId, chat, modelOverride, conversationId, reasoningEffort]);
 
   const resetThread = useCallback(async () => {
     if (!contact) return;
@@ -1030,10 +1044,19 @@ export function NexusChatApp({
                 contacts={state.contacts}
                 conversationId={conversationId}
                 contactId={activeContactId}
-                streaming={panel?.streaming || state.streaming}
+                streaming={threadStreaming}
                 slots={slots}
-                sendQueue={sendQueueRef.current}
-                onFlushQueue={() => void flushQueue()}
+                sendQueue={outgoing.queue}
+                threadKey={outgoing.threadKey}
+                queueBannerText={outgoing.bannerText}
+                queueCount={outgoing.queueCount}
+                holdForNexus={outgoing.holdForNexus}
+                bypassFallback={outgoing.bypassFallback}
+                onFlushQueue={outgoing.retry}
+                onCancelQueue={outgoing.cancel}
+                onQueued={outgoing.noteQueued}
+                onNexusReply={outgoing.noteNexusReply}
+                onTransportFailure={outgoing.noteTransportFailure}
                 models={catalog}
                 modelsLoading={catalogLoading}
                 selectedModelId={selectedModelId}
