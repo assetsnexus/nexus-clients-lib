@@ -135,12 +135,16 @@ export function sessionErrorAfterFailure(input: {
   return message || input.current;
 }
 
-/** Queue instead of sending only when the session list would not show online. */
+/**
+ * Do not skip the send because the host flag is set.
+ * That flag also covers a missing grant, and `connecting` is not a failed
+ * transport. Queue only after `sendMessage` returns a retryable transport error.
+ */
 export function shouldHoldOutgoingForNexus(input: {
   hostUnavailable: boolean;
   presence: SessionListPresence;
   nexusReplyDelivered: boolean;
 }): boolean {
-  if (input.presence === 'online' || input.nexusReplyDelivered) return false;
-  return input.hostUnavailable;
+  void input;
+  return false;
 }

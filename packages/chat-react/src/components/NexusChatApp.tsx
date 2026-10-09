@@ -1050,7 +1050,6 @@ export function NexusChatApp({
                 threadKey={outgoing.threadKey}
                 queueBannerText={outgoing.bannerText}
                 queueCount={outgoing.queueCount}
-                holdForNexus={outgoing.holdForNexus}
                 bypassFallback={outgoing.bypassFallback}
                 onFlushQueue={outgoing.retry}
                 onCancelQueue={outgoing.cancel}

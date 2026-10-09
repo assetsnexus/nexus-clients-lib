@@ -221,7 +221,6 @@ export function useOutgoingQueue(input: {
     revision,
     queueCount: items.length,
     bannerText,
-    holdForNexus,
     bypassFallback: hostUnavailable && !holdForNexus,
     presence,
     nexusReplyDelivered,

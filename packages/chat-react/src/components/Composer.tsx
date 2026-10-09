@@ -29,9 +29,7 @@ export type ComposerProps = {
   /** Queued copy for this thread. Empty hides the bar. */
   queueBannerText?: string;
   queueCount?: number;
-  /** Host says Nexus is down and the session list does not show the agent online. */
-  holdForNexus?: boolean;
-  /** Live stream or activity socket says the agent is online, so skip the fallback transport. */
+  /** Host flag is set, so the send must hit Nexus and not the Chi fallback. */
   bypassFallback?: boolean;
   onFlushQueue?: () => void;
   onCancelQueue?: () => void;
@@ -71,7 +69,6 @@ export function Composer({
   threadKey,
   queueBannerText = '',
   queueCount = 0,
-  holdForNexus = false,
   bypassFallback = false,
   onFlushQueue,
   onCancelQueue,
@@ -141,10 +138,8 @@ export function Composer({
       setPendingFiles([]);
       onQueued?.();
     };
-    if (streaming || holdForNexus) {
-      park(streaming && !holdForNexus ? 'streaming' : 'unreachable', holdForNexus
-        ? 'Nexus could not be reached. Try again shortly.'
-        : undefined);
+    if (streaming) {
+      park('streaming');
       return;
     }
     let result: Awaited<ReturnType<NexusChat['sendMessage']>>;
@@ -176,7 +171,6 @@ export function Composer({
     chat,
     contactId,
     conversationId,
-    holdForNexus,
     modelOverride,
     onNexusReply,
     onQueued,

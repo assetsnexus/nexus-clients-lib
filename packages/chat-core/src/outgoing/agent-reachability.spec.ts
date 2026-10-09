@@ -94,16 +94,18 @@ describe('unreachable label', () => {
     ).toBe('1 queued message — Nexus could not be reached. Try again shortly.');
   });
 
-  it('does not hold new sends when the session list would show the agent online', () => {
+  it('does not skip the send for a host unavailable flag, including grant and connecting', () => {
     expect(
       shouldHoldOutgoingForNexus({ hostUnavailable: true, presence: 'online', nexusReplyDelivered: false }),
     ).toBe(false);
     expect(
       shouldHoldOutgoingForNexus({ hostUnavailable: true, presence: 'offline', nexusReplyDelivered: false }),
-    ).toBe(true);
-    expect(
-      shouldHoldOutgoingForNexus({ hostUnavailable: true, presence: 'offline', nexusReplyDelivered: true }),
     ).toBe(false);
+    expect(
+      shouldHoldOutgoingForNexus({ hostUnavailable: true, presence: 'connecting', nexusReplyDelivered: false }),
+    ).toBe(false);
+    expect(isGrantFailureCode('NO_NEXUS_GRANT')).toBe(true);
+    expect(isUnreachableLabel('Sign in with Nexus to chat.')).toBe(false);
   });
 
   it('flushes once when the path is reachable and not while a reply is still streaming', () => {
