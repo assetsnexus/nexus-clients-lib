@@ -569,10 +569,10 @@ export function NexusChatApp({
     }
     let cancelled = false;
     setCatalogLoading(true);
-    const agentId = contact?.agentId || undefined;
+    const employeeId = contact?.virtualEmployeeId || undefined;
     const load = client
-      ? loadPickerModels(client, { agentId })
-      : chat.listAvailableModels(agentId ? { agentId } : undefined).then((res) =>
+      ? loadPickerModels(client, { employeeId })
+      : chat.listAvailableModels().then((res) =>
           res.models.map((m) => ({
             id: m.id,
             modelRef: m.modelRef,
@@ -602,7 +602,7 @@ export function NexusChatApp({
     return () => {
       cancelled = true;
     };
-  }, [chat, client, contact?.agentId, nexusUnavailable]);
+  }, [chat, client, contact?.virtualEmployeeId, nexusUnavailable]);
 
   useEffect(() => {
     if (nexusUnavailable) return;

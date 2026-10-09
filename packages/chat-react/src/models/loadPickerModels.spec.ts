@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatIntelScore, intelTone } from './intel.js';
+import { authorMarkInput, compactIntelLabel, compactPriceLabel } from './picker-row.js';
+import { readUsdPerM } from './picker-types.js';
 import { buildModelOverride, loadPickerModels, mergePickerModels } from './loadPickerModels.js';
 import { mergeEntitledModelsForPicker } from './mergeEntitledModels.js';
 import { modelDisplayName, resolveModelProvider } from './providerMark.js';
@@ -67,6 +69,49 @@ describe('buildModelOverride', () => {
   it('returns null for agent default', () => {
     expect(buildModelOverride(null, [])).toBeNull();
     expect(buildModelOverride('__agent_default__', [])).toBeNull();
+  });
+});
+
+describe('compact picker chips', () => {
+  it('reads token millicent rows as USD per million', () => {
+    expect(
+      readUsdPerM(
+        { costPricing: [{ unit: 'token_in', unitPriceMillicents: 0.3 }] },
+        'input',
+      ),
+    ).toBeCloseTo(3);
+    expect(
+      readUsdPerM(
+        { costPricing: [{ unit: 'token_out', unitPriceMillicents: 1.5 }] },
+        'output',
+      ),
+    ).toBeCloseTo(15);
+  });
+
+  it('omits price and intelligence when the catalog row has neither', () => {
+    expect(compactPriceLabel({ inputPerM: null, chatPriceCreditsPerMillion: null })).toBeNull();
+    expect(compactIntelLabel(null)).toBeNull();
+    expect(compactIntelLabel(undefined)).toBeNull();
+  });
+
+  it('uses the catalog author, not the OpenRouter gateway, for the mark', () => {
+    const mark = resolveModelProvider(
+      authorMarkInput({
+        id: 'm1',
+        label: 'Claude Sonnet',
+        externalModelId: 'anthropic/claude-sonnet-latest',
+        providerId: 'openrouter',
+        iconUrl: null,
+      }),
+    );
+    expect(mark.prefix).toBe('anthropic');
+    expect(mark.label).toBe('Anthropic');
+  });
+
+  it('shows catalog USD, credit symbols, and the intelligence index unchanged', () => {
+    expect(compactPriceLabel({ inputPerM: 3, chatPriceCreditsPerMillion: 40 })).toBe('$3.00/M');
+    expect(compactPriceLabel({ inputPerM: null, chatPriceCreditsPerMillion: 5 })).toBe('$');
+    expect(compactIntelLabel(41.2)).toBe('41.2');
   });
 });
 
@@ -188,7 +233,55 @@ describe('loadPickerModels', () => {
     expect(models[0].externalModelId).toBe('anthropic/claude-sonnet-4');
   });
 
-  it('falls back to available+list when entitlements.list fails', async () => {
+  it('scopes entitlements to the virtual employee and leaves models.available unscoped', async () => {
+    const sent: Array<{ command: string; payload: unknown }> = [];
+    await loadPickerModels(
+      {
+        send: async (command, payload) => {
+          sent.push({ command, payload });
+          return { ok: true, data: { models: [] } };
+        },
+      },
+      { employeeId: 've-1' },
+    );
+    expect(sent).toEqual([
+      { command: 'anx.inference.models.available', payload: {} },
+      { command: 'anx.ai-agents.entitlements.list', payload: { employeeId: 've-1' } },
+      { command: 'anx.inference.models.list', payload: { publishedOnly: false } },
+    ]);
+  });
+
+  it('does not seed the picker from the catalog when entitlements.list fails', async () => {
+    await expect(
+      loadPickerModels({
+        send: async (command) => {
+          if (command === 'anx.inference.models.available') {
+            return {
+              ok: true,
+              data: {
+                models: [
+                  {
+                    id: 'm1',
+                    capabilities: ['chat_agent'],
+                    intelligenceIndex: 12,
+                  },
+                ],
+              },
+            };
+          }
+          if (command === 'anx.ai-agents.entitlements.list') {
+            return { ok: false, message: 'denied' };
+          }
+          if (command === 'anx.inference.models.list') {
+            return { ok: true, data: { models: [] } };
+          }
+          throw new Error(command);
+        },
+      }),
+    ).rejects.toThrow('denied');
+  });
+
+  it('returns an empty picker when entitlements succeed with no models', async () => {
     const models = await loadPickerModels({
       send: async (command) => {
         if (command === 'anx.inference.models.available') {
@@ -199,14 +292,13 @@ describe('loadPickerModels', () => {
                 {
                   id: 'm1',
                   capabilities: ['chat_agent'],
-                  intelligenceIndex: 12,
                 },
               ],
             },
           };
         }
         if (command === 'anx.ai-agents.entitlements.list') {
-          return { ok: false, message: 'denied' };
+          return { ok: true, data: { models: [] } };
         }
         if (command === 'anx.inference.models.list') {
           return { ok: true, data: { models: [] } };
@@ -214,7 +306,7 @@ describe('loadPickerModels', () => {
         throw new Error(command);
       },
     });
-    expect(models.map((m) => m.id)).toEqual(['m1']);
+    expect(models).toEqual([]);
   });
 });
 

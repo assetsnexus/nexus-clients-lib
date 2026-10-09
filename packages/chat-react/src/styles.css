@@ -504,20 +504,11 @@
   text-transform: uppercase;
   color: var(--nx-chat-muted);
 }
-.nexus-chat-model-picker-head,
 .nexus-chat-model-picker-row {
-  display: grid;
-  grid-template-columns: minmax(8rem, 1.7fr) 4.2rem 4.2rem 3.2rem;
-  gap: 0.4rem;
+  display: flex;
+  gap: 0.45rem;
   align-items: center;
-  padding: 0.28rem 0.55rem;
-}
-.nexus-chat-model-picker-head {
-  font-size: 0.62rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--nx-chat-muted);
-  border-bottom: 1px solid var(--nx-chat-border);
+  padding: 0.32rem 0.55rem;
 }
 .nexus-chat-model-picker-list {
   overflow: auto;
@@ -549,6 +540,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.nexus-chat-model-picker-chips {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
 }
 .nexus-chat-model-provider-icon {
   width: 16px;

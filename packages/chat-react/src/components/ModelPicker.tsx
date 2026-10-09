@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PickerModel } from '../models/picker-types.js';
-import { formatCreditsPerM, formatIntelScore, formatUsdPerM, intelTone, priceTone } from '../models/intel.js';
+import { intelTone, priceTone } from '../models/intel.js';
+import { authorMarkInput, compactIntelLabel, compactPriceLabel } from '../models/picker-row.js';
 import {
   modelDisplayName,
   readRecentModelIds,
@@ -55,7 +56,7 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
     const el = rootRef.current;
     if (!el) return;
     const box = el.getBoundingClientRect();
-    const width = Math.min(560, Math.max(360, box.width + 80));
+    const width = Math.min(420, Math.max(320, box.width + 140));
     let left = box.right - width;
     left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
     let top = box.bottom + 4;
@@ -101,13 +102,9 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
       : selected
         ? modelDisplayName(selected.externalModelId || selected.id, selected.label)
         : 'Agent default';
-  const triggerProvider = selected
-    ? resolveModelProvider({
-        modelId: selected.externalModelId || selected.id,
-        providerId: selected.providerId,
-        iconUrl: selected.iconUrl,
-      })
-    : null;
+  const triggerProvider = selected ? resolveModelProvider(authorMarkInput(selected)) : null;
+  const triggerPrice = selected ? compactPriceLabel(selected) : null;
+  const triggerIntel = selected ? compactIntelLabel(selected.intelligenceIndex) : null;
 
   return (
     <div className="nexus-chat-model-picker" ref={rootRef}>
@@ -125,16 +122,21 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
       >
         {triggerProvider ? <ProviderIcon provider={triggerProvider} /> : null}
         <span className="nexus-chat-model-picker-trigger-label">{triggerName}</span>
-        {selected ? (
-          <span className="nexus-chat-model-picker-trigger-meta" aria-hidden="true">
-            <span className={`nexus-chat-model-price ${priceTone(selected.inputPerM ?? selected.chatPriceCreditsPerMillion)}`}>
-              {formatUsdPerM(selected.inputPerM) !== '—'
-                ? formatUsdPerM(selected.inputPerM)
-                : formatCreditsPerM(selected.chatPriceCreditsPerMillion) || '—'}
-            </span>
-            <span className={`nexus-chat-model-intel ${intelTone(selected.intelligenceIndex)}`}>
-              {formatIntelScore(selected.intelligenceIndex)}
-            </span>
+        {triggerPrice || triggerIntel ? (
+          <span className="nexus-chat-model-picker-trigger-meta">
+            {triggerPrice ? (
+              <span
+                className={`nexus-chat-model-price ${priceTone(selected?.inputPerM ?? selected?.chatPriceCreditsPerMillion)}`}
+                title="Catalog price"
+              >
+                {triggerPrice}
+              </span>
+            ) : null}
+            {triggerIntel ? (
+              <span className={`nexus-chat-model-intel ${intelTone(selected?.intelligenceIndex)}`} title="Intelligence score">
+                {triggerIntel}
+              </span>
+            ) : null}
           </span>
         ) : null}
         <span className="nexus-chat-model-picker-caret" aria-hidden="true">
@@ -171,12 +173,6 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
               ))}
             </div>
           ) : null}
-          <div className="nexus-chat-model-picker-head" aria-hidden="true">
-            <span>Model</span>
-            <span title="USD per 1M input tokens when catalog costPricing is present">In</span>
-            <span title="USD per 1M output tokens">Out</span>
-            <span title="Catalog intelligenceIndex">IQ</span>
-          </div>
           <div className="nexus-chat-model-picker-list">
             <button
               type="button"
@@ -188,18 +184,12 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
               <span className="nexus-chat-model-picker-name">
                 <strong>Agent default</strong>
               </span>
-              <span className="nexus-chat-model-price unknown">—</span>
-              <span className="nexus-chat-model-price unknown">—</span>
-              <span className="nexus-chat-model-intel unknown">—</span>
             </button>
             {filtered.map((m) => (
               <ModelRow key={m.id} model={m} active={m.id === value} onSelect={() => select(m.id)} />
             ))}
             {!filtered.length ? <p className="nexus-chat-model-picker-empty">No matches</p> : null}
           </div>
-          <footer className="nexus-chat-model-picker-foot">
-            IQ: catalog <code>intelligenceIndex</code> · logos: catalog iconUrl / providerId
-          </footer>
         </div>
       ) : null}
     </div>
@@ -250,16 +240,10 @@ function ModelRow({
   active: boolean;
   onSelect: () => void;
 }) {
-  const provider = resolveModelProvider({
-    modelId: model.externalModelId || model.id,
-    providerId: model.providerId,
-    iconUrl: model.iconUrl,
-  });
+  const provider = resolveModelProvider(authorMarkInput(model));
   const name = modelDisplayName(model.externalModelId || model.id, model.label);
-  const inLabel =
-    formatUsdPerM(model.inputPerM) !== '—'
-      ? formatUsdPerM(model.inputPerM)
-      : formatCreditsPerM(model.chatPriceCreditsPerMillion) || '—';
+  const price = compactPriceLabel(model);
+  const intel = compactIntelLabel(model.intelligenceIndex);
   return (
     <button
       type="button"
@@ -273,15 +257,23 @@ function ModelRow({
         <ProviderIcon provider={provider} />
         <strong>{name}</strong>
       </span>
-      <span className={`nexus-chat-model-price ${priceTone(model.inputPerM ?? model.chatPriceCreditsPerMillion)}`}>
-        {inLabel}
-      </span>
-      <span className={`nexus-chat-model-price ${priceTone(model.outputPerM)}`}>
-        {formatUsdPerM(model.outputPerM)}
-      </span>
-      <span className={`nexus-chat-model-intel ${intelTone(model.intelligenceIndex)}`}>
-        {formatIntelScore(model.intelligenceIndex)}
-      </span>
+      {price || intel ? (
+        <span className="nexus-chat-model-picker-chips">
+          {price ? (
+            <span
+              className={`nexus-chat-model-price ${priceTone(model.inputPerM ?? model.chatPriceCreditsPerMillion)}`}
+              title="Catalog price"
+            >
+              {price}
+            </span>
+          ) : null}
+          {intel ? (
+            <span className={`nexus-chat-model-intel ${intelTone(model.intelligenceIndex)}`} title="Intelligence score">
+              {intel}
+            </span>
+          ) : null}
+        </span>
+      ) : null}
     </button>
   );
 }

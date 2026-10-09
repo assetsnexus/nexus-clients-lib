@@ -28,6 +28,20 @@ function isCommandOk(result: unknown): boolean {
   return true;
 }
 
+function entitlementsFailed(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return true;
+  return (result as { ok?: boolean }).ok !== true;
+}
+
+function entitlementsErrorMessage(result: unknown): string {
+  if (result && typeof result === 'object') {
+    const row = result as { message?: unknown; error?: unknown };
+    if (typeof row.message === 'string' && row.message.trim()) return row.message;
+    if (typeof row.error === 'string' && row.error.trim()) return row.error;
+  }
+  return 'entitlements.list failed';
+}
+
 function rowsFrom(payload: Record<string, unknown>): Record<string, unknown>[] {
   if (Array.isArray(payload.models)) return payload.models as Record<string, unknown>[];
   if (Array.isArray(payload.items)) return payload.items as Record<string, unknown>[];
@@ -37,27 +51,29 @@ function rowsFrom(payload: Record<string, unknown>): Record<string, unknown>[] {
 /**
  * Same three commands as portal `loadEntitledModelsForPicker`:
  * entitlements seed the picker; available + models.list enrich.
+ * `models.available` stays unscoped. An agentId there fail-closes the catalog.
+ * `employeeId` is the virtual employee, so an app-bound agent uses the owner catalog.
  */
 export async function loadPickerModels(
   client: CommandClient,
-  opts?: { agentId?: string | null },
+  opts?: { employeeId?: string | null },
 ): Promise<PickerModel[]> {
+  const employeeId = typeof opts?.employeeId === 'string' ? opts.employeeId.trim() : '';
   const [availableResult, entitlementsResult, catalogResult] = await Promise.all([
-    client.send('anx.inference.models.available', opts?.agentId ? { agentId: opts.agentId } : {}),
-    client.send('anx.ai-agents.entitlements.list', {}),
+    client.send('anx.inference.models.available', {}),
+    client.send('anx.ai-agents.entitlements.list', employeeId ? { employeeId } : {}),
     client.send('anx.inference.models.list', { publishedOnly: false }),
   ]);
+  if (entitlementsFailed(entitlementsResult)) {
+    throw new Error(entitlementsErrorMessage(entitlementsResult));
+  }
   const availableRows = isCommandOk(availableResult) ? rowsFrom(unwrap(availableResult)) : [];
   const catalogRows = isCommandOk(catalogResult) ? rowsFrom(unwrap(catalogResult)) : [];
-  if (isCommandOk(entitlementsResult)) {
-    const entitled = mergeEntitledModelsForPicker({
-      availableRows,
-      catalogRows,
-      entitlementsPayload: unwrap(entitlementsResult),
-    });
-    if (entitled.length) return entitled;
-  }
-  return mergePickerModels(availableRows, catalogRows);
+  return mergeEntitledModelsForPicker({
+    availableRows,
+    catalogRows,
+    entitlementsPayload: unwrap(entitlementsResult),
+  });
 }
 
 export function buildModelOverride(
