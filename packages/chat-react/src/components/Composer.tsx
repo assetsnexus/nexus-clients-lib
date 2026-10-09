@@ -31,6 +31,7 @@ export type ComposerProps = {
   selectedModelId?: string | null;
   onSelectModel?: (id: string | null) => void;
   modelOverride?: ChatModelOverride | null;
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | null;
   /** Ignored. The model picker lives in the config sheet. */
   showModelPicker?: boolean;
   dictationMethod?: DictationMethod;
@@ -57,6 +58,7 @@ export function Composer({
   sendQueue,
   onFlushQueue,
   modelOverride,
+  reasoningEffort = null,
   dictationMethod = 'phone',
   sttModelId = null,
   dictationNote = null,
@@ -118,6 +120,7 @@ export function Composer({
       contactId: contactId || undefined,
       attachments: pendingFiles.length ? pendingFiles : undefined,
       ...(modelOverride ? { modelOverride } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
     });
     if (result.ok) {
       setText('');
@@ -130,7 +133,7 @@ export function Composer({
       modelOverride: modelOverride || undefined,
     });
     sendQueue.markError(qid, result.message);
-  }, [chat, contactId, conversationId, modelOverride, pendingFiles, sendQueue, streaming, text]);
+  }, [chat, contactId, conversationId, modelOverride, pendingFiles, reasoningEffort, sendQueue, streaming, text]);
 
   const onPickFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -220,6 +223,7 @@ export function Composer({
               contactId: contactId || undefined,
               attachments: [audio],
               ...(modelOverride ? { modelOverride } : {}),
+              ...(reasoningEffort ? { reasoningEffort } : {}),
             });
             if (!result.ok) throw new Error(result.message || 'Could not send the recording.');
             return;

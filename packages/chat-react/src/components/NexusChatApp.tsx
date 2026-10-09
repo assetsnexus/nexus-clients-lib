@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   createNexusChat,
   findChatContact,
   parseLockedAgent,
+  resolveReasoningEffortLevels,
   type ChatHooks,
   type ChatModelOverride,
   type CommandClient,
   type ConversationRow,
   type CreateNexusChatOptions,
+  type FallbackChatTransport,
   type HostPageContext,
   type LockedAgent,
   type NexusChat,
+  type ReasoningEffortLevel,
   filterSttModelsForPicker,
 } from '@nexus/chat-core';
 import { applyThemeToElement } from '../theme.js';
@@ -79,6 +82,10 @@ import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { ConversationInbox } from './ConversationInbox.js';
 import { resolveChatChrome } from '../chrome/chat-chrome.js';
+import { chatFailureInfo, lockedEmbedPresentation } from '../chrome/locked-embed.js';
+import { UsageChrome } from '../chrome/UsageChrome.js';
+import { mergeInboxAgentAvatars } from '../inbox/inboxRows.js';
+import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
 import type { InboxRow } from '../inbox/inboxRows.js';
 import { loadConversationHistory } from '../utils/openContactFlow.js';
@@ -114,6 +121,24 @@ export type NexusChatAppProps = {
    * fields. Omit it when the page has no project.
    */
   pageContext?: HostPageContext | null;
+  /** Transport and open failures. Hosts use `code` for sign-in; the message is safe to show. */
+  onError?: (info: { message: string; code?: string }) => void;
+  /**
+   * Host label. Overwrites the server agent name and the raw employee id.
+   * Also applied to `lockedAgent` when that object is set.
+   */
+  displayName?: string;
+  /** Host picture. When set, it overwrites the server avatar. Empty does not render an image. */
+  avatarUrl?: string | null;
+  /**
+   * OpenAI-like completion used when `nexusUnavailable` is true.
+   * The transport's own `nexusUnavailable` flag is what `sendMessage` reads.
+   */
+  fallbackTransport?: FallbackChatTransport | null;
+  /** Host says Nexus cannot be used. Hides Nexus-only chrome and tool surfaces. */
+  nexusUnavailable?: boolean;
+  /** Login control for features the host marks as requiring Nexus. Shown while unavailable. */
+  nexusLogin?: ReactNode;
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -175,15 +200,32 @@ export function NexusChatApp({
   agentTarget = null,
   lockedAgent: lockedAgentProp = null,
   pageContext = null,
+  onError,
+  displayName: displayNameProp,
+  avatarUrl: avatarUrlProp,
+  fallbackTransport = null,
+  nexusUnavailable = false,
+  nexusLogin = null,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const onErrorRef = useRef(onError);
+  const sessionErrorRef = useRef<(message: string | null) => void>(() => {});
+  onErrorRef.current = onError;
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
   const pendingDraftRef = useRef('');
   const features = useMemo(() => mergeReactFeatures(featuresProp), [featuresProp]);
+  const fallbackTransportRef = useRef(fallbackTransport);
+  fallbackTransportRef.current = fallbackTransport;
   const lockedAgent = useMemo(() => {
     const requested = lockedAgentProp ?? createOptions?.lockedAgent ?? chatProp?.lockedAgent ?? null;
-    return parseLockedAgent(requested);
-  }, [lockedAgentProp, createOptions, chatProp]);
+    if (!requested) return null;
+    const avatarUrl = avatarUrlProp !== undefined ? avatarUrlProp || undefined : requested.avatarUrl;
+    return parseLockedAgent({
+      ...requested,
+      displayName: displayNameProp || requested.displayName,
+      avatarUrl,
+    });
+  }, [lockedAgentProp, createOptions, chatProp, displayNameProp, avatarUrlProp]);
   const chrome = useMemo(
     () =>
       resolveChatChrome({
@@ -221,6 +263,15 @@ export function NexusChatApp({
         await createOptions?.hooks?.onClientToolRequest?.(req);
         await uiHooksRef.current.onClientToolRequest?.(req);
       },
+      onError: (err) => {
+        createOptions?.hooks?.onError?.(err);
+        const info = chatFailureInfo(err);
+        const session =
+          info.code === 'NO_NEXUS_GRANT' || info.code === 'NEEDS_NEXUS_LOGIN' || info.code === 'NEXUS_UNAVAILABLE';
+        if (session && fallbackTransportRef.current) sessionErrorRef.current(null);
+        else sessionErrorRef.current(info.message);
+        onErrorRef.current?.(info);
+      },
     };
     return createNexusChat({
       ...createOptions,
@@ -228,8 +279,9 @@ export function NexusChatApp({
       hooks,
       features: { ...createOptions?.features, ...coreFeaturesFromReact(features) },
       lockedAgent: lockedAgent ?? createOptions?.lockedAgent ?? null,
+      fallbackTransport,
     });
-  }, [chatProp, clientProp, createOptions, features, lockedAgent]);
+  }, [chatProp, clientProp, createOptions, features, lockedAgent, fallbackTransport]);
 
   useEffect(() => {
     chat.setHostPageContext(pageContext ?? null);
@@ -276,6 +328,7 @@ export function NexusChatApp({
   const [catalog, setCatalog] = useState<PickerModel[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffortLevel | null>(null);
 
   const [viewerTabs, setViewerTabs] = useState<FileViewerTab[]>([]);
   const [activeViewerTabId, setActiveViewerTabId] = useState<string | null>(null);
@@ -295,6 +348,8 @@ export function NexusChatApp({
   const [scaInfo, setScaInfo] = useState<{ authRequestId: string | null; command: string } | null>(
     null,
   );
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  sessionErrorRef.current = setSessionError;
 
   const registerDraftSetter = useCallback((setter: ((text: string) => void) | null) => {
     draftSetterRef.current = setter;
@@ -314,7 +369,11 @@ export function NexusChatApp({
   }, []);
 
   const activeContactId = panel?.contactId || state.selectedAgentId;
-  const activeInbox = inboxRows.find((row) => row.id === activeInboxId) || null;
+  const visibleInbox = useMemo(
+    () => mergeInboxAgentAvatars(inboxRows, state.contacts),
+    [inboxRows, state.contacts],
+  );
+  const activeInbox = visibleInbox.find((row) => row.id === activeInboxId) || null;
   const listedContact = findChatContact(state.contacts, activeContactId || activeInbox?.contactId || '') || null;
   const contact =
     listedContact ||
@@ -329,6 +388,19 @@ export function NexusChatApp({
       : null);
   const sheetContact = findChatContact(state.contacts, sheetContactId || '') || null;
   const conversationId = panel?.conversationId || state.conversationId;
+  const presentation = lockedEmbedPresentation({
+    lockedAgent,
+    contactName: displayNameProp || contact?.name,
+    contactSelected: Boolean(contact),
+    serverAvatarUrl: contact?.avatarUrl,
+    hostAvatarUrl: avatarUrlProp,
+    fallback: nexusUnavailable,
+  });
+  const reasoningLevels = useMemo(() => {
+    const selected = catalog.find((model) => model.id === selectedModelId);
+    if (!selected) return null;
+    return resolveReasoningEffortLevels(selected.externalModelId || selected.id, selected.category, selected.capabilities);
+  }, [catalog, selectedModelId]);
 
   const modelOverride: ChatModelOverride | null = useMemo(
     () => buildModelOverride(selectedModelId, catalog),
@@ -490,6 +562,11 @@ export function NexusChatApp({
   }, [activeContactId, activeInboxId, conversationId]);
 
   useEffect(() => {
+    if (nexusUnavailable) {
+      setCatalog([]);
+      setCatalogLoading(false);
+      return;
+    }
     let cancelled = false;
     setCatalogLoading(true);
     const agentId = contact?.agentId || undefined;
@@ -525,11 +602,12 @@ export function NexusChatApp({
     return () => {
       cancelled = true;
     };
-  }, [chat, client, contact?.agentId]);
+  }, [chat, client, contact?.agentId, nexusUnavailable]);
 
   useEffect(() => {
+    if (nexusUnavailable) return;
     chat.observeSubAgents({ conversationId: conversationId || null });
-  }, [chat, conversationId]);
+  }, [chat, conversationId, nexusUnavailable]);
 
   const loadWorkspace = useCallback(async () => {
     if (!client?.send || !conversationId) {
@@ -640,12 +718,13 @@ export function NexusChatApp({
         contactId: activeContactId || undefined,
         attachments: item.attachmentRefs as never,
         ...(queuedOverride ? { modelOverride: queuedOverride } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       });
       if (result.ok) q.remove(item.id);
       else q.markError(item.id, result.message);
     }
     bump((n) => n + 1);
-  }, [activeContactId, chat, modelOverride, conversationId]);
+  }, [activeContactId, chat, modelOverride, conversationId, reasoningEffort]);
 
   const resetThread = useCallback(async () => {
     if (!contact) return;
@@ -706,7 +785,17 @@ export function NexusChatApp({
                 {listCollapsed ? 'Chats' : 'Hide'}
               </button>
             ) : null}
-            <strong style={{ flex: 1 }}>{contact?.name || 'Nexus Chat'}</strong>
+            <strong data-nexus-title="" style={{ flex: 1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              {presentation.avatarUrl ? (
+                <CachedAvatarImage
+                  src={presentation.avatarUrl}
+                  alt=""
+                  className="nexus-chat__header-avatar"
+                  fallback={null}
+                />
+              ) : null}
+              <span>{presentation.title}</span>
+            </strong>
             {contact ? (
               <button
                 type="button"
@@ -775,7 +864,7 @@ export function NexusChatApp({
                 <ConversationInbox
                   identities={identities}
                   hiddenKeys={hiddenIdentityKeys}
-                  rows={inboxRows}
+                  rows={visibleInbox}
                   loading={inboxLoading}
                   error={listError}
                   activeRowId={activeInboxId}
@@ -817,7 +906,7 @@ export function NexusChatApp({
           <main className="nexus-chat__main">
             {voiceOpen && voiceView === 'background' ? (
               <div className="nexus-chat__callbar" role="status">
-                <span>{contact?.name || 'Call'}</span>
+                <span>{presentation.title}</span>
                 <button type="button" className="nexus-chat__btn" onClick={() => setVoiceView('transcript')}>
                   Transcript
                 </button>
@@ -826,37 +915,51 @@ export function NexusChatApp({
                 </button>
               </div>
             ) : null}
-            <ScaRequiredBanner info={scaInfo} />
-            {clientToolReq ? (
-              <ClientToolGrantCard
-                request={clientToolReq}
+            {sessionError ? (
+              <div className="nexus-chat__banner" role="alert">
+                <span>{sessionError}</span>
+              </div>
+            ) : null}
+            {presentation.mountGrants ? (
+            <div data-nexus-surface="grants">
+              <ScaRequiredBanner info={scaInfo} />
+              {clientToolReq ? (
+                <ClientToolGrantCard
+                  request={clientToolReq}
+                  chat={chat}
+                  onResolved={() => setClientToolReq(null)}
+                />
+              ) : null}
+              {dataAccessPrompt ? (
+                <DataAccessPromptCard
+                  prompt={dataAccessPrompt}
+                  client={client}
+                  onResponded={() => setDataAccessPrompt(null)}
+                  onSca={handleSca}
+                />
+              ) : null}
+              {elevationPrompt ? (
+                <PermissionElevationCard
+                  prompt={elevationPrompt}
+                  client={client}
+                  onResponded={() => setElevationPrompt(null)}
+                  onSca={handleSca}
+                />
+              ) : null}
+            </div>
+            ) : null}
+            {presentation.mountApprovals ? (
+              <ApprovalsStrip chat={chat} turns={panel?.turns || state.turns} />
+            ) : null}
+            {presentation.mountSubagents ? (
+              <SubAgentsStrip
                 chat={chat}
-                onResolved={() => setClientToolReq(null)}
-              />
-            ) : null}
-            {dataAccessPrompt ? (
-              <DataAccessPromptCard
-                prompt={dataAccessPrompt}
                 client={client}
-                onResponded={() => setDataAccessPrompt(null)}
-                onSca={handleSca}
+                turns={panel?.turns || state.turns}
               />
             ) : null}
-            {elevationPrompt ? (
-              <PermissionElevationCard
-                prompt={elevationPrompt}
-                client={client}
-                onResponded={() => setElevationPrompt(null)}
-                onSca={handleSca}
-              />
-            ) : null}
-            <ApprovalsStrip chat={chat} turns={panel?.turns || state.turns} />
-            <SubAgentsStrip
-              chat={chat}
-              client={client}
-              turns={panel?.turns || state.turns}
-            />
             <div className="nexus-chat__thread-row">
+              {presentation.mountToolTimeline ? <div data-nexus-surface="tool-timeline" hidden /> : null}
               {showVoice ? (
                 <div style={voiceView === 'background' ? { display: 'none' } : undefined}>
                 <VoiceLayout
@@ -876,7 +979,7 @@ export function NexusChatApp({
                       active: state.active,
                       muted: state.muted,
                       status: state.status,
-                      title: contact?.name || 'Call',
+                      title: presentation.title,
                       avatarUrl: contact?.avatarUrl || null,
                       errorMessage: state.errorMessage,
                     })
@@ -888,7 +991,7 @@ export function NexusChatApp({
                 <ThreadView
                   turns={panel?.turns || state.turns}
                   streaming={panel?.streaming || state.streaming}
-                  empty={EmptySlot ? <EmptySlot /> : undefined}
+                  empty={EmptySlot ? <EmptySlot /> : presentation.empty}
                   chat={chat}
                   conversationId={conversationId}
                   onOpenFile={openFile}
@@ -908,6 +1011,20 @@ export function NexusChatApp({
               />
             ) : null}
             {showComposer ? (
+              <UsageChrome
+                panel={panel}
+                models={features.modelPicker ? catalog : []}
+                modelsLoading={catalogLoading}
+                selectedModelId={selectedModelId}
+                onSelectModel={setSelectedModelId}
+                reasoningLevels={reasoningLevels}
+                reasoningEffort={reasoningEffort}
+                onReasoningEffort={setReasoningEffort}
+                unavailable={nexusUnavailable}
+                nexusLogin={nexusLogin}
+              />
+            ) : null}
+            {showComposer ? (
               <Composer
                 chat={chat}
                 contacts={state.contacts}
@@ -922,6 +1039,7 @@ export function NexusChatApp({
                 selectedModelId={selectedModelId}
                 onSelectModel={setSelectedModelId}
                 modelOverride={modelOverride}
+                reasoningEffort={reasoningEffort}
                 showModelPicker={composerModelPickerVisible()}
                 dictationMethod={dictation.method}
                 sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}

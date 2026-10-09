@@ -1,3 +1,16 @@
+.nexus-chat.nexus-chat--companion {
+  height: 100dvh;
+  min-height: 0;
+  border-radius: 0;
+}
+
+.nexus-chat--companion > .nexus-chat {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  border-radius: 0;
+}
+
 .nexus-chat {
   --nx-chat-bg: #0f1117;
   --nx-chat-surface: #1a1d27;
@@ -1358,6 +1371,15 @@
   top: 0;
   z-index: 1;
   border: 2px solid var(--nx-chat-surface);
+  overflow: hidden;
+}
+
+.nexus-chat__peer img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50%;
 }
 
 .nexus-chat__kind-badge {
@@ -1495,6 +1517,96 @@
   padding: 6px 10px;
   background: var(--nx-chat-surface);
   border-bottom: 1px solid var(--nx-chat-border);
+}
+
+.nexus-chat__header-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.nexus-chat__usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  border-top: 1px solid var(--nx-chat-border);
+}
+
+.nexus-chat__reasoning select {
+  font: inherit;
+  padding: 4px 8px;
+}
+
+.nexus-chat__donut-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 12px;
+}
+
+.nexus-chat__donut {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.nexus-chat__donut-ring,
+.nexus-chat__donut-segment {
+  fill: none;
+  stroke-width: 3;
+}
+
+.nexus-chat__donut-ring {
+  stroke: var(--nx-chat-border);
+}
+
+.nexus-chat__donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.nexus-chat__donut-pct {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+.nexus-chat__donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nexus-chat__donut-legend li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.nexus-chat__donut-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.nexus-chat__fallback-card {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--nx-chat-border);
+  border-radius: var(--nx-chat-radius);
+}
+
+.nexus-chat__fallback-card p {
+  margin: 4px 0 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

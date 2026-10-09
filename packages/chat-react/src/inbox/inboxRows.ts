@@ -94,7 +94,7 @@ export function conversationToRow(
     agentId: textOf(raw, ['agentId']) || null,
     title,
     summary: textOf(raw, ['summary', 'lastMessage', 'preview', 'lastText']),
-    avatarUrl: textOf(raw, ['avatarUrl', 'photoUrl', 'imageUrl']) || null,
+    avatarUrl: inboxAvatarFromRow(raw),
     kind,
     unreadCount: Number(raw.unreadCount || raw.unread || 0) || 0,
     updatedAt: timeOf(raw),
@@ -111,6 +111,45 @@ export function filterInboxRowsForLockedAgent(rows: InboxRow[], virtualEmployeeI
       .map((value) => (value || '').trim())
       .filter(Boolean);
     return keys.includes(id);
+  });
+}
+
+function nestedRecord(raw: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = raw[key];
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+/** Picture fields the portal session list reads, including a nested agent. */
+export function inboxAvatarFromRow(raw: Record<string, unknown>): string | null {
+  const direct = textOf(raw, ['avatarUrl', 'photoUrl', 'imageUrl', 'profilePicture']);
+  if (direct) return direct;
+  const nested = nestedRecord(raw, 'agent') || nestedRecord(raw, 'virtualEmployee') || nestedRecord(raw, 'contact');
+  return nested ? textOf(nested, ['avatarUrl', 'profilePicture', 'photoUrl', 'imageUrl']) || null : null;
+}
+
+/**
+ * Portal session rows use the contact picture, then the row picture.
+ * An empty string stays null so the list does not render a broken image.
+ */
+export function mergeInboxAgentAvatars(
+  rows: InboxRow[],
+  contacts: Array<{
+    id?: string | null;
+    virtualEmployeeId?: string | null;
+    agentId?: string | null;
+    avatarUrl?: string | null;
+  }>,
+): InboxRow[] {
+  return rows.map((row) => {
+    const contact = contacts.find((item) => {
+      const keys = [item.id, item.virtualEmployeeId, item.agentId].map((value) => (value || '').trim()).filter(Boolean);
+      const rowKeys = [row.contactId, row.virtualEmployeeId, row.agentId].map((value) => (value || '').trim()).filter(Boolean);
+      return rowKeys.some((key) => keys.includes(key));
+    });
+    const fromContact = typeof contact?.avatarUrl === 'string' ? contact.avatarUrl.trim() : '';
+    const fromRow = typeof row.avatarUrl === 'string' ? row.avatarUrl.trim() : '';
+    const avatarUrl = fromContact || fromRow || null;
+    return avatarUrl === row.avatarUrl ? row : { ...row, avatarUrl };
   });
 }
 

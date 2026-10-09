@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { conversationToRow, filterInboxRowsForLockedAgent, matchesKindFilter, sortInboxRows, unwrapList } from './inboxRows.js';
+import {
+  conversationToRow,
+  filterInboxRowsForLockedAgent,
+  matchesKindFilter,
+  mergeInboxAgentAvatars,
+  sortInboxRows,
+  unwrapList,
+} from './inboxRows.js';
 import { loadIdentityInbox } from './loadIdentityInbox.js';
 
 describe('inbox rows', () => {
@@ -74,5 +81,25 @@ describe('inbox rows', () => {
     });
     expect(loaded.rows.map((row) => row.conversationId)).toEqual(['mine']);
     expect(loaded.errors).toEqual([]);
+  });
+
+  it('shows the contact avatar the way the portal session list does', () => {
+    const identity = { key: 'k', label: 'P', logo: null };
+    const row = conversationToRow(
+      {
+        id: 'c1',
+        virtualEmployeeId: 've-1',
+        agent: { profilePicture: 'https://cdn.example/agent.png' },
+      },
+      identity,
+    )!;
+    expect(row.avatarUrl).toBe('https://cdn.example/agent.png');
+    const merged = mergeInboxAgentAvatars(
+      [{ ...row, avatarUrl: null }],
+      [{ id: 've-1', virtualEmployeeId: 've-1', avatarUrl: 'https://cdn.example/contact.png' }],
+    );
+    expect(merged[0]?.avatarUrl).toBe('https://cdn.example/contact.png');
+    const empty = mergeInboxAgentAvatars([{ ...row, avatarUrl: '  ' }], [{ id: 've-1', avatarUrl: '   ' }]);
+    expect(empty[0]?.avatarUrl).toBeNull();
   });
 });

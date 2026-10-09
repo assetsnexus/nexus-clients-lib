@@ -7,6 +7,16 @@ import { conversationBelongsToContact, type ConversationRow } from './contact-th
  */
 export type LockedAgent = {
   virtualEmployeeId: string;
+  /**
+   * Host label. When set, it overwrites the server agent name.
+   * Omitted when it is empty or the same as `virtualEmployeeId`.
+   */
+  displayName?: string;
+  /**
+   * Host avatar. When set, it overwrites the server picture.
+   * Omitted when empty so the UI does not render a broken image.
+   */
+  avatarUrl?: string;
 };
 
 /**
@@ -19,6 +29,63 @@ export type LockedAgent = {
 export const CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID = false;
 
 const MAX_VIRTUAL_EMPLOYEE_ID = 200;
+const MAX_DISPLAY_NAME = 80;
+
+function cleanLabel(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+/** A label safe to show. The raw virtual-employee id is not a name. */
+export function humanAgentLabel(value: unknown, virtualEmployeeId?: string | null): string | null {
+  const label = cleanLabel(value);
+  const id = cleanLabel(virtualEmployeeId);
+  if (!label || (id && label === id)) return null;
+  return label;
+}
+
+/** A picture URL safe to put on an img. Blank and script URLs are dropped. */
+export function usableAvatarUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const url = value.trim();
+  if (!url || url.length > 2048) return null;
+  if (/^(javascript|vbscript):/i.test(url)) return null;
+  return url;
+}
+
+/**
+ * Header picture. The host override wins. Otherwise the server picture.
+ * An empty value is null so the UI does not render a broken image.
+ */
+export function resolveDisplayAvatar(
+  hostAvatarUrl?: string | null,
+  serverAvatarUrl?: string | null,
+): string | null {
+  return usableAvatarUrl(hostAvatarUrl) || usableAvatarUrl(serverAvatarUrl);
+}
+
+/**
+ * Header text for a locked embed. A host `displayName` overwrites the server
+ * agent name. Never returns the raw virtual-employee id.
+ */
+export function lockedAgentVisibleName(
+  locked: Pick<LockedAgent, 'virtualEmployeeId' | 'displayName'> | null | undefined,
+  resolvedName?: string | null,
+): string {
+  const id = cleanLabel(locked?.virtualEmployeeId);
+  return humanAgentLabel(locked?.displayName, id) || humanAgentLabel(resolvedName, id) || (locked ? 'Agent' : 'Nexus Chat');
+}
+
+/** Empty-thread copy. A selected or locked agent is not a contact picker. */
+export function threadEmptyLabel(input: {
+  lockedAgent?: Pick<LockedAgent, 'virtualEmployeeId'> | null;
+  contactSelected: boolean;
+}): string {
+  if (cleanLabel(input.lockedAgent?.virtualEmployeeId) || input.contactSelected) {
+    return 'Send a message to start.';
+  }
+  return 'Select a contact to start chatting.';
+}
 
 export function parseLockedAgent(input: LockedAgent | null | undefined): LockedAgent | null {
   if (input == null) return null;
@@ -36,15 +103,26 @@ export function parseLockedAgent(input: LockedAgent | null | undefined): LockedA
   if (virtualEmployeeId.length > MAX_VIRTUAL_EMPLOYEE_ID) {
     throw new Error('lockedAgent.virtualEmployeeId is too long');
   }
-  return { virtualEmployeeId };
+  const displayName = cleanLabel(input.displayName);
+  if (displayName.length > MAX_DISPLAY_NAME) {
+    throw new Error('lockedAgent.displayName is too long');
+  }
+  const avatarUrl = usableAvatarUrl(input.avatarUrl);
+  const visible = humanAgentLabel(displayName, virtualEmployeeId);
+  return {
+    virtualEmployeeId,
+    ...(visible ? { displayName: visible } : {}),
+    ...(avatarUrl ? { avatarUrl } : {}),
+  };
 }
 
 export function lockedAgentContact(locked: LockedAgent): ChatContact {
   return {
     id: locked.virtualEmployeeId,
-    name: locked.virtualEmployeeId,
+    name: lockedAgentVisibleName(locked),
     type: 'agent',
     virtualEmployeeId: locked.virtualEmployeeId,
+    ...(locked.avatarUrl ? { avatarUrl: locked.avatarUrl } : {}),
   };
 }
 

@@ -28,12 +28,14 @@ export function CachedAvatarImage({
   style,
   fallback = null,
 }: CachedAvatarImageProps) {
+  const [broken, setBroken] = useState(false);
   const [displaySrc, setDisplaySrc] = useState<string | null>(() => {
     if (!src) return null;
     return shouldPersistAssetUrl(src) ? null : src;
   });
 
   useEffect(() => {
+    setBroken(false);
     if (!src) {
       setDisplaySrc(null);
       return;
@@ -66,8 +68,8 @@ export function CachedAvatarImage({
     };
   }, [src, assetId]);
 
-  if (!displaySrc) return <>{fallback}</>;
-  return <img src={displaySrc} alt={alt} className={className} style={style} />;
+  if (!displaySrc || broken) return <>{fallback}</>;
+  return <img src={displaySrc} alt={alt} className={className} style={style} onError={() => setBroken(true)} />;
 }
 
 /** True when a catalog row is a 2D portrait (not VRM/VRMA/manifest). */

@@ -110,10 +110,18 @@ import {
 import {
   lockedAgentAllowsContact,
   lockedAgentContact,
+  lockedAgentVisibleName,
   parseLockedAgent,
   rehydrateRowsFromMessages,
+  resolveDisplayAvatar,
   type LockedAgent,
 } from './session/locked-agent.js';
+import {
+  assistantFromFallbackCompletion,
+  fallbackMessagesFromTurns,
+  fallbackTransportSelected,
+  type FallbackChatTransport,
+} from './fallback/fallback-transport.js';
 import {
   ConversationAgentIndex,
   acceptLockedAgentSendConversation,
@@ -262,7 +270,28 @@ export type {
 } from './session/contact-threads.js';
 export { createContactThreadApi } from './session/contact-thread-api.js';
 export type { ContactThreadApi, CommandClientLike } from './session/contact-thread-api.js';
-export { parseLockedAgent, CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID } from './session/locked-agent.js';
+export {
+  parseLockedAgent,
+  lockedAgentVisibleName,
+  threadEmptyLabel,
+  humanAgentLabel,
+  usableAvatarUrl,
+  resolveDisplayAvatar,
+  CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID,
+} from './session/locked-agent.js';
+export {
+  fallbackTransportSelected,
+  fallbackMessagesFromTurns,
+  assistantFromFallbackCompletion,
+  normalizeFallbackCards,
+} from './fallback/fallback-transport.js';
+export type {
+  FallbackChatTransport,
+  FallbackChatRequest,
+  FallbackChatMessage,
+  FallbackChatCompletion,
+  FallbackChatCard,
+} from './fallback/fallback-transport.js';
 export type { LockedAgent } from './session/locked-agent.js';
 export {
   LOCKED_AGENT_SEND_ROOM,
@@ -919,7 +948,7 @@ export type AiDispatchSummary = {
 };
 
 export type SendMessageResult =
-  | { ok: true; aiDispatch?: AiDispatchSummary | null; dispatched?: boolean }
+  | { ok: true; aiDispatch?: AiDispatchSummary | null; dispatched?: boolean; transport?: 'fallback' }
   | { ok: false; code: string; message: string; kind?: string };
 
 function readAiDispatch(data: Record<string, unknown>): AiDispatchSummary | null {
@@ -1351,6 +1380,11 @@ export type CreateNexusChatOptions = {
    * and `/ai-agents/ve/...` avatar URLs (portal and region are different origins in local/dev).
    */
   publicFilesBaseUrl?: string | null;
+  /**
+   * OpenAI-like completion used when the host says Nexus is unavailable.
+   * The library does not call Nexus commands on that path.
+   */
+  fallbackTransport?: FallbackChatTransport | null;
 };
 
 /**
@@ -1424,6 +1458,67 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           : t,
       );
     syncMessagesFromTurns(turns);
+  };
+  const sendWithFallback = async (text: string): Promise<SendMessageResult> => {
+    const transport = opts.fallbackTransport;
+    if (!transport) {
+      return { ok: false, code: 'client_preflight', message: 'Fallback transport is not configured.' };
+    }
+    const id = `m_${Date.now()}`;
+    const nowIso = new Date().toISOString();
+    const userTurn: ChatTurn = {
+      id,
+      role: 'user',
+      text,
+      deliveryStatus: 'sending',
+      deliveryError: null,
+      createdAt: nowIso,
+    };
+    const prior = store.getState().turns;
+    syncMessagesFromTurns([...prior, userTurn]);
+    store.setState({ streaming: true });
+    patchCurrentPanel({ streaming: true, billingIssue: null });
+    opts.hooks?.onStreamState?.('streaming');
+    opts.logger?.debug?.('fallback_transport_send', { turns: prior.length + 1 });
+    try {
+      const completion = await transport.complete({ messages: fallbackMessagesFromTurns([...prior, userTurn]) });
+      const assistant = assistantFromFallbackCompletion(completion);
+      if (!assistant.text.trim() && !assistant.cards.length) {
+        throw new Error('The assistant returned an empty reply.');
+      }
+      const assistantTurn: ChatTurn = {
+        id: `a_${Date.now()}`,
+        role: 'assistant',
+        text: assistant.text,
+        ...(assistant.cards.length ? { cards: assistant.cards } : {}),
+        createdAt: new Date().toISOString(),
+      };
+      syncMessagesFromTurns([
+        ...store.getState().turns.map((turn) =>
+          turn.id === id ? { ...turn, deliveryStatus: 'sent' as const, deliveryError: null } : turn,
+        ),
+        assistantTurn,
+      ]);
+      store.setState({ streaming: false });
+      patchCurrentPanel({ streaming: false });
+      opts.hooks?.onStreamState?.('idle');
+      emitSendOutcome(opts.hooks, 'ok');
+      return { ok: true, transport: 'fallback' };
+    } catch (err) {
+      store.setState({ streaming: false });
+      patchCurrentPanel({ streaming: false });
+      opts.hooks?.onStreamState?.('error');
+      const message = err instanceof Error && err.message.trim() ? err.message : 'Fallback chat failed.';
+      const code =
+        err && typeof err === 'object' && typeof (err as { code?: unknown }).code === 'string'
+          ? (err as { code: string }).code
+          : 'fallback_transport';
+      markUserDeliveryFailed(id, code, message);
+      opts.logger?.warn?.('fallback_transport_failed', { code });
+      opts.hooks?.onError?.(err);
+      emitSendOutcome(opts.hooks, 'exception');
+      return { ok: false, code, message };
+    }
   };
   const patchCurrentPanel = (patch: Partial<PanelState>) => {
     store.setState({
@@ -3085,6 +3180,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         pageFunctionCalls?: string[];
       } = {},
     ): Promise<SendMessageResult> {
+      if (fallbackTransportSelected(opts.fallbackTransport)) {
+        return sendWithFallback(text);
+      }
       let createdForLockedAgent: string | null = null;
       let conversationId = sendOpts.conversationId || store.getState().conversationId || undefined;
       const contactId = sendOpts.contactId || store.getState().selectedAgentId || undefined;
@@ -3989,13 +4087,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       roomId: null,
       roomPurpose: 'conversation',
     });
-    whenLockedAgentReady = ensureLockedAgentConversation(lockedAgent.virtualEmployeeId);
+    whenLockedAgentReady = fallbackTransportSelected(opts.fallbackTransport)
+      ? Promise.resolve(null)
+      : ensureLockedAgentConversation(lockedAgent);
   }
 
   return controller;
 
-  async function ensureLockedAgentConversation(virtualEmployeeId: string) {
-    const contact = lockedAgentContact({ virtualEmployeeId });
+  async function ensureLockedAgentConversation(locked: LockedAgent) {
+    const virtualEmployeeId = locked.virtualEmployeeId;
+    const contact = lockedAgentContact(locked);
     opts.logger?.debug?.('locked_agent_open_start', { virtualEmployeeId });
     try {
       const opened = await controller.openLatest(contact);
@@ -4039,17 +4140,32 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         }
         try {
           const rows = await controller.listConversations({ status: 'active', limit: 50 });
+          const openedRow = rows.find((row) => {
+            const id = String(row.conversationId || row.id || '').trim();
+            return id === conversationId;
+          });
           const named = rows.find(
             (row) => typeof row.agentName === 'string' && String(row.agentName).trim(),
           );
-          const name = named ? String(named.agentName).trim() : '';
-          if (name) {
-            store.setState({
-              contacts: store.getState().contacts.map((entry) =>
-                entry.id === contact.id ? { ...entry, name } : entry,
-              ),
-            });
-          }
+          const serverName =
+            (typeof openedRow?.agentName === 'string' && openedRow.agentName) ||
+            (named ? String(named.agentName) : '');
+          const label = lockedAgentVisibleName(locked, serverName);
+          const serverAvatar =
+            (typeof openedRow?.avatarUrl === 'string' && openedRow.avatarUrl) ||
+            (typeof openedRow?.profilePicture === 'string' && openedRow.profilePicture) ||
+            '';
+          store.setState({
+            contacts: store.getState().contacts.map((entry) =>
+              entry.id === contact.id
+                ? {
+                    ...entry,
+                    name: label,
+                    avatarUrl: resolveDisplayAvatar(locked.avatarUrl, serverAvatar || entry.avatarUrl),
+                  }
+                : entry,
+            ),
+          });
         } catch (err) {
           opts.logger?.warn?.('locked_agent_name_failed', {
             virtualEmployeeId,

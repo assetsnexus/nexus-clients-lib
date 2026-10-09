@@ -102,6 +102,12 @@ export function ThreadView({
                 })}
               </div>
             ) : null}
+            {(turn.cards || []).map((card, index) => (
+              <article key={card.id || `${turn.id}-card-${index}`} className="nexus-chat__fallback-card" data-nexus-card={card.kind || 'card'}>
+                {card.title ? <strong>{card.title}</strong> : null}
+                {card.body ? <p>{card.body}</p> : null}
+              </article>
+            ))}
             {(turn.toolEvents || []).map((run) => (
               <ToolTimelineRow
                 key={run.id}

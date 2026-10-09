@@ -118,6 +118,16 @@ export type ChatTurn = {
   senderId?: string | null;
   /** Display name when known (rooms / multi-party). */
   senderName?: string | null;
+  /**
+   * Cards returned by a host fallback transport.
+   * These are not tool-timeline rows.
+   */
+  cards?: Array<{
+    id?: string;
+    title?: string;
+    body?: string;
+    kind?: string;
+  }>;
 };
 
 export type PanelState = {

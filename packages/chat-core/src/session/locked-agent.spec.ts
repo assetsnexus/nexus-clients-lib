@@ -4,6 +4,9 @@ import {
   LOCKED_AGENT_SEND_ROOM,
   LOCKED_AGENT_SEND_UNKNOWN,
   createNexusChat,
+  lockedAgentVisibleName,
+  parseLockedAgent,
+  threadEmptyLabel,
 } from '../index.js';
 import { filterConversationsForLockedAgent } from './locked-agent.js';
 
@@ -27,6 +30,36 @@ function conversations() {
     },
   ];
 }
+
+describe('locked agent labels', () => {
+  it('shows the host name and never the raw id', () => {
+    expect(parseLockedAgent({ virtualEmployeeId: LOCKED, displayName: ' Guide ' })).toEqual({
+      virtualEmployeeId: LOCKED,
+      displayName: 'Guide',
+    });
+    expect(parseLockedAgent({ virtualEmployeeId: LOCKED, displayName: LOCKED })).toEqual({
+      virtualEmployeeId: LOCKED,
+    });
+    expect(lockedAgentVisibleName({ virtualEmployeeId: LOCKED, displayName: 'Guide' }, LOCKED)).toBe('Guide');
+    expect(lockedAgentVisibleName({ virtualEmployeeId: LOCKED, displayName: 'Guide' }, 'Server Name')).toBe('Guide');
+    expect(lockedAgentVisibleName({ virtualEmployeeId: LOCKED }, 'Server Name')).toBe('Server Name');
+    expect(parseLockedAgent({ virtualEmployeeId: LOCKED, displayName: 'Guide', avatarUrl: '  ' })).toEqual({
+      virtualEmployeeId: LOCKED,
+      displayName: 'Guide',
+    });
+    expect(
+      parseLockedAgent({ virtualEmployeeId: LOCKED, displayName: 'Guide', avatarUrl: 'https://cdn.example/a.png' })
+        .avatarUrl,
+    ).toBe('https://cdn.example/a.png');
+    expect(lockedAgentVisibleName({ virtualEmployeeId: LOCKED })).toBe('Agent');
+    expect(threadEmptyLabel({ lockedAgent: { virtualEmployeeId: LOCKED }, contactSelected: true })).toBe(
+      'Send a message to start.',
+    );
+    expect(threadEmptyLabel({ lockedAgent: null, contactSelected: false })).toBe(
+      'Select a contact to start chatting.',
+    );
+  });
+});
 
 describe('filterConversationsForLockedAgent', () => {
   it('drops a conversation for a different agent', () => {
@@ -120,10 +153,60 @@ describe('createNexusChat lockedAgent', () => {
     expect(listed.map((row) => row.conversationId)).toEqual([]);
   });
 
+  it('keeps the host display name until the server agent name arrives, and reports grant failures', async () => {
+    const chat = createNexusChat({
+      lockedAgent: { virtualEmployeeId: LOCKED, displayName: 'Guide' },
+      client: {
+        send: async (command) => {
+          if (command === 'anx.communicate.conversations.list') {
+            return {
+              ok: true,
+              data: {
+                conversations: [
+                  {
+                    conversationId: 'mine',
+                    virtualEmployeeId: LOCKED,
+                    status: 'active',
+                    lastActivityAt: '2026-06-01T00:00:00.000Z',
+                    agentName: 'Guide',
+                  },
+                ],
+              },
+            };
+          }
+          if (command === 'anx.communicate.conversations.messages.list') {
+            return { ok: true, data: { messages: [] } };
+          }
+          if (command === 'anx.communicate.stream-init') {
+            return { ok: true, data: { resourceId: 'mine', endpoints: [] } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    expect(chat.getState().contacts[0]?.name).toBe('Guide');
+    expect(chat.getState().contacts[0]?.name).not.toBe(LOCKED);
+    await chat.whenLockedAgentReady;
+    expect(chat.getState().contacts[0]?.name).toBe('Guide');
+
+    const denied = createNexusChat({
+      lockedAgent: { virtualEmployeeId: LOCKED, displayName: 'Guide' },
+      client: {
+        send: async () => ({
+          ok: false,
+          code: 'NO_NEXUS_GRANT',
+          message: 'Sign in with Nexus to chat.',
+        }),
+      },
+    });
+    await expect(denied.whenLockedAgentReady).rejects.toThrow(/Sign in with Nexus to chat/);
+    expect(denied.getState().contacts[0]?.name).toBe('Guide');
+  });
+
   it('surfaces NO_NEXUS_GRANT when a locked send must open a conversation', async () => {
     const errors: unknown[] = [];
     const chat = createNexusChat({
-      lockedAgent: { virtualEmployeeId: LOCKED },
+      lockedAgent: { virtualEmployeeId: LOCKED, displayName: 'Guide' },
       hooks: {
         onError: (err) => {
           errors.push(err);
@@ -155,6 +238,8 @@ describe('createNexusChat lockedAgent', () => {
       message: 'Sign in with Nexus to chat.',
       code: 'NO_NEXUS_GRANT',
     });
+    expect(chat.getState().contacts[0]?.name).toBe('Guide');
+    expect(chat.getState().contacts[0]?.name).not.toBe(LOCKED);
   });
 
   it('sends to the locked agent conversation and refuses other threads and rooms', async () => {
