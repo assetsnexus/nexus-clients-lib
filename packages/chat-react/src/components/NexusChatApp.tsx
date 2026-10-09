@@ -8,6 +8,7 @@ import {
   type CommandClient,
   type ConversationRow,
   type CreateNexusChatOptions,
+  type HostPageContext,
   type LockedAgent,
   type NexusChat,
   filterSttModelsForPicker,
@@ -107,6 +108,12 @@ export type NexusChatAppProps = {
    * builds the controller.
    */
   lockedAgent?: LockedAgent | null;
+  /**
+   * Structured context from the host page. Optional. When it includes a
+   * project id, later sends carry that id. A context brain may set the same
+   * fields. Omit it when the page has no project.
+   */
+  pageContext?: HostPageContext | null;
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -167,6 +174,7 @@ export function NexusChatApp({
   identities = [],
   agentTarget = null,
   lockedAgent: lockedAgentProp = null,
+  pageContext = null,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
@@ -191,35 +199,41 @@ export function NexusChatApp({
 
   const chat = useMemo(() => {
     if (chatProp) return chatProp;
-    if (!createOptions) {
-      throw new Error('NexusChatApp requires `chat` or `createOptions`');
+    const resolvedClient = clientProp || createOptions?.client;
+    if (!resolvedClient) {
+      throw new Error('NexusChatApp requires `chat`, `createOptions`, or `client`');
     }
     const hooks: ChatHooks = {
-      ...(createOptions.hooks || {}),
+      ...(createOptions?.hooks || {}),
       onScaRequired: (info) => {
-        createOptions.hooks?.onScaRequired?.(info);
+        createOptions?.hooks?.onScaRequired?.(info);
         uiHooksRef.current.onScaRequired?.(info);
       },
       onDataAccessApproval: (info) => {
-        createOptions.hooks?.onDataAccessApproval?.(info);
+        createOptions?.hooks?.onDataAccessApproval?.(info);
         uiHooksRef.current.onDataAccessApproval?.(info);
       },
       onPermissionElevationRequired: (info) => {
-        createOptions.hooks?.onPermissionElevationRequired?.(info);
+        createOptions?.hooks?.onPermissionElevationRequired?.(info);
         uiHooksRef.current.onPermissionElevationRequired?.(info);
       },
       onClientToolRequest: async (req) => {
-        await createOptions.hooks?.onClientToolRequest?.(req);
+        await createOptions?.hooks?.onClientToolRequest?.(req);
         await uiHooksRef.current.onClientToolRequest?.(req);
       },
     };
     return createNexusChat({
       ...createOptions,
+      client: resolvedClient,
       hooks,
-      features: { ...createOptions.features, ...coreFeaturesFromReact(features) },
-      lockedAgent: lockedAgent ?? createOptions.lockedAgent ?? null,
+      features: { ...createOptions?.features, ...coreFeaturesFromReact(features) },
+      lockedAgent: lockedAgent ?? createOptions?.lockedAgent ?? null,
     });
-  }, [chatProp, createOptions, features, lockedAgent]);
+  }, [chatProp, clientProp, createOptions, features, lockedAgent]);
+
+  useEffect(() => {
+    chat.setHostPageContext(pageContext ?? null);
+  }, [chat, pageContext]);
 
   const client = clientProp || createOptions?.client;
   const [fundingGate, setFundingGate] = useState<FundingGateState>(initialFundingGate());

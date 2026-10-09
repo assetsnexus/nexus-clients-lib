@@ -24,6 +24,12 @@ import type {
   IoDescriptor,
 } from './types.js';
 import { DEFAULT_FEATURES } from './types.js';
+import {
+  normalizeHostPageContext,
+  type HostPageContext,
+} from './host-page-context.js';
+
+export { normalizeHostPageContext, type HostPageContext } from './host-page-context.js';
 import { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 import {
   LiveAttachSession,
@@ -952,6 +958,11 @@ export type NexusChat = {
   subscribe: (listener: Listener) => () => void;
   /** Get structured summary (topics + todos) for a conversation. */
   getConversationSummary: (conversationId: string) => Promise<ConversationSummaryResult>;
+  /**
+   * Host page context for later sends. Pass null to clear it.
+   * A context brain may call this with the same fields.
+   */
+  setHostPageContext: (next: HostPageContext | null) => void;
   sendMessage: (
     text: string,
     opts?: {
@@ -964,6 +975,11 @@ export type NexusChat = {
       uiLocale?: string;
       currentPagePath?: string;
       injectedSystemPrompts?: string[];
+      /**
+       * Host page context. Optional. When `projectId` is set, project-scoped
+       * tools use it. A context brain may set the same fields later.
+       */
+      pageContext?: HostPageContext;
       pageEntityRef?: {
         type: string;
         id?: string | null;
@@ -1326,6 +1342,7 @@ export type CreateNexusChatOptions = {
 export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   const features: ChatFeatures = { ...DEFAULT_FEATURES, ...(opts.features || {}) };
   const lockedAgent = parseLockedAgent(opts.lockedAgent);
+  let hostPageContext: HostPageContext | undefined;
   const streamResolver = new StreamEndpointResolver();
   const translate = (key: keyof typeof DEFAULT_I18N) => opts.i18n?.[key] || DEFAULT_I18N[key];
   const store = createStore({
@@ -3003,6 +3020,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         status: String(data.status || 'scheduled'),
       };
     },
+    setHostPageContext(next) {
+      hostPageContext = normalizeHostPageContext(next);
+    },
     async sendMessage(
       text: string,
       sendOpts: {
@@ -3015,6 +3035,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         uiLocale?: string;
         /** Current portal route — used with tinyPagePointer for page_context. */
         currentPagePath?: string;
+        /** Overrides the host page context set with setHostPageContext for this send. */
+        pageContext?: HostPageContext;
         /**
          * Tiny page pointer prompt string(s). Prefer over pageInstructions/pageData.
          * Inference tags these as page_context.
@@ -3241,6 +3263,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 ),
               ]
             : explicitTools;
+        const pageContext = normalizeHostPageContext(sendOpts.pageContext) ?? hostPageContext;
         const result = (await opts.client.send(command, {
           text,
           message: command === 'anx.inference.chat.completions' ? text : undefined,
@@ -3252,6 +3275,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.reasoningEffort ? { reasoningEffort: sendOpts.reasoningEffort } : {}),
           ...(sendOpts.uiLocale ? { uiLocale: sendOpts.uiLocale } : {}),
           ...(sendOpts.currentPagePath ? { currentPagePath: sendOpts.currentPagePath } : {}),
+          ...(pageContext ? { pageContext } : {}),
           ...(sendOpts.injectedSystemPrompts?.length
             ? { injectedSystemPrompts: sendOpts.injectedSystemPrompts }
             : {}),
