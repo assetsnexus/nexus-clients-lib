@@ -120,6 +120,43 @@ describe('createNexusChat lockedAgent', () => {
     expect(listed.map((row) => row.conversationId)).toEqual([]);
   });
 
+  it('surfaces NO_NEXUS_GRANT when a locked send must open a conversation', async () => {
+    const errors: unknown[] = [];
+    const chat = createNexusChat({
+      lockedAgent: { virtualEmployeeId: LOCKED },
+      hooks: {
+        onError: (err) => {
+          errors.push(err);
+        },
+      },
+      client: {
+        send: async (command) => {
+          if (command === 'anx.communicate.conversations.list') {
+            return { ok: true, data: { conversations: [] } };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: false, code: 'NO_NEXUS_GRANT', message: 'Sign in with Nexus to chat.' };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await expect(chat.whenLockedAgentReady).rejects.toThrow(/Sign in with Nexus to chat/);
+    const beforeSend = errors.length;
+    const result = await chat.sendMessage('hello locked');
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'NO_NEXUS_GRANT',
+      message: 'Sign in with Nexus to chat.',
+    });
+    expect(errors.length).toBe(beforeSend + 1);
+    expect(errors[beforeSend]).toBeInstanceOf(Error);
+    expect(errors[beforeSend]).toMatchObject({
+      message: 'Sign in with Nexus to chat.',
+      code: 'NO_NEXUS_GRANT',
+    });
+  });
+
   it('sends to the locked agent conversation and refuses other threads and rooms', async () => {
     const body = 'do-not-log-this-body';
     const { chat, sent, logs } = sendHarness({ locked: true });

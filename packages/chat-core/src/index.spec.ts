@@ -261,6 +261,104 @@ describe('chat-core', () => {
     expect(chat.getState().streaming).toBe(false);
   });
 
+  it.each(['NO_NEXUS_GRANT', 'NEEDS_NEXUS_LOGIN'] as const)(
+    'reports %s from message.send on onError for chatFailureInfo',
+    async (code) => {
+      const errors: unknown[] = [];
+      const chat = createNexusChat({
+        hooks: {
+          onError: (err) => {
+            errors.push(err);
+          },
+        },
+        client: {
+          send: async (command: string) => {
+            if (command === 'anx.communicate.stream-init') {
+              return { ok: true, data: { endpoints: [], token: null, resourceId: 'c1' } };
+            }
+            if (command === 'anx.communicate.message.send') {
+              return { ok: false, code, message: 'Sign in with Nexus to chat.' };
+            }
+            return { ok: true, data: {} };
+          },
+        },
+      });
+      const result = await chat.sendMessage('ping', { conversationId: 'c1' });
+      expect(result).toMatchObject({
+        ok: false,
+        code,
+        message: 'Sign in with Nexus to chat.',
+      });
+      expect(errors).toHaveLength(1);
+      const err = errors[0] as Error & { code?: string };
+      expect(err).toBeInstanceOf(Error);
+      expect({ message: err.message, code: err.code }).toEqual({
+        message: 'Sign in with Nexus to chat.',
+        code,
+      });
+      const turn = chat.getState().turns.find((entry) => entry.role === 'user');
+      expect(turn?.deliveryError?.code).toBe(code);
+    },
+  );
+
+  it('keeps NO_NEXUS_GRANT on openContact when conversations.create fails', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: false, code: 'NO_NEXUS_GRANT', message: 'Sign in with Nexus to chat.' };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await expect(chat.openContact('ve-1')).rejects.toMatchObject({
+      message: 'Sign in with Nexus to chat.',
+      code: 'NO_NEXUS_GRANT',
+    });
+  });
+
+  it('surfaces NO_NEXUS_GRANT when send has to open the agent conversation', async () => {
+    const errors: unknown[] = [];
+    const chat = createNexusChat({
+      hooks: {
+        onError: (err) => {
+          errors.push(err);
+        },
+      },
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [{ employeeId: 've-1', name: 'Helper' }] };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            return { ok: true, data: [] };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: false, code: 'NO_NEXUS_GRANT', message: 'Sign in with Nexus to chat.' };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const result = await chat.sendMessage('hello', { contactId: 've-1' });
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'NO_NEXUS_GRANT',
+      message: 'Sign in with Nexus to chat.',
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0]).toMatchObject({
+      message: 'Sign in with Nexus to chat.',
+      code: 'NO_NEXUS_GRANT',
+    });
+  });
+
   it('flattens updateRoomOrchestration payload', async () => {
     const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
     const chat = createNexusChat({

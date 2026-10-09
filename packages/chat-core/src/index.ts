@@ -103,6 +103,11 @@ import {
 } from './attachments.js';
 import { createContactThreadApi, type ContactThreadApi } from './session/contact-thread-api.js';
 import {
+  commandFailureError,
+  nexusSessionCode,
+  readCommandFailureCode,
+} from './session/command-failure.js';
+import {
   lockedAgentAllowsContact,
   lockedAgentContact,
   parseLockedAgent,
@@ -498,6 +503,8 @@ export type SendResult =
         onboardingSatisfied?: boolean;
       };
       message?: string;
+      /** Partner soft-fail code, e.g. NO_NEXUS_GRANT. Distinct from `kind`. */
+      code?: string;
       retryAfterMs?: number;
       lockedUntil?: string | null;
       error?: Record<string, unknown>;
@@ -927,6 +934,17 @@ function emitSendOutcome(hooks: ChatHooks | undefined, code: ChatSendOutcomeCode
   } catch {
     // Host hooks must not break send flow.
   }
+}
+
+function warnNexusSession(
+  logger: { warn?: Function } | undefined,
+  failure: unknown,
+  command: string,
+): string | undefined {
+  const code = nexusSessionCode(readCommandFailureCode(failure));
+  if (!code) return undefined;
+  logger?.warn?.('nexus_session_required', { code, command });
+  return code;
 }
 
 export type ConversationSummaryTopic = {
@@ -1995,7 +2013,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           command: 'anx.communicate.conversations.create',
         });
       }
-      throw new Error(result.message || 'conversations.create failed');
+      throw commandFailureError(result, 'conversations.create failed');
     }
 
     const data = unwrapData(result);
@@ -2008,7 +2026,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         title: requestedTitle,
       })) as SendResult;
       if (renamed && typeof renamed === 'object' && 'ok' in renamed && renamed.ok === false) {
-        throw new Error(renamed.message || 'conversations.update failed');
+        throw commandFailureError(renamed, 'conversations.update failed');
       }
     }
     const canonicalId = contact?.id || contactId;
@@ -3102,8 +3120,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           emitSendOutcome(opts.hooks, 'client_preflight');
           const message =
             openErr instanceof Error ? openErr.message : 'Could not open agent conversation';
+          const sessionCode = warnNexusSession(
+            opts.logger,
+            openErr,
+            'anx.communicate.conversations.create',
+          );
           opts.hooks?.onError?.(openErr);
-          return { ok: false, code: 'client_preflight', message };
+          return { ok: false, code: sessionCode || 'client_preflight', message };
         }
       }
 
@@ -3154,9 +3177,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             opts.hooks?.onStreamState?.('error');
             const message =
               openErr instanceof Error ? openErr.message : 'Could not open agent conversation';
-            markUserDeliveryFailed(id, 'client_preflight', message);
+            const sessionCode = warnNexusSession(
+              opts.logger,
+              openErr,
+              'anx.communicate.conversations.create',
+            );
+            markUserDeliveryFailed(id, sessionCode || 'client_preflight', message);
             opts.hooks?.onError?.(openErr);
-            return { ok: false, code: 'client_preflight', message };
+            return { ok: false, code: sessionCode || 'client_preflight', message };
           }
         }
 
@@ -3324,11 +3352,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           opts.hooks?.onStreamState?.('error');
           closeSocket();
           emitSendOutcome(opts.hooks, 'command_error');
-          const message = result.message || result.kind || 'Send failed';
-          markUserDeliveryFailed(id, result.kind || 'command_error', message);
+          const sessionCode = warnNexusSession(opts.logger, result, command);
+          const message = result.message || sessionCode || result.kind || 'Send failed';
+          const reported = sessionCode || result.kind || 'command_error';
+          markUserDeliveryFailed(id, reported, message);
+          if (sessionCode) {
+            opts.hooks?.onError?.(commandFailureError(result, message));
+          }
           return {
             ok: false,
-            code: result.kind || 'command_error',
+            code: reported,
             message,
             kind: result.kind,
           };
