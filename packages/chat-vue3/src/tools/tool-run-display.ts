@@ -1,4 +1,4 @@
-import type { ChatToolRun } from '@nexus/chat-core';
+import { displayToolCallName, type ChatToolRun } from '@nexus/chat-core';
 import { asRecord, displayAnxCommandName, truncateLabel } from './shared';
 
 export type ToolRunDisplay = {
@@ -161,6 +161,11 @@ export function formatToolRunDisplay(run: ChatToolRun): ToolRunDisplay {
     return anxCommandDisplay(run);
   }
 
-  const fallback = truncateLabel(run.label || run.tool || 'tool', 64);
-  return { title: fallback, subtitle: null, tooltip: run.tool || run.label || fallback };
+  const named = displayToolCallName(run.tool || run.label || 'tool');
+  const title = truncateLabel(named.name, 64);
+  return {
+    title,
+    subtitle: named.server,
+    tooltip: run.tool || title,
+  };
 }

@@ -483,6 +483,9 @@ export {
   parsePresentFileItem,
   parsePresentFileItems,
   presentFileKind,
+  displayToolCallName,
+  formatToolResultText,
+  presentToolRunRow,
   parseMediaImages,
   parseWorkloadMediaImages,
   parseMediaAudioUrl,
@@ -494,6 +497,8 @@ export {
 export type {
   ScheduleCheckBackResult,
   PresentFileItem,
+  ToolCallNameParts,
+  ToolRunRowModel,
   MediaCarouselImage,
   UserChoiceOption,
 } from './tools/index.js';

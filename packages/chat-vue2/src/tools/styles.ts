@@ -169,13 +169,15 @@ export const TOOL_WIDGET_CSS = `
 .nexus-tool-run__chip.is-mode-blocked { color: #9a3412; background: rgba(196, 123, 43, 0.16); }
 .nexus-tool-run__chev { color: #94a3b8; font-size: 10px; flex-shrink: 0; margin-left: 2px; }
 .nexus-tool-run__actions,
-.nexus-tool-run__details {
+.nexus-tool-run__details,
+.nexus-tool-run__result {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 0 8px 8px;
 }
-.nexus-tool-run__details { flex-direction: column; gap: 6px; }
+.nexus-tool-run__details,
+.nexus-tool-run__result { flex-direction: column; gap: 6px; }
 .nexus-tool-run__block { display: flex; flex-direction: column; gap: 3px; }
 .nexus-tool-run__kicker {
   font-size: 10px;

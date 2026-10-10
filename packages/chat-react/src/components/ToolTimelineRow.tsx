@@ -1,7 +1,7 @@
 import {
   isScheduleCheckBackTool,
   parseMediaImages,
-  parsePresentFileItems,
+  presentToolRunRow,
   type ChatToolRun,
   type NexusChat,
 } from '@nexus/chat-core';
@@ -36,14 +36,16 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
   }
 
   const images = parseMediaImages(run.result);
-  const files = parsePresentFileItems(run.result);
+  const row = presentToolRunRow(run);
   const showMedia = images.length > 0;
-  const showFiles = files.length > 0;
+  const showFiles = row.files.length > 0;
+  const resultText = showMedia ? null : row.resultText;
 
   return (
     <div className={`nexus-chat__tool-row ${mod}`.trim()}>
-      <strong>{run.label || run.tool}</strong>
-      <span> · {status}</span>
+      <strong>{row.name}</strong>
+      {row.server ? <span className="nexus-chat__tool-server">{row.server}</span> : null}
+      <span> · {row.status}</span>
       {run.error ? <div className="nexus-chat__error">{run.error}</div> : null}
       {showMedia ? (
         <div className="nexus-chat__media-strip" role="list">
@@ -69,7 +71,7 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
       ) : null}
       {showFiles ? (
         <div className="nexus-chat__file-chips">
-          {files.map((f, i) => (
+          {row.files.map((f, i) => (
             <button
               key={`${f.fileId || f.label}-${i}`}
               type="button"
@@ -88,6 +90,9 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
             </button>
           ))}
         </div>
+      ) : null}
+      {resultText ? (
+        <pre className="nexus-chat__tool-result">{resultText}</pre>
       ) : null}
     </div>
   );

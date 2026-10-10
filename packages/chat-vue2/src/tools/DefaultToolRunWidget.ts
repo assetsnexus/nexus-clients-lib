@@ -1,5 +1,5 @@
 import { defineComponent } from 'vue';
-import type { ChatToolRun } from '@nexus/chat-core';
+import { formatToolResultText, type ChatToolRun } from '@nexus/chat-core';
 import { formatToolRunDisplay } from './tool-run-display';
 import { resolveToolAccessKind, toolStatusClass, toolStatusLabel } from './shared';
 
@@ -33,6 +33,9 @@ export const DefaultToolRunWidget = defineComponent({
     },
     accessKind(): ReturnType<typeof resolveToolAccessKind> {
       return resolveToolAccessKind(this.run as ChatToolRun);
+    },
+    resultText(): string | null {
+      return formatToolResultText((this.run as ChatToolRun).result);
     },
   },
   render(h: any) {
@@ -97,6 +100,14 @@ export const DefaultToolRunWidget = defineComponent({
               : null,
           ],
         ),
+        this.resultText
+          ? h('div', { class: 'nexus-tool-run__result' }, [
+              h('div', { class: 'nexus-tool-run__block' }, [
+                h('div', { class: 'nexus-tool-run__kicker' }, 'Result'),
+                h('pre', { class: 'nexus-tool-run__pre' }, this.resultText),
+              ]),
+            ])
+          : null,
         this.showApproval
           ? h('div', { class: 'nexus-tool-run__actions' }, [
               h(
@@ -133,16 +144,6 @@ export const DefaultToolRunWidget = defineComponent({
                 : null,
               run.error
                 ? h('p', { class: 'nexus-tool-run__error' }, String(run.error))
-                : null,
-              run.result != null
-                ? h('div', { class: 'nexus-tool-run__block' }, [
-                    h('div', { class: 'nexus-tool-run__kicker' }, 'Output'),
-                    h(
-                      'pre',
-                      { class: 'nexus-tool-run__pre' },
-                      JSON.stringify(run.result, null, 2),
-                    ),
-                  ])
                 : null,
             ])
           : null,

@@ -239,6 +239,26 @@
   border-left-color: #e6a700;
 }
 
+.nexus-chat__tool-server {
+  margin-left: 6px;
+  color: var(--nx-chat-muted);
+  font-weight: 400;
+}
+
+.nexus-chat__tool-result {
+  margin: 6px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #0a0c10;
+  color: var(--nx-chat-text);
+}
+
 .nexus-chat__composer {
   border-top: 1px solid var(--nx-chat-border);
   padding: var(--nx-chat-pad);

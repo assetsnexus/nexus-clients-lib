@@ -12,26 +12,88 @@ export type PresentFileItem = {
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  return v as Record<string, unknown>;
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/** Fields that identify a storage file. A JSON tool body has none of these. */
+const FILE_IDENTITY_KEYS = [
+  'fileId',
+  'objectKey',
+  'presignedUrl',
+  'storageReference',
+  'explorerUrl',
+  'bucketId',
+] as const;
+
+function hasPresentFileIdentity(data: Record<string, unknown>): boolean {
+  return FILE_IDENTITY_KEYS.some((key) => nonEmptyString(data[key]) != null);
+}
+
+function currentConsolePath(pathname?: string): string {
+  if (typeof pathname === 'string') return pathname;
+  if (typeof window !== 'undefined' && window.location) return window.location.pathname || '';
+  return '';
+}
+
+/** Personal console is `/user`. An org page (`/b2b/...`) must stay on that console. */
+export function storageConsolePrefix(pathname?: string): '/user' | '/b2b' {
+  return currentConsolePath(pathname).startsWith('/b2b') ? '/b2b' : '/user';
 }
 
 /**
- * Portal explorer deep-link: `/user/storage/browser/:workspaceId?file=:fileId`
+ * Portal explorer deep-link. `pathname` selects `/b2b` or `/user`.
+ * Omit it to follow the page the browser is on.
  */
 export function buildStorageExplorerUrl(
   workspaceId: string | null | undefined,
   fileId: string | null | undefined,
+  pathname?: string,
 ): string | null {
   if (!workspaceId || !fileId) return null;
-  return `/user/storage/browser/${encodeURIComponent(workspaceId)}?file=${encodeURIComponent(fileId)}`;
+  const prefix = storageConsolePrefix(pathname);
+  return `${prefix}/storage/browser/${encodeURIComponent(workspaceId)}?file=${encodeURIComponent(fileId)}`;
+}
+
+/** Rewrite a stored `/user/storage/...` link onto the console that is open. */
+export function toConsoleStorageExplorerUrl(
+  url: string | null | undefined,
+  pathname?: string,
+): string | null {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  const trimmed = url.trim();
+  const prefix = storageConsolePrefix(pathname);
+  try {
+    const parsed = new URL(trimmed, 'https://portal.local');
+    if (!/^\/(user|b2b)\/storage\/browser\//.test(parsed.pathname)) return trimmed;
+    parsed.pathname = parsed.pathname.replace(/^\/(user|b2b)/, prefix);
+    if (/^https?:\/\//i.test(trimmed)) return parsed.toString();
+    return `${parsed.pathname}${parsed.search}`;
+  } catch {
+    return trimmed;
+  }
+}
+
+export function fileIdFromStorageExplorerUrl(url: string | null | undefined): string | null {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  try {
+    const file = new URL(url.trim(), 'https://portal.local').searchParams.get('file');
+    return file && file.trim() ? file.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parsePresentFileItem(row: unknown): PresentFileItem | null {
   const data = asRecord(row);
-  if (!data) return null;
-  const objectKey = typeof data.objectKey === 'string' ? data.objectKey : undefined;
-  const fileId = typeof data.fileId === 'string' ? data.fileId : undefined;
-  const workspaceId = typeof data.workspaceId === 'string' ? data.workspaceId : undefined;
+  if (!data || !hasPresentFileIdentity(data)) return null;
+  const objectKey = nonEmptyString(data.objectKey);
+  const fileId = nonEmptyString(data.fileId);
+  const workspaceId = nonEmptyString(data.workspaceId);
   const label =
     typeof data.label === 'string' && data.label.trim()
       ? data.label.trim()
@@ -39,9 +101,10 @@ export function parsePresentFileItem(row: unknown): PresentFileItem | null {
   const mimeType =
     typeof data.mimeType === 'string' ? data.mimeType : 'application/octet-stream';
   const presignedUrl = typeof data.presignedUrl === 'string' ? data.presignedUrl : null;
-  const explorerUrl =
+  const explorerUrl = toConsoleStorageExplorerUrl(
     (typeof data.explorerUrl === 'string' && data.explorerUrl) ||
-    buildStorageExplorerUrl(workspaceId, fileId);
+      buildStorageExplorerUrl(workspaceId, fileId),
+  );
   return {
     label,
     mimeType,

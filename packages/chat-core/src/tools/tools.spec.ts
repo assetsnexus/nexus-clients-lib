@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStorageExplorerUrl,
+  displayToolCallName,
   formatCheckBackCountdown,
+  formatToolResultText,
   isCheckBackOverdue,
   isCheckBackTriggerSettledError,
   parseMediaImages,
   parsePresentFileItems,
+  presentToolRunRow,
+  toConsoleStorageExplorerUrl,
   parseScheduleCheckBackResult,
   parseUserChoiceOptions,
 } from './index.js';
@@ -48,6 +52,80 @@ describe('present-file', () => {
     });
     expect(files).toHaveLength(1);
     expect(files[0]?.explorerUrl).toContain('/user/storage/browser/ws1');
+    expect(
+      toConsoleStorageExplorerUrl('/user/storage/browser/ws1?file=f1', '/b2b/ai-employees'),
+    ).toBe('/b2b/storage/browser/ws1?file=f1');
+  });
+
+  it('does not treat a JSON or text tool result as a file', () => {
+    expect(
+      parsePresentFileItems({
+        projects: [{ id: 'p1', name: 'Alpha' }],
+      }),
+    ).toEqual([]);
+    expect(
+      parsePresentFileItems({
+        content: [{ type: 'text', text: '[{"id":"p1"}]' }],
+      }),
+    ).toEqual([]);
+    expect(parsePresentFileItems('plain text result')).toEqual([]);
+    expect(parsePresentFileItems({ files: [{ name: 'readme.md' }] })).toEqual([]);
+    expect(parsePresentFileItems({ label: 'File', mimeType: 'application/json' })).toEqual([]);
+  });
+
+  it('keeps a stored file when the result actually identifies one', () => {
+    const files = parsePresentFileItems({
+      fileId: 'f9',
+      label: 'notes.pdf',
+      mimeType: 'application/pdf',
+      presignedUrl: 'https://cdn/notes.pdf',
+    });
+    expect(files).toHaveLength(1);
+    expect(files[0]?.label).toBe('notes.pdf');
+  });
+});
+
+describe('tool call row', () => {
+  it('shows mcp__xcamp__list_projects as list_projects with the result visible', () => {
+    expect(displayToolCallName('mcp__xcamp__list_projects')).toEqual({
+      name: 'list_projects',
+      server: 'xcamp',
+    });
+    const result = { projects: [{ id: 'p1', name: 'Alpha' }] };
+    const row = presentToolRunRow({
+      tool: 'mcp__xcamp__list_projects',
+      label: 'mcp__xcamp__list_projects',
+      status: 'success',
+      result,
+    });
+    expect(row).toMatchObject({
+      name: 'list_projects',
+      server: 'xcamp',
+      status: 'success',
+      files: [],
+    });
+    expect(row.resultText).toContain('"name": "Alpha"');
+    expect(row.resultText).not.toBe('File');
+  });
+
+  it('keeps a real success body as success text and does not label an HTTP error body as a file', () => {
+    const ok = presentToolRunRow({
+      tool: 'list_projects',
+      status: 'success',
+      result: { ok: true, projects: [] },
+    });
+    expect(ok.status).toBe('success');
+    expect(ok.files).toEqual([]);
+    expect(ok.resultText).toContain('"ok": true');
+
+    const denied = parsePresentFileItems({
+      responseCode: 403,
+      message: 'Missing grant',
+    });
+    expect(denied).toEqual([]);
+    expect(formatToolResultText({ responseCode: 500, message: 'upstream failed' })).toContain(
+      'upstream failed',
+    );
   });
 });
 
