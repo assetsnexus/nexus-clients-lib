@@ -5,6 +5,7 @@ import type { PickerModel } from '../models/picker-types.js';
 import { contextDonutModel } from './context-donut.js';
 import { ContextDonut } from './ContextDonut.js';
 import { ReasoningEffortControl } from './ReasoningEffortControl.js';
+import { ADVANCED_USAGE_OPEN_BY_DEFAULT } from './usage-disclosure.js';
 
 function formatMinor(minor: number | undefined, currency?: string | null): string {
   if (minor == null || !Number.isFinite(minor)) return '—';
@@ -27,6 +28,7 @@ export function UsageChrome({
   onReasoningEffort,
   unavailable,
   nexusLogin,
+  variant = 'bar',
 }: {
   panel: PanelState | null;
   models: PickerModel[];
@@ -38,17 +40,10 @@ export function UsageChrome({
   onReasoningEffort: (next: ReasoningEffortLevel | null) => void;
   unavailable?: boolean;
   nexusLogin?: ReactNode;
+  /** `advanced` hides context, cost, and model selection until the user opens it. */
+  variant?: 'bar' | 'advanced';
 }) {
   const [open, setOpen] = useState(false);
-  if (unavailable) {
-    if (!nexusLogin) return null;
-    return (
-      <div className="nexus-chat__usage" data-nexus-surface="nexus-login">
-        {nexusLogin}
-      </div>
-    );
-  }
-
   const usage = panel?.usage;
   const model = contextDonutModel({
     snapshot: usage?.contextSnapshot,
@@ -61,6 +56,60 @@ export function UsageChrome({
       : usage?.costCents != null
         ? formatMinor(usage.costCents, usage.displayCurrency)
         : '—';
+
+  if (variant === 'advanced') {
+    return (
+      <details className="nexus-chat__advanced" open={ADVANCED_USAGE_OPEN_BY_DEFAULT || undefined}>
+        <summary>Advanced</summary>
+        <div className="nexus-chat__advanced-body">
+          {unavailable ? nexusLogin : null}
+          <div data-nexus-model="">
+            <ModelPicker
+              models={models}
+              value={selectedModelId}
+              loading={modelsLoading}
+              onChange={onSelectModel}
+            />
+          </div>
+          <ReasoningEffortControl
+            levels={reasoningLevels}
+            value={reasoningEffort}
+            onChange={onReasoningEffort}
+          />
+          <div data-nexus-context="">
+            <ContextDonut model={model} />
+            {model.slices.length ? (
+              <ul className="nexus-chat__donut-legend">
+                {model.slices.map((slice) => (
+                  <li key={slice.category}>
+                    <span>
+                      <span className="nexus-chat__donut-dot" style={{ background: slice.color }} />
+                      {slice.label}
+                    </span>
+                    <span>{slice.pct}%</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="nexus-chat__muted">{model.tokenLabel}</p>
+            )}
+          </div>
+          <div data-nexus-cost="" title="Cost">
+            {cost}
+          </div>
+        </div>
+      </details>
+    );
+  }
+
+  if (unavailable) {
+    if (!nexusLogin) return null;
+    return (
+      <div className="nexus-chat__usage" data-nexus-surface="nexus-login">
+        {nexusLogin}
+      </div>
+    );
+  }
 
   return (
     <div className="nexus-chat__usage">

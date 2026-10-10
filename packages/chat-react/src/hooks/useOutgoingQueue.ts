@@ -221,7 +221,9 @@ export function useOutgoingQueue(input: {
     revision,
     queueCount: items.length,
     bannerText,
-    bypassFallback: hostUnavailable && !holdForNexus,
+    // Holding for Nexus is the only reason to skip the host fallback.
+    // A missing grant does not. The queue flush retries Nexus on its own.
+    bypassFallback: holdForNexus,
     presence,
     nexusReplyDelivered,
     threadKey,
