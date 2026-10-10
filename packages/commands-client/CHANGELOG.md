@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+
+- `NexusBrowserSession` restores a host-owned Login with Nexus session. Access tokens inside a 60s skew are refreshed once. A rejected refresh clears the session only after the access token is actually expired. A transport failure keeps the stored session. Overlapping restores share one refresh. `nexus_session_restore` counts `restore`, `reauth`, and `unavailable` and does not log credentials.
+- `writeOAuthState` / `takeOAuthState` persist the OAuth `state` with a 10 minute TTL. The PKCE verifier stays on the BFF.
+
 ## 0.4.3
 
 - `buildAuthorizeUrl` accepts a space-separated `prompt` (`login consent`). `login` together with `create` is rejected.

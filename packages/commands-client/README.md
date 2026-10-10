@@ -102,6 +102,7 @@ A single HTTP 307, or a JSON envelope with `responseCode: 307` and `errorObjects
 - Rate-limit / `Retry-After` aware backoff
 - **Command connectivity**: `CommandConnectivityController` — strict transport-disconnect classifier, 3 attempts over ~10s, degraded/down state (portal overlay after 20s authenticated / 10s anonymous), read coalesce, `formatConnectivityTooltip`
 - OAuth PKCE helpers, JWKS cache, introspection
+- `NexusBrowserSession`: host-owned session restore (expiry skew, one refresh, fail closed on a dead refresh token). The PKCE verifier stays on the BFF; `writeOAuthState` stores only `state` plus an expiry
 - Region resolvers (static / country / gateway stub)
 - `subject` namespace: consented identities, regulatory status, field claims
 - `orgAdmin` reads `anx.compliance.security-policy.get`, `.self-status.get`, and `anx.compliance.org-overview.get` (org session or API key; an app access token is forbidden)

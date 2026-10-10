@@ -110,6 +110,25 @@ export {
   type TokenResponse,
   type IntrospectionResponse,
 } from './oauth/helpers.js';
+export {
+  NexusBrowserSession,
+  NEXUS_SESSION_EXPIRY_SKEW_MS,
+  accessTokenNeedsRefresh,
+  accessTokenStillValid,
+  readNexusBrowserSessionMetrics,
+  resetNexusBrowserSessionMetrics,
+  type NexusBrowserSessionPort,
+  type NexusSessionLogFields,
+  type NexusSessionMetricOutcome,
+  type NexusSessionRead,
+  type NexusSessionRefreshResult,
+  type NexusSessionRestoreResult,
+} from './oauth/browser-session.js';
+export {
+  NEXUS_OAUTH_STATE_TTL_MS,
+  takeOAuthState,
+  writeOAuthState,
+} from './oauth/state-store.js';
 export { GrantNamespace, type GrantView, type EffectiveCapability } from './grant/namespace.js';
 export {
   PrivacyCommandError,
