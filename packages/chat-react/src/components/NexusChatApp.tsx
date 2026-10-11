@@ -33,6 +33,7 @@ import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bri
 import { ContactList } from './ContactList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
+export type { ComposerControls, ComposerCallMode } from './composerHost.js';
 import { FundingQuickSelect } from './FundingQuickSelect.js';
 import {
   applyAccessDecision,
@@ -102,6 +103,11 @@ export type NexusChatAppProps = {
   features?: Partial<NexusChatReactFeatures>;
   collapsed?: boolean;
   className?: string;
+  /**
+   * `column` is one thread and composer. Context, cost, and model selection
+   * stay behind a collapsed Advanced control. No contact chrome.
+   */
+  layout?: 'app' | 'column';
   /** Post messages to a native WebView shell. */
   onPostToHost?: (msg: SdkToHostMessage) => void;
   locale?: string;
@@ -194,6 +200,7 @@ export function NexusChatApp({
   features: featuresProp,
   collapsed,
   className,
+  layout = 'app',
   onPostToHost,
   locale: localeProp,
   isAdmin,
@@ -773,6 +780,128 @@ export function NexusChatApp({
   const EmptySlot = slots?.empty;
 
   const showAdmin = features.adminPanels && route === 'admin';
+  const columnTurns = panel?.turns || state.turns;
+
+  if (layout === 'column') {
+    return (
+      <div
+        ref={rootRef}
+        className={`nexus-chat nexus-chat--column${className ? ` ${className}` : ''}`}
+        lang={locale}
+        data-nexus-layout="column"
+      >
+        <div className="nexus-chat__column-thread">
+          {sessionError ? (
+            <div className="nexus-chat__banner" role="alert">
+              <span>{sessionError}</span>
+            </div>
+          ) : null}
+          {presentation.mountGrants ? (
+            <div data-nexus-surface="grants">
+              <ScaRequiredBanner info={scaInfo} />
+              {clientToolReq ? (
+                <ClientToolGrantCard
+                  request={clientToolReq}
+                  chat={chat}
+                  onResolved={() => setClientToolReq(null)}
+                />
+              ) : null}
+              {dataAccessPrompt ? (
+                <DataAccessPromptCard
+                  prompt={dataAccessPrompt}
+                  client={client}
+                  onResponded={() => setDataAccessPrompt(null)}
+                  onSca={handleSca}
+                />
+              ) : null}
+              {elevationPrompt ? (
+                <PermissionElevationCard
+                  prompt={elevationPrompt}
+                  client={client}
+                  onResponded={() => setElevationPrompt(null)}
+                  onSca={handleSca}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {presentation.mountApprovals ? <ApprovalsStrip chat={chat} turns={columnTurns} /> : null}
+          {presentation.mountSubagents ? (
+            <SubAgentsStrip chat={chat} client={client} turns={columnTurns} />
+          ) : null}
+          <div className="nexus-chat__thread-row">
+            {presentation.mountToolTimeline ? <div data-nexus-surface="tool-timeline" hidden /> : null}
+            <ThreadView
+              turns={columnTurns}
+              streaming={panel?.streaming || state.streaming}
+              empty=""
+              chat={chat}
+              conversationId={conversationId}
+              onOpenFile={openFile}
+            />
+            <FileViewer
+              tabs={viewerTabs}
+              activeTabId={activeViewerTabId}
+              onSelectTab={setActiveViewerTabId}
+              onCloseTab={closeViewerTab}
+            />
+          </div>
+        </div>
+        <UsageChrome
+          variant="advanced"
+          panel={panel}
+          models={features.modelPicker ? catalog : []}
+          modelsLoading={catalogLoading}
+          selectedModelId={selectedModelId}
+          onSelectModel={setSelectedModelId}
+          reasoningLevels={reasoningLevels}
+          reasoningEffort={reasoningEffort}
+          onReasoningEffort={setReasoningEffort}
+          unavailable={nexusUnavailable}
+          nexusLogin={nexusLogin}
+        />
+        {agentTarget ? (
+          <FundingQuickSelect
+            gate={fundingGate}
+            onSelectFunding={(funding) => setFundingGate((prev) => selectFunding(prev, funding))}
+          />
+        ) : null}
+        <Composer
+          chat={chat}
+          contacts={state.contacts}
+          conversationId={conversationId}
+          contactId={activeContactId}
+          streaming={threadStreaming}
+          slots={slots}
+          sendQueue={outgoing.queue}
+          threadKey={outgoing.threadKey}
+          queueBannerText={outgoing.bannerText}
+          queueCount={outgoing.queueCount}
+          bypassFallback={outgoing.bypassFallback}
+          onFlushQueue={outgoing.retry}
+          onCancelQueue={outgoing.cancel}
+          onQueued={outgoing.noteQueued}
+          onNexusReply={outgoing.noteNexusReply}
+          onTransportFailure={outgoing.noteTransportFailure}
+          models={catalog}
+          modelsLoading={catalogLoading}
+          selectedModelId={selectedModelId}
+          onSelectModel={setSelectedModelId}
+          modelOverride={modelOverride}
+          reasoningEffort={reasoningEffort}
+          showModelPicker={false}
+          dictationMethod={dictation.method}
+          sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
+          dictationNote={dictation.note}
+          commandClient={client}
+          onOpenFile={openFile}
+          hideCompact
+          callsEnabled={features.calls}
+          onRegisterDraftSetter={registerDraftSetter}
+        />
+      </div>
+    );
+  }
+
   const showVoice = voiceOpen || route === 'scene';
   const voiceCollapsed = Boolean(collapsed || route === 'scene');
   const showComposer = !collapsed && route !== 'scene';
@@ -1069,6 +1198,7 @@ export function NexusChatApp({
                 commandClient={client}
                 onOpenFile={openFile}
                 hideCompact
+                callsEnabled={features.calls}
                 onRegisterDraftSetter={registerDraftSetter}
               />
             ) : null}

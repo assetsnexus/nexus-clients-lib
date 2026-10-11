@@ -53,6 +53,7 @@ export {
 } from './theme.js';
 export type { NexusChatTheme } from './theme.js';
 export type { ChatSlots } from './slots.js';
+export type { ComposerControls, ComposerCallMode } from './components/composerHost.js';
 export {
   DEFAULT_REACT_FEATURES,
   mergeReactFeatures,

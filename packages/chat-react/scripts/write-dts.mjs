@@ -36,6 +36,29 @@ export declare const DEFAULT_THEME: NexusChatTheme;
 export declare function themeToCssVars(theme?: NexusChatTheme): Record<string, string>;
 export declare function applyThemeToElement(el: HTMLElement, theme?: NexusChatTheme): void;
 
+export type ComposerCallMode = 'browser' | 'phone' | 'dial-in';
+export type ComposerControls = {
+  attachments: { pending: { name: string }[]; pick: () => void; remove: (index: number) => void };
+  dictation: {
+    phase: 'idle' | 'recording' | 'cancel' | 'working';
+    note: string | null;
+    onPointerDown: Function;
+    onPointerMove: Function;
+    onPointerUp: Function;
+    onPointerCancel: () => void;
+  };
+  call: {
+    supported: boolean;
+    active: boolean;
+    status: string | null;
+    toMasked: string | null;
+    dialIn: { phone: string | null; accessCode: string | null } | null;
+    start: (mode: ComposerCallMode) => Promise<void>;
+    end: () => Promise<void>;
+  };
+  error: string | null;
+};
+
 export type ChatSlots = {
   header?: ComponentType<any>;
   composer?: ComponentType<any>;

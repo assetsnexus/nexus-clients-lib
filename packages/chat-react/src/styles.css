@@ -274,6 +274,12 @@
   align-items: center;
 }
 
+.nexus-chat__call-detail {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--nx-chat-text);
+}
+
 .nexus-chat__input {
   flex: 1;
   min-height: 40px;
@@ -1639,4 +1645,64 @@
   .nexus-chat__skeleton {
     animation: none;
   }
+}
+
+/* Single thread + composer. Hosts skin the column; Advanced stays collapsed. */
+.nexus-chat.nexus-chat--column {
+  min-height: 0;
+  height: 100%;
+  overflow: visible;
+  background: transparent;
+  gap: 12px;
+}
+
+.nexus-chat--column .nexus-chat__column-thread {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.nexus-chat--column .nexus-chat__thread {
+  flex: 1;
+}
+
+.nexus-chat--column .nexus-chat__empty {
+  display: none;
+}
+
+.nexus-chat--column .nexus-chat__composer {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.nexus-chat__advanced {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--nx-chat-muted);
+  font-size: 12px;
+}
+
+.nexus-chat__advanced > summary {
+  cursor: pointer;
+  list-style: none;
+  width: fit-content;
+}
+
+.nexus-chat__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nexus-chat__advanced:not([open]) > .nexus-chat__advanced-body {
+  display: none;
+}
+
+.nexus-chat__advanced[open] > .nexus-chat__advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
 }

@@ -8,6 +8,14 @@ import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { DictationMethod } from '../dictation/dictationPlan.js';
 import { holdReleaseAction, pointerLeftTarget } from '../dictation/dictationPlan.js';
 import {
+  attachmentDisplayName,
+  composerCallSnapshot,
+  resolveComposerCallTarget,
+  type ComposerCallMode,
+  type ComposerControls,
+} from './composerHost.js';
+import { useChatState } from '../hooks/useChatState.js';
+import {
   cancelNativeRecognition,
   nativeSpeechBridgeAvailable,
   startNativeRecognition,
@@ -51,6 +59,8 @@ export type ComposerProps = {
   onOpenFile?: (file: ViewerFileRef) => void;
   /** When true, hide the compact button (lives in context panel). */
   hideCompact?: boolean;
+  /** Library call control. Hosts skin it; the default composer shows the same modes. */
+  callsEnabled?: boolean;
   /**
    * Registers the existing draft setter so host prefill can append text.
    * Null on unmount. Does not send.
@@ -83,6 +93,7 @@ export function Composer({
   commandClient,
   onOpenFile,
   hideCompact = true,
+  callsEnabled = true,
   onRegisterDraftSetter,
 }: ComposerProps) {
   const [text, setText] = useState('');
@@ -341,16 +352,98 @@ export function Composer({
 
   const onHoldPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (holdPhase !== 'recording' && holdPhase !== 'cancel') return;
-    const rect = holdRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const rect = event.currentTarget.getBoundingClientRect();
     const left = pointerLeftTarget(rect, event.clientX, event.clientY);
     setHoldPhase(left ? 'cancel' : 'recording');
   };
 
   const onHoldPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const rect = holdRef.current?.getBoundingClientRect();
-    const left = rect ? pointerLeftTarget(rect, event.clientX, event.clientY) : false;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const left = pointerLeftTarget(rect, event.clientX, event.clientY);
     void endHold(holdReleaseAction({ leftTarget: left }) === 'commit');
+  };
+
+  const chatState = useChatState(chat);
+  const [callMenuOpen, setCallMenuOpen] = useState(false);
+  const callSnap = composerCallSnapshot(chatState.calls, chat.getVoiceSurface());
+  const callTarget = resolveComposerCallTarget(contacts, contactId);
+
+  const startCall = useCallback(
+    async (mode: ComposerCallMode) => {
+      setCallMenuOpen(false);
+      if (!callsEnabled) return;
+      const target = resolveComposerCallTarget(contacts, contactId);
+      if (!target) {
+        const message = 'Open an agent conversation before starting a call.';
+        console.warn('anx.chat.call start skipped', { reason: 'no-agent' });
+        setActionError(message);
+        return;
+      }
+      setActionError(null);
+      try {
+        if (mode === 'browser') {
+          await chat.startBrowserCall({
+            agentId: target.agentId,
+            conversationId: conversationId || undefined,
+            virtualAgentId: target.virtualEmployeeId,
+          });
+        } else if (mode === 'phone') {
+          await chat.createOutboundCall({
+            agentId: target.agentId,
+            conversationId: conversationId || undefined,
+            virtualAgentId: target.virtualEmployeeId,
+          });
+        } else {
+          await chat.prepareInboundCall(target.agentId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'The call could not start.';
+        console.warn('anx.chat.call start failed', { mode, message });
+        setActionError(message);
+      }
+    },
+    [callsEnabled, chat, contactId, contacts, conversationId],
+  );
+
+  const endActiveCall = useCallback(async () => {
+    setCallMenuOpen(false);
+    const agentId = callSnap.agentId;
+    const callSid = callSnap.callSid;
+    if (!agentId || !callSid) return;
+    setActionError(null);
+    try {
+      await chat.endCall({ agentId, callSid });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not end the call.';
+      console.warn('anx.chat.call end failed', { message });
+      setActionError(message);
+    }
+  }, [callSnap.agentId, callSnap.callSid, chat]);
+
+  const controls: ComposerControls = {
+    attachments: {
+      pending: pendingFiles.map((file, index) => ({ name: attachmentDisplayName(file, index) })),
+      pick: () => fileRef.current?.click(),
+      remove: (index) => setPendingFiles((prev) => prev.filter((_, i) => i !== index)),
+    },
+    dictation: {
+      phase: holdPhase,
+      note: dictationNote,
+      onPointerDown: onHoldPointerDown,
+      onPointerMove: onHoldPointerMove,
+      onPointerUp: onHoldPointerUp,
+      onPointerCancel: () => void endHold(false),
+    },
+    call: {
+      supported: Boolean(callsEnabled && callTarget),
+      active: callSnap.active,
+      status: callSnap.status,
+      toMasked: callSnap.toMasked,
+      dialIn: callSnap.dialIn,
+      start: startCall,
+      end: endActiveCall,
+    },
+    error: actionError || callSnap.error,
   };
 
   const queueBanner = queueCount > 0 ? (
@@ -367,6 +460,16 @@ export function Composer({
     </div>
   ) : null;
 
+  const fileInput = (
+    <input
+      ref={fileRef}
+      type="file"
+      multiple
+      hidden
+      onChange={(e) => void onPickFiles(e.target.files)}
+    />
+  );
+
   if (slots?.composer) {
     const Custom = slots.composer;
     return (
@@ -378,7 +481,9 @@ export function Composer({
           setText={setText}
           send={sendNow}
           streaming={streaming}
+          controls={controls}
         />
+        {fileInput}
       </div>
     );
   }
@@ -477,6 +582,24 @@ export function Composer({
           >
             {holdLabel}
           </button>
+          {callsEnabled ? (
+            <button
+              type="button"
+              className="nexus-chat__btn"
+              aria-label={callSnap.active ? 'End call' : 'Call'}
+              aria-expanded={callMenuOpen}
+              disabled={!controls.call.supported && !callSnap.active}
+              onClick={() => {
+                if (callSnap.active) {
+                  void endActiveCall();
+                  return;
+                }
+                setCallMenuOpen((open) => !open);
+              }}
+            >
+              {callSnap.active ? 'End' : 'Call'}
+            </button>
+          ) : null}
           {conversationId && streaming ? (
             <button
               type="button"
@@ -499,6 +622,28 @@ export function Composer({
             {streaming ? 'Queue' : 'Send'}
           </button>
         </div>
+        {callSnap.dialIn?.phone || callSnap.dialIn?.accessCode ? (
+          <div className="nexus-chat__call-detail" role="status">
+            {callSnap.dialIn.phone ? `Dial ${callSnap.dialIn.phone}` : 'Dial in'}
+            {callSnap.dialIn.accessCode ? ` · code ${callSnap.dialIn.accessCode}` : ''}
+          </div>
+        ) : null}
+        {callSnap.active && callSnap.toMasked ? (
+          <div className="nexus-chat__call-detail" role="status">{`Calling ${callSnap.toMasked}`}</div>
+        ) : null}
+        {callMenuOpen && callsEnabled ? (
+          <div className="nexus-chat__mention-menu" role="menu" aria-label="Call">
+            <button type="button" className="nexus-chat__mention-item" onClick={() => void startCall('browser')}>
+              Browser call
+            </button>
+            <button type="button" className="nexus-chat__mention-item" onClick={() => void startCall('phone')}>
+              Call my phone
+            </button>
+            <button type="button" className="nexus-chat__mention-item" onClick={() => void startCall('dial-in')}>
+              Dial in
+            </button>
+          </div>
+        ) : null}
       </div>
       {!hideCompact && conversationId ? (
           <button
@@ -514,14 +659,10 @@ export function Composer({
             Compact
           </button>
         ) : null}
-      {actionError ? <div className="nexus-chat__error">{actionError}</div> : null}
-      <input
-        ref={fileRef}
-        type="file"
-        multiple
-        hidden
-        onChange={(e) => void onPickFiles(e.target.files)}
-      />
+      {actionError || callSnap.error ? (
+        <div className="nexus-chat__error">{actionError || callSnap.error}</div>
+      ) : null}
+      {fileInput}
     </div>
   );
 }
