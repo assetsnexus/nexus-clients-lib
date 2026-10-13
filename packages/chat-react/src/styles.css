@@ -970,27 +970,85 @@
   flex-wrap: nowrap;
 }
 
-.nexus-chat__subagents {
+.nexus-chat .nexus-chat__subagents {
   position: relative;
+  z-index: 5;
   flex: 0 0 auto;
+  overflow: visible;
 }
 
-.nexus-chat__subagents-overlay {
+.nexus-chat .nexus-chat__subagents--open {
+  z-index: 40;
+}
+
+.nexus-chat .nexus-chat__subagents-overlay {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 6px);
   left: 0;
-  z-index: 20;
-  width: min(360px, 90vw);
-  max-height: 280px;
+  z-index: 41;
+  width: min(420px, 92vw);
+  max-height: min(360px, 52vh);
   overflow: auto;
-  background: var(--nx-chat-surface);
-  border: 1px solid var(--nx-chat-border);
-  border-radius: var(--nx-chat-radius);
-  padding: 10px;
+  color: var(--nx-chat-text, #e8eaef);
+  /* Solid plate under the surface token. A glass host often sets the
+     surface to transparent; the layout effect replaces this with an
+     opaque color that still comes from those tokens. */
+  background-color: #1a1d27;
+  background-image: linear-gradient(
+    var(--nx-chat-surface, #1a1d27),
+    var(--nx-chat-surface, #1a1d27)
+  );
+  border: 1px solid var(--nx-chat-border, #2a2f3d);
+  border-radius: var(--nx-chat-radius, 10px);
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  gap: 10px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--nx-chat-text, #e8eaef) 28%, #1a1d27),
+    0 18px 48px rgba(0, 0, 0, 0.48);
+  pointer-events: auto;
+}
+
+.nexus-chat .nexus-chat__subagents-overlay .nexus-chat__btn {
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.nexus-chat .nexus-chat__subagents-overlay .nexus-chat__btn--primary {
+  background: var(--nx-chat-accent, #5b8def);
+  border-color: transparent;
+  color: #fff;
+}
+
+.nexus-chat__subagents-steer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nexus-chat__subagents-delivery,
+.nexus-chat__subagents-compose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.nexus-chat .nexus-chat__subagents-input {
+  flex: 1;
+  min-width: 120px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
 }
 
 .nexus-chat__subagents-row {

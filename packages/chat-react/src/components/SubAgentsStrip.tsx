@@ -1,15 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   cancelAgentRun,
+  getAgentRun,
+  messageAgentRun,
   pauseAgentRun,
   resumeAgentRun,
   type ChatTurn,
   type CommandClient,
+  type MessageDelivery,
   type NexusChat,
   type SubAgentStripItem,
 } from '@nexus/chat-core';
 import { loadConversationHistory } from '../utils/openContactFlow.js';
 import { subAgentChipLabel, summarizeSubAgentChip } from '../utils/sub-agent-chip.js';
+import {
+  isSubAgentDetailsOpen,
+  normalizeSteerText,
+  overlaySurfacePaint,
+  readChatTokenColors,
+  subAgentRunControls,
+} from '../utils/sub-agent-overlay.js';
+import { SubAgentRunDetails } from './SubAgentRunDetails.js';
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export function SubAgentsStrip({
   chat,
@@ -23,105 +38,165 @@ export function SubAgentsStrip({
   const [open, setOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const detailsId = useId();
   const summary = summarizeSubAgentChip(turns);
-  if (!summary) return null;
+  const runCount = summary?.runs.length ?? 0;
+  const detailsOpen = isSubAgentDetailsOpen(open, runCount);
+
+  useLayoutEffect(() => {
+    const overlay = overlayRef.current;
+    const host = rootRef.current;
+    if (!detailsOpen || !overlay || !host) return;
+    const paint = overlaySurfacePaint(readChatTokenColors(host));
+    overlay.style.backgroundColor = paint.backgroundColor;
+    overlay.style.backgroundImage = 'none';
+    overlay.style.color = paint.color;
+    overlay.style.borderColor = paint.borderColor;
+  }, [detailsOpen, runCount]);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    const onPointer = (event: PointerEvent) => {
+      const root = rootRef.current;
+      if (!root || root.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [detailsOpen]);
+
+  if (!summary) {
+    return <div data-nexus-surface="subagents" hidden />;
+  }
 
   const runAction = async (
-    fn: (c: CommandClient, id: { runId: string }) => Promise<unknown>,
+    fn: (c: CommandClient, id: { runId: string; workloadId: string }) => Promise<unknown>,
     run: SubAgentStripItem,
   ) => {
     if (!client || !run.runId) return;
     setBusyId(run.id);
     setActionError(null);
     try {
-      await fn(client, { runId: run.runId });
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
+      await fn(client, { runId: run.runId, workloadId: run.runId });
+    } catch (error) {
+      setActionError(errorText(error));
     } finally {
       setBusyId(null);
     }
   };
 
-  const openLinked = (run: SubAgentStripItem) => {
-    if (!run.linkedConversationId) return;
-    if (client) {
-      void loadConversationHistory(client, chat, run.linkedConversationId).catch((e) =>
-        setActionError(e instanceof Error ? e.message : String(e)),
-      );
-    } else {
-      void chat.listMessages(run.linkedConversationId).then((messages) => {
+  const openLinked = async (run: SubAgentStripItem) => {
+    setBusyId(run.id);
+    setActionError(null);
+    try {
+      let conversationId = run.linkedConversationId || null;
+      if (!conversationId && client && run.runId) {
+        const detail = await getAgentRun(client, { runId: run.runId, workloadId: run.runId });
+        conversationId = detail.linkedConversationId || null;
+      }
+      if (!conversationId) {
+        setActionError('Sub-agent conversation is not available yet');
+        return;
+      }
+      if (client) {
+        await loadConversationHistory(client, chat, conversationId);
+      } else {
+        const messages = await chat.listMessages(conversationId);
         chat.rehydrateTurns(
-          (messages as Array<Record<string, unknown>>).map((m) => ({
-            id: m.id as string | undefined,
-            role: String(m.role || 'assistant'),
-            content: String(m.content ?? m.text ?? ''),
+          (messages as Array<Record<string, unknown>>).map((message) => ({
+            id: message.id as string | undefined,
+            role: String(message.role || 'assistant'),
+            content: String(message.content ?? message.text ?? ''),
           })),
-          { conversationId: run.linkedConversationId!, detachStream: true },
+          { conversationId, detachStream: true },
         );
+      }
+      setOpen(false);
+    } catch (error) {
+      setActionError(errorText(error));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const steer = async (run: SubAgentStripItem, text: string, delivery: MessageDelivery): Promise<boolean> => {
+    if (!client || !run.runId) return false;
+    const normalized = normalizeSteerText(text);
+    if (!normalized.ok) {
+      setActionError(normalized.reason === 'too_long' ? 'Message is too long' : 'Enter a message');
+      return false;
+    }
+    setBusyId(run.id);
+    setActionError(null);
+    try {
+      await messageAgentRun(client, {
+        runId: run.runId,
+        workloadId: run.runId,
+        text: normalized.text,
+        delivery,
       });
+      return true;
+    } catch (error) {
+      setActionError(errorText(error));
+      return false;
+    } finally {
+      setBusyId(null);
     }
   };
 
   return (
-    <div className="nexus-chat__subagents" role="region" aria-label="Sub-agents">
+    <div
+      ref={rootRef}
+      className={`nexus-chat__subagents${detailsOpen ? ' nexus-chat__subagents--open' : ''}`}
+      data-nexus-surface="subagents"
+      data-open={detailsOpen ? 'true' : 'false'}
+      role="region"
+      aria-label="Sub-agents"
+    >
       <button
         type="button"
         className={`nexus-chat__chip nexus-chat__chip--clickable${summary.hasError ? ' nexus-chat__chip--warn' : ''}`}
-        onClick={() => setOpen((v) => !v)}
+        aria-expanded={detailsOpen}
+        aria-controls={detailsId}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
       >
         {subAgentChipLabel(summary)}
       </button>
-      {open ? (
-        <div className="nexus-chat__subagents-overlay">
+      {detailsOpen ? (
+        <div
+          ref={overlayRef}
+          id={detailsId}
+          className="nexus-chat__subagents-overlay"
+          role="dialog"
+          aria-label="Sub-agent details"
+        >
           {summary.runs.map((run) => {
-            const active = ['running', 'paused', 'queued', 'pending', 'awaiting_approval'].includes(
-              String(run.status || '').toLowerCase(),
-            );
+            const controls = subAgentRunControls(run, { hasClient: Boolean(client) });
             return (
-              <div key={run.id} className="nexus-chat__subagents-row">
-                <div>
-                  <strong>{run.mission}</strong>
-                  <div className="nexus-chat__muted">{run.status}</div>
-                  {run.error ? <div className="nexus-chat__error">{run.error}</div> : null}
-                </div>
-                <div className="nexus-chat__subagents-actions">
-                  {client && run.runId && run.status !== 'paused' && active ? (
-                    <button
-                      type="button"
-                      className="nexus-chat__btn"
-                      disabled={busyId === run.id}
-                      onClick={() => void runAction(pauseAgentRun, run)}
-                    >
-                      Pause
-                    </button>
-                  ) : null}
-                  {client && run.runId && run.status === 'paused' ? (
-                    <button
-                      type="button"
-                      className="nexus-chat__btn"
-                      disabled={busyId === run.id}
-                      onClick={() => void runAction(resumeAgentRun, run)}
-                    >
-                      Resume
-                    </button>
-                  ) : null}
-                  {client && run.runId && active ? (
-                    <button
-                      type="button"
-                      className="nexus-chat__btn"
-                      disabled={busyId === run.id}
-                      onClick={() => void runAction(cancelAgentRun, run)}
-                    >
-                      Cancel
-                    </button>
-                  ) : null}
-                  {run.linkedConversationId ? (
-                    <button type="button" className="nexus-chat__btn" onClick={() => openLinked(run)}>
-                      Open
-                    </button>
-                  ) : null}
-                </div>
-              </div>
+              <SubAgentRunDetails
+                key={run.id}
+                run={run}
+                busy={busyId === run.id}
+                controls={controls}
+                onPause={() => void runAction(pauseAgentRun, run)}
+                onResume={() => void runAction(resumeAgentRun, run)}
+                onCancel={() => void runAction(cancelAgentRun, run)}
+                onOpen={() => void openLinked(run)}
+                onSteer={(text, delivery) => steer(run, text, delivery)}
+              />
             );
           })}
           {actionError ? <div className="nexus-chat__error">{actionError}</div> : null}
