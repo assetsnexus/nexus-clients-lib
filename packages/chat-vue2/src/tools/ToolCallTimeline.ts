@@ -73,6 +73,8 @@ export const ToolCallTimeline = defineComponent({
     choiceActive: { type: Boolean, default: false },
     canViewToolDetails: { type: Boolean, default: true },
     pollWorkload: { type: Function, default: null },
+    /** (fileId) => browser URL ending in the media extension, or null. */
+    resolveStoredFile: { type: Function, default: null },
     triggerCheckBack: { type: Function, default: null },
     /** P8-8: shared `useModeTransition` state, owned by the panel — drives the refusal chip's ring. */
     modeTransition: { type: Object, default: null },
@@ -176,11 +178,14 @@ export const ToolCallTimeline = defineComponent({
       if (run.tool === 'generate_image' || run.tool === 'generate_audio') {
         return h(MediaToolWidget, {
           key: run.id,
-          props: { run, pollWorkload: this.pollWorkload },
+          props: { run, pollWorkload: this.pollWorkload, resolveStoredFile: this.resolveStoredFile },
         });
       }
       if (run.tool === 'present_file' || run.tool === 'present_files') {
-        return h(StorageFileToolWidget, { key: run.id, props: { run } });
+        return h(StorageFileToolWidget, {
+          key: run.id,
+          props: { run, resolveStoredFile: this.resolveStoredFile },
+        });
       }
       if (run.tool === 'run_sub_agent' || run.kind === 'sub_agent') {
         const subAgentRunId =

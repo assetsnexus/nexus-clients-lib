@@ -7,6 +7,7 @@ import {
   parseMediaImages,
   parseMediaWorkloadId,
   parseWorkloadMediaImages,
+  workloadResultPathsNeedFileUrl,
   type ChatToolRun,
 } from '@nexus/chat-core';
 
@@ -65,10 +66,15 @@ export const MediaToolWidget = defineComponent({
 
       const initial = parseMediaImages(run.result);
       const directAudio = parseMediaAudioUrl(run.result);
-      if (initial.length) {
+      const needsFileUrl = workloadResultPathsNeedFileUrl(initial);
+      if (initial.length && !needsFileUrl) {
         this.images = initial;
         this.pending = false;
         return;
+      }
+      if (needsFileUrl) {
+        this.images = [];
+        this.pending = true;
       }
       if (run.tool === 'generate_audio' && directAudio) {
         this.audioUrl = directAudio;

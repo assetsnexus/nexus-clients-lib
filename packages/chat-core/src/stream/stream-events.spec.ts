@@ -324,4 +324,19 @@ describe('tool-events', () => {
     });
     expect(turns[0].text).toBe('Here is the lead.');
   });
+
+  it('does not mark an HTTP 403 tool body as success', () => {
+    const runs = mergeToolStreamEvents([
+      { type: 'tool_call', data: { callId: 'c403', name: 'anx_command', arguments: '{}' } },
+      {
+        type: 'tool_result',
+        data: {
+          callId: 'c403',
+          name: 'anx_command',
+          result: { responseCode: 403, message: 'Missing grant' },
+        },
+      },
+    ]);
+    expect(runs[0]).toMatchObject({ status: 'error', error: 'Missing grant' });
+  });
 });

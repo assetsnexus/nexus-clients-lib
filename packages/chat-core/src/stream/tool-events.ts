@@ -106,8 +106,27 @@ function approvalIdFrom(data: ToolResultPayload): string | null {
   return null;
 }
 
+/** HTTP 403 buried in a tool result body. A body is not success just because it parsed. */
+export function toolBodyIsForbidden(result: unknown, depth = 0): boolean {
+  if (depth > 2 || !result || typeof result !== 'object') return false;
+  const row = result as Record<string, unknown>;
+  for (const key of ['responseCode', 'httpStatus', 'statusCode', 'status'] as const) {
+    const value = row[key];
+    if (value === 403 || value === '403') return true;
+  }
+  const nested = row.response ?? row.data ?? row.body;
+  if (nested && nested !== result) return toolBodyIsForbidden(nested, depth + 1);
+  return false;
+}
+
+export function forbiddenToolError(result: unknown): string | null {
+  if (!toolBodyIsForbidden(result) || !result || typeof result !== 'object') return null;
+  const message = (result as { message?: unknown }).message;
+  return typeof message === 'string' && message.trim() ? message.trim() : 'Request was denied (403).';
+}
+
 function statusFromToolResult(d: ToolResultPayload, existing?: ChatToolRun): ChatToolRunStatus {
-  if (d.error) return 'error';
+  if (d.error || toolBodyIsForbidden(d.result)) return 'error';
   if (approvalFromResult(d.result, d) || d.status === 'needs_approval') {
     return 'needs_approval';
   }
@@ -346,7 +365,7 @@ export function mergeToolStreamEvents(
         status,
         args: existingArgs,
         result: d.result !== undefined ? d.result : existing?.result,
-        error: formatError(d.error) ?? existing?.error ?? null,
+        error: formatError(d.error) ?? forbiddenToolError(d.result) ?? existing?.error ?? null,
         round: d.round ?? existing?.round,
         approvalRequired,
         approvalId: approvalIdFrom(d) || existing?.approvalId || null,

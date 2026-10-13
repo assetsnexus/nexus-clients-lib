@@ -1,13 +1,19 @@
 import { defineComponent } from 'vue';
 import {
+  fileIdFromStorageExplorerUrl,
   parsePresentFileItems,
   presentFileKind,
+  toConsoleStorageExplorerUrl,
   type ChatToolRun,
   type PresentFileItem,
 } from '@nexus/chat-core';
 
 function explorerHref(file: PresentFileItem): string | null {
-  return file.explorerUrl;
+  return toConsoleStorageExplorerUrl(file.explorerUrl);
+}
+
+function storedFileId(file: PresentFileItem): string | null {
+  return file.fileId || fileIdFromStorageExplorerUrl(file.explorerUrl);
 }
 
 /**
@@ -17,9 +23,14 @@ export const StorageFileToolWidget = defineComponent({
   name: 'NexusStorageFileToolWidget',
   props: {
     run: { type: Object, required: true },
+    resolveStoredFile: { type: Function, default: null },
   },
   data() {
-    return { expanded: true, lightboxUrl: null as string | null };
+    return {
+      expanded: true,
+      lightboxUrl: null as string | null,
+      previewByFileId: {} as Record<string, string>,
+    };
   },
   computed: {
     files(): PresentFileItem[] {
@@ -34,10 +45,40 @@ export const StorageFileToolWidget = defineComponent({
       return this.files[0]?.label || 'File';
     },
   },
+  watch: {
+    run: {
+      deep: true,
+      handler() {
+        void this.hydratePreviews();
+      },
+    },
+  },
+  mounted() {
+    void this.hydratePreviews();
+  },
   methods: {
+    async hydratePreviews() {
+      const resolve = this.resolveStoredFile as
+        | ((fileId: string) => Promise<string | null>)
+        | null;
+      if (typeof resolve !== 'function') return;
+      for (const file of this.files) {
+        const kind = presentFileKind(file.mimeType, file.label);
+        if (kind !== 'image' && kind !== 'audio' && kind !== 'video') continue;
+        const fileId = storedFileId(file);
+        if (!fileId || this.previewByFileId[fileId]) continue;
+        try {
+          const url = await resolve(fileId);
+          if (url) this.$set(this.previewByFileId, fileId, url);
+        } catch {
+          /* card stays without a preview */
+        }
+      }
+    },
     renderFile(h: any, file: PresentFileItem) {
       const kind = presentFileKind(file.mimeType, file.label);
-      const url = file.presignedUrl;
+      const fileId = storedFileId(file);
+      const url = (fileId && this.previewByFileId[fileId]) || file.presignedUrl;
       const link = explorerHref(file)
         ? h(
             'a',

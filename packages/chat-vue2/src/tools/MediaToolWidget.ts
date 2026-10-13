@@ -1,10 +1,14 @@
 import { defineComponent } from 'vue';
 import {
+  fileIdFromStorageExplorerUrl,
   parseMediaAudioUrl,
   parseMediaImages,
   parseMediaWorkloadId,
   parseWorkloadMediaImages,
+  toConsoleStorageExplorerUrl,
+  workloadResultPathsNeedFileUrl,
   type ChatToolRun,
+  type MediaCarouselImage,
 } from '@nexus/chat-core';
 
 type PollFn = (
@@ -21,6 +25,7 @@ export const MediaToolWidget = defineComponent({
   props: {
     run: { type: Object, required: true },
     pollWorkload: { type: Function, default: null },
+    resolveStoredFile: { type: Function, default: null },
   },
   data() {
     const run = this.run as ChatToolRun;
@@ -30,6 +35,9 @@ export const MediaToolWidget = defineComponent({
       pending: run.status === 'running',
       error: (run.error || null) as string | null,
       abort: null as AbortController | null,
+      inflightWorkloadId: null as string | null,
+      /** Set when this tool row has finished or the workload does not exist. Blocks repeat gets. */
+      settledKey: null as string | null,
     };
   },
   watch: {
@@ -47,10 +55,42 @@ export const MediaToolWidget = defineComponent({
     this.abort?.abort();
   },
   methods: {
+    async storedFileImages(
+      initial: MediaCarouselImage[],
+    ): Promise<MediaCarouselImage[] | null> {
+      const resolve = this.resolveStoredFile as
+        | ((fileId: string) => Promise<string | null>)
+        | null;
+      if (typeof resolve !== 'function' || !initial.length) return null;
+      const out: MediaCarouselImage[] = [];
+      for (const img of initial) {
+        const fileId = img.fileId || fileIdFromStorageExplorerUrl(img.explorerUrl);
+        if (!fileId) return null;
+        const url = await resolve(fileId);
+        if (!url) return null;
+        out.push({
+          ...img,
+          fileId,
+          imageUrl: url,
+          explorerUrl: toConsoleStorageExplorerUrl(img.explorerUrl),
+        });
+      }
+      return out;
+    },
+    settle(key: string) {
+      this.settledKey = key;
+      this.inflightWorkloadId = null;
+      this.pending = false;
+    },
     async startPoll() {
       const run = this.run as ChatToolRun;
       if (run.tool !== 'generate_image' && run.tool !== 'generate_audio') return;
+      const workloadId = parseMediaWorkloadId(run.result) || '';
+      const settleKey = `${String(run.id || '')}:${workloadId}:${String(run.status || '')}`;
+      if (this.settledKey === settleKey || this.inflightWorkloadId === settleKey) return;
+
       this.abort?.abort();
+      this.inflightWorkloadId = settleKey;
       const ctrl = new AbortController();
       this.abort = ctrl;
 
@@ -62,21 +102,43 @@ export const MediaToolWidget = defineComponent({
 
       const initial = parseMediaImages(run.result);
       const directAudio = parseMediaAudioUrl(run.result);
-      if (initial.length) {
-        this.images = initial;
-        this.pending = false;
+      if (run.tool === 'generate_image' && initial.length) {
+        try {
+          const stored = await this.storedFileImages(initial);
+          if (ctrl.signal.aborted) return;
+          if (stored?.length) {
+            this.images = stored;
+            this.settle(settleKey);
+            return;
+          }
+        } catch {
+          /* workload poll below */
+        }
+      }
+      const needsFileUrl = workloadResultPathsNeedFileUrl(initial);
+      if (initial.length && !needsFileUrl) {
+        this.images = initial.map((img) => ({
+          ...img,
+          explorerUrl: toConsoleStorageExplorerUrl(img.explorerUrl),
+        }));
+        this.settle(settleKey);
         return;
+      }
+      if (needsFileUrl) {
+        this.images = [];
+        this.pending = true;
       }
       if (run.tool === 'generate_audio' && directAudio) {
         this.audioUrl = directAudio;
-        this.pending = false;
+        this.settle(settleKey);
         return;
       }
 
-      const workloadId = parseMediaWorkloadId(run.result);
       const poll = this.pollWorkload as PollFn | null;
       if (!workloadId || !poll) {
         this.pending = run.status === 'running';
+        if (run.status !== 'running') this.settledKey = settleKey;
+        this.inflightWorkloadId = null;
         return;
       }
 
@@ -92,23 +154,41 @@ export const MediaToolWidget = defineComponent({
         const status = String(wl.status || '').toLowerCase();
         if (status === 'failed' || status === 'error' || status === 'cancelled') {
           this.error = run.tool === 'generate_audio' ? 'TTS generation failed' : 'Image generation failed';
-          this.pending = false;
+          this.settle(settleKey);
           return;
         }
         if (run.tool === 'generate_image') {
           const parsed = parseWorkloadMediaImages(wl);
-          if (parsed.length) this.images = parsed;
+          const stored = await this.storedFileImages(parsed);
+          if (ctrl.signal.aborted) return;
+          const images = stored?.length ? stored : parsed;
+          if (images.length) {
+            this.images = images.map((img) => ({
+              ...img,
+              explorerUrl: toConsoleStorageExplorerUrl(img.explorerUrl),
+            }));
+          }
         } else {
           const url =
             (typeof wl.resultServeUrl === 'string' && wl.resultServeUrl) ||
             parseMediaAudioUrl(wl);
           if (url) this.audioUrl = url;
         }
-        this.pending = false;
+        this.settle(settleKey);
       } catch (err) {
         if (ctrl.signal.aborted) return;
-        this.error = err instanceof Error ? err.message : 'Timed out waiting for media';
+        const missing =
+          (err as { code?: string })?.code === 'WORKLOAD_NOT_FOUND' ||
+          /workload not found/i.test(err instanceof Error ? err.message : String(err));
         this.pending = false;
+        this.settledKey = settleKey;
+        this.error = missing
+          ? null
+          : err instanceof Error
+            ? err.message
+            : 'Timed out waiting for media';
+      } finally {
+        if (this.inflightWorkloadId === settleKey) this.inflightWorkloadId = null;
       }
     },
   },
@@ -142,7 +222,7 @@ export const MediaToolWidget = defineComponent({
                       ? h(
                           'a',
                           {
-                            attrs: { href: img.explorerUrl, target: '_blank', rel: 'noopener' },
+                            attrs: { href: toConsoleStorageExplorerUrl(img.explorerUrl), target: '_blank', rel: 'noopener' },
                             class: 'nexus-explorer-link',
                           },
                           'Open in storage',

@@ -416,6 +416,7 @@
                 :conversation-id="resolvedPanel.conversationId"
                 :choice-active="isChoiceActive(turn)"
                 :poll-workload="pollWorkload"
+                :resolve-stored-file="resolveStoredFile"
                 :trigger-check-back="triggerCheckBack"
                 :mode-transition="modeTransitionState"
                 @approve="$emit('approve-tool', $event)"
@@ -708,6 +709,8 @@ export default {
     getRoom: { type: Function, default: null },
     leaveRoom: { type: Function, default: null },
     pollWorkload: { type: Function, default: null },
+    /** (fileId) => signed browser URL for a stored image/audio/video file. */
+    resolveStoredFile: { type: Function, default: null },
     triggerCheckBack: { type: Function, default: null },
     uploadAttachment: { type: Function, default: null },
     labels: { type: Object, default: () => ({}) },

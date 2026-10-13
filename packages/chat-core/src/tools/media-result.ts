@@ -14,6 +14,21 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
 }
 
+/**
+ * Portal-relative inference result path. It has no media extension and the
+ * portal does not serve those bytes, so an <img> stays a broken placeholder.
+ */
+export function isWorkloadResultApiPath(url: unknown): boolean {
+  if (typeof url !== 'string' || !url.trim()) return false;
+  return /\/api\/inference\/workloads\/[^/?#]+\/result(?:\.[a-z0-9]+)?(?:[?#]|$)/i.test(url.trim());
+}
+
+export function workloadResultPathsNeedFileUrl(
+  images: Array<{ imageUrl?: string | null }>,
+): boolean {
+  return images.length > 0 && images.every((img) => isWorkloadResultApiPath(img.imageUrl));
+}
+
 function pickUrl(item: Record<string, unknown> | null): string {
   if (!item) return '';
   if (typeof item.serveUrl === 'string' && item.serveUrl) return item.serveUrl;

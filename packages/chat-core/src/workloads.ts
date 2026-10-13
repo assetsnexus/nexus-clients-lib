@@ -67,10 +67,21 @@ export async function pollWorkload(
 
     if (result && typeof result === 'object' && 'ok' in result && (result as SendResult).ok === false) {
       const failure = result as Extract<SendResult, { ok: false }>;
-      throw new Error(failure.message || `workload.get failed: ${failure.kind}`);
+      const code = String((failure.error as { code?: string } | undefined)?.code || '');
+      const message = failure.message || `workload.get failed: ${failure.kind}`;
+      if (code === 'WORKLOAD_NOT_FOUND' || /workload not found/i.test(message)) {
+        throw Object.assign(new Error(message), { code: 'WORKLOAD_NOT_FOUND' });
+      }
+      throw Object.assign(new Error(message), { code });
     }
 
     const data = unwrapData(result);
+    const bodyCode = String(data.code || '');
+    if (bodyCode === 'WORKLOAD_NOT_FOUND' || /workload not found/i.test(String(data.message || ''))) {
+      throw Object.assign(new Error(String(data.message || 'Workload not found')), {
+        code: 'WORKLOAD_NOT_FOUND',
+      });
+    }
     const status = String(data.status || data.state || '').toLowerCase();
     if (TERMINAL_STATUSES.has(status)) {
       return data;
