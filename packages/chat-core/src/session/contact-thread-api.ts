@@ -34,10 +34,24 @@ function unwrapData(result: unknown): Record<string, unknown> {
   return r;
 }
 
+function commandCode(result: unknown): string {
+  if (!result || typeof result !== 'object') return '';
+  const row = result as { ok?: boolean; code?: unknown };
+  if (row.ok !== false) return '';
+  return typeof row.code === 'string' ? row.code.trim() : '';
+}
+
+/** List is outside this app grant. Sign-in failures still throw. */
+function commandDenied(result: unknown): boolean {
+  return commandCode(result) === 'APP_COMMAND_FORBIDDEN';
+}
+
 function assertCommandOk(result: unknown, command: string): void {
   if (result && typeof result === 'object' && 'ok' in result && (result as { ok: boolean }).ok === false) {
-    const fail = result as { message?: string };
-    throw new Error(fail.message || `${command} failed`);
+    const fail = result as { message?: string; code?: string };
+    const error = new Error(fail.message || `${command} failed`) as Error & { code?: string };
+    if (typeof fail.code === 'string' && fail.code.trim()) error.code = fail.code.trim();
+    throw error;
   }
 }
 
@@ -71,6 +85,12 @@ async function listConversationRows(
     'anx.communicate.conversations.list',
     withLockedAgentListFilter(payload, opts?.lockedAgent ?? null),
   );
+  // The companion grant can create and send without being allowed to list.
+  // A hard deny is an empty page for this locked agent, not a failed history load.
+  // Any other agent's threads stay unreachable because the lock still filters rows.
+  if (opts?.lockedAgent && commandDenied(result)) {
+    return [];
+  }
   assertCommandOk(result, 'anx.communicate.conversations.list');
   const data = unwrapData(result);
   const rows = Array.isArray(data.conversations)

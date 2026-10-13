@@ -142,6 +142,37 @@ describe('createContactThreadApi', () => {
     });
   });
 
+  it('openLatest creates when the locked list command is outside the app grant', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const api = createContactThreadApi(
+      {
+        send: async (command, payload) => {
+          sent.push({ command, payload });
+          if (command === 'anx.communicate.conversations.list') {
+            return { ok: false, code: 'APP_COMMAND_FORBIDDEN', message: 'Command not allowed' };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: true, data: { conversationId: 'created-for-lock' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+      { lockedAgent: { virtualEmployeeId: 've-locked' } },
+    );
+
+    const result = await api.openLatest({
+      id: 've-locked',
+      name: 'Guide',
+      type: 'agent',
+      virtualEmployeeId: 've-locked',
+    });
+    expect(result).toEqual({ conversationId: 'created-for-lock', created: true });
+    expect(sent.map((entry) => entry.command)).toEqual([
+      'anx.communicate.conversations.list',
+      'anx.communicate.conversations.create',
+    ]);
+  });
+
   it('resetConversation archives current then creates a new conversation', async () => {
     const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
     const api = createContactThreadApi({

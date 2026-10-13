@@ -199,7 +199,10 @@ describe('createNexusChat lockedAgent', () => {
         }),
       },
     });
-    await expect(denied.whenLockedAgentReady).rejects.toThrow(/Sign in with Nexus to chat/);
+    await expect(denied.whenLockedAgentReady).rejects.toMatchObject({
+      message: 'Sign in with Nexus to chat.',
+      code: 'NO_NEXUS_GRANT',
+    });
     expect(denied.getState().contacts[0]?.name).toBe('Guide');
   });
 
@@ -224,7 +227,7 @@ describe('createNexusChat lockedAgent', () => {
         },
       },
     });
-    await expect(chat.whenLockedAgentReady).rejects.toThrow(/Sign in with Nexus to chat/);
+    await expect(chat.whenLockedAgentReady).rejects.toMatchObject({ code: 'NO_NEXUS_GRANT' });
     const beforeSend = errors.length;
     const result = await chat.sendMessage('hello locked');
     expect(result).toMatchObject({
