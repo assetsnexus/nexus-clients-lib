@@ -86,21 +86,21 @@ describe('present-file', () => {
 });
 
 describe('tool call row', () => {
-  it('shows mcp__xcamp__list_projects as list_projects with the result visible', () => {
-    expect(displayToolCallName('mcp__xcamp__list_projects')).toEqual({
+  it('shows mcp__catalog__list_projects as list_projects with the result visible', () => {
+    expect(displayToolCallName('mcp__catalog__list_projects')).toEqual({
       name: 'list_projects',
-      server: 'xcamp',
+      server: 'catalog',
     });
     const result = { projects: [{ id: 'p1', name: 'Alpha' }] };
     const row = presentToolRunRow({
-      tool: 'mcp__xcamp__list_projects',
-      label: 'mcp__xcamp__list_projects',
+      tool: 'mcp__catalog__list_projects',
+      label: 'mcp__catalog__list_projects',
       status: 'success',
       result,
     });
     expect(row).toMatchObject({
       name: 'list_projects',
-      server: 'xcamp',
+      server: 'catalog',
       status: 'success',
       files: [],
     });

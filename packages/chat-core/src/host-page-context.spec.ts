@@ -9,7 +9,7 @@ describe('host page context', () => {
       projectId: 'proj-1',
       projectName: 'Alpha',
     });
-    expect(JSON.stringify(normalizeHostPageContext({ projectId: 'proj-1' }))).not.toContain('xcamp');
+    expect(Object.keys(normalizeHostPageContext({ projectId: 'proj-1' }) || {})).toEqual(['projectId']);
   });
 
   it('sends the stored project id and omits the field when none is set', async () => {

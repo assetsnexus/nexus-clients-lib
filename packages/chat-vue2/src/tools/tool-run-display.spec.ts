@@ -82,14 +82,14 @@ describe('formatToolRunDisplay', () => {
   it('mcp tool names show the tool, with the server as the secondary label', () => {
     const d = formatToolRunDisplay(
       run({
-        tool: 'mcp__xcamp__list_projects',
-        label: 'mcp__xcamp__list_projects',
+        tool: 'mcp__catalog__list_projects',
+        label: 'mcp__catalog__list_projects',
         result: { projects: [{ id: 'p1', name: 'Alpha' }] },
       }),
     );
     expect(d.title).toBe('list_projects');
-    expect(d.subtitle).toBe('xcamp');
-    expect(d.tooltip).toBe('mcp__xcamp__list_projects');
+    expect(d.subtitle).toBe('catalog');
+    expect(d.tooltip).toBe('mcp__catalog__list_projects');
   });
 
   it('direct assembled anx.* tools keep the command as the title', () => {

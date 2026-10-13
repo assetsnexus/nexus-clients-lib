@@ -18,7 +18,7 @@ export type ToolRunRowModel = {
 const RESULT_TEXT_MAX = 12_000;
 
 /**
- * `mcp__xcamp__list_projects` → name `list_projects`, server `xcamp`.
+ * `mcp__catalog__list_projects` → name `list_projects`, server `catalog`.
  * Other tool names stay as given. Does not invent a description.
  */
 export function displayToolCallName(raw: string | null | undefined): ToolCallNameParts {

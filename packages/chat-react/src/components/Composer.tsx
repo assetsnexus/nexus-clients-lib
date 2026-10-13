@@ -37,7 +37,7 @@ export type ComposerProps = {
   /** Queued copy for this thread. Empty hides the bar. */
   queueBannerText?: string;
   queueCount?: number;
-  /** Host flag is set, so the send must hit Nexus and not the Chi fallback. */
+  /** Host flag is set, so the send must hit Nexus and not the host chat fallback. */
   bypassFallback?: boolean;
   onFlushQueue?: () => void;
   onCancelQueue?: () => void;
