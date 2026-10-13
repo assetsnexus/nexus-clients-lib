@@ -20,7 +20,9 @@ function pendingRuns(turns: ChatTurn[]) {
 export function ApprovalsStrip({ chat, turns }: { chat: NexusChat; turns: ChatTurn[] }) {
   const items = pendingRuns(turns);
   const [error, setError] = useState<string | null>(null);
-  if (!items.length && !error) return null;
+  if (!items.length && !error) {
+    return <div data-nexus-surface="approvals" hidden />;
+  }
 
   const act = async (fn: () => Promise<boolean>, label: string) => {
     setError(null);
@@ -33,7 +35,7 @@ export function ApprovalsStrip({ chat, turns }: { chat: NexusChat; turns: ChatTu
   };
 
   return (
-    <div className="nexus-chat__strip" role="region" aria-label="Pending approvals">
+    <div className="nexus-chat__strip" data-nexus-surface="approvals" role="region" aria-label="Pending approvals">
       {items.map((item) => (
         <div key={item.approvalId} className="nexus-chat__chip nexus-chat__chip--warn">
           <span>{item.label}</span>

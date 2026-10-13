@@ -114,11 +114,13 @@ export function ConversationInbox(props: {
               {showOwner && row.identityLogo ? (
                 <CachedAvatarImage src={row.identityLogo} alt="" className="nexus-chat__owner-mark" fallback="" />
               ) : null}
-              {row.avatarUrl ? (
-                <CachedAvatarImage src={row.avatarUrl} alt="" className="nexus-chat__peer" fallback={initials(row.title)} />
-              ) : (
-                <span className="nexus-chat__peer">{initials(row.title)}</span>
-              )}
+              <span className="nexus-chat__peer">
+                {row.avatarUrl ? (
+                  <CachedAvatarImage src={row.avatarUrl} alt="" fallback={initials(row.title)} />
+                ) : (
+                  initials(row.title)
+                )}
+              </span>
               {row.kind === 'agent' || row.kind === 'group' || row.kind === 'room' ? (
                 <span className="nexus-chat__kind-badge">{row.kind === 'agent' ? 'AI' : 'G'}</span>
               ) : null}
