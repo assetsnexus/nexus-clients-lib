@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   isScheduleCheckBackTool,
   parseMediaImages,
@@ -15,10 +16,19 @@ export type ToolTimelineRowProps = {
   onOpenFile?: (file: ViewerFileRef) => void;
 };
 
+function startsOpen(status: string): boolean {
+  return status === 'error' || status === 'reverted' || status === 'needs_approval' || status === 'mode_blocked';
+}
+
 export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolTimelineRowProps) {
   const status = run.status || 'running';
+  const [open, setOpen] = useState(() => startsOpen(status));
+  useEffect(() => {
+    if (startsOpen(status)) setOpen(true);
+  }, [status]);
+
   const mod =
-    status === 'error' || status === 'mode_blocked'
+    status === 'error' || status === 'mode_blocked' || status === 'reverted'
       ? 'nexus-chat__tool-row--error'
       : status === 'needs_approval'
         ? 'nexus-chat__tool-row--approval'
@@ -37,17 +47,22 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
 
   const images = parseMediaImages(run.result);
   const row = presentToolRunRow(run);
-  const showMedia = images.length > 0;
-  const showFiles = row.files.length > 0;
-  const resultText = showMedia ? null : row.resultText;
+  const argsText = Object.keys(run.args || {}).length ? JSON.stringify(run.args, null, 2) : '';
 
   return (
-    <div className={`nexus-chat__tool-row ${mod}`.trim()}>
-      <strong>{row.name}</strong>
-      {row.server ? <span className="nexus-chat__tool-server">{row.server}</span> : null}
-      <span> · {row.status}</span>
-      {run.error ? <div className="nexus-chat__error">{run.error}</div> : null}
-      {showMedia ? (
+    <div className={`nexus-chat__tool-row ${mod}${open ? ' nexus-chat__tool-row--open' : ''}`.trim()}>
+      <button
+        type="button"
+        className="nexus-chat__tool-head"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <strong>{row.name}</strong>
+        {row.server ? <span className="nexus-chat__tool-server">{row.server}</span> : null}
+        <span className="nexus-chat__tool-status">{row.status}</span>
+        <span className="nexus-chat__tool-chev" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      </button>
+      {images.length ? (
         <div className="nexus-chat__media-strip" role="list">
           {images.map((img) => (
             <button
@@ -69,30 +84,34 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
           ))}
         </div>
       ) : null}
-      {showFiles ? (
+      {row.files.length ? (
         <div className="nexus-chat__file-chips">
-          {row.files.map((f, i) => (
+          {row.files.map((file, index) => (
             <button
-              key={`${f.fileId || f.label}-${i}`}
+              key={`${file.fileId || file.label}-${index}`}
               type="button"
               className="nexus-chat__chip nexus-chat__chip--clickable"
               onClick={() =>
                 onOpenFile?.({
-                  id: f.fileId || `file-${f.label}-${i}`,
-                  name: f.label,
-                  mimeType: f.mimeType,
-                  url: f.presignedUrl,
-                  downloadUrl: f.presignedUrl,
+                  id: file.fileId || `file-${file.label}-${index}`,
+                  name: file.label,
+                  mimeType: file.mimeType,
+                  url: file.presignedUrl,
+                  downloadUrl: file.presignedUrl,
                 })
               }
             >
-              {f.label}
+              {file.label}
             </button>
           ))}
         </div>
       ) : null}
-      {resultText ? (
-        <pre className="nexus-chat__tool-result">{resultText}</pre>
+      {open ? (
+        <div className="nexus-chat__tool-details">
+          {run.error ? <div className="nexus-chat__error">{run.error}</div> : null}
+          {row.resultText ? <pre className="nexus-chat__tool-result">{row.resultText}</pre> : null}
+          {argsText ? <pre className="nexus-chat__tool-result">{argsText}</pre> : null}
+        </div>
       ) : null}
     </div>
   );

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ChatTurn, IoDescriptor, NexusChat } from '@nexus/chat-core';
 import { CHAT_MARKDOWN_ROOT_CLASS, renderChatMarkdown } from '../markdown.js';
-import { ToolTimelineRow } from './ToolTimelineRow.js';
+import { ToolTimeline } from './ToolTimeline.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 
 export type ThreadViewProps = {
@@ -108,15 +108,13 @@ export function ThreadView({
                 {card.body ? <p>{card.body}</p> : null}
               </article>
             ))}
-            {(turn.toolEvents || []).map((run) => (
-              <ToolTimelineRow
-                key={run.id}
-                run={run}
-                chat={chat}
-                conversationId={conversationId}
-                onOpenFile={onOpenFile}
-              />
-            ))}
+            <ToolTimeline
+              runs={turn.toolEvents || []}
+              streaming={Boolean(streaming && turn === turns[turns.length - 1] && !isUser)}
+              chat={chat}
+              conversationId={conversationId}
+              onOpenFile={onOpenFile}
+            />
             {turn.deliveryStatus === 'failed' && turn.deliveryError ? (
               <div style={{ color: '#e55353', fontSize: 12, marginTop: 6 }}>
                 Send failed: {turn.deliveryError.message}
