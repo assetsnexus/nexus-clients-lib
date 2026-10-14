@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatContact, ChatModelOverride, IoDescriptor, NexusChat, OutgoingSendQueue } from '@nexus/chat-core';
 import { isRetryableOutgoingFailure, latestUnsentUserTurnId } from '@nexus/chat-core';
-import { parseMentions, transcribeOrNull, uploadOptsForChatFileDestination } from '@nexus/chat-core';
+import {
+  connectLiveSttWebSocket,
+  createLiveSttSession,
+  parseMentions,
+  transcribeOrNull,
+  uploadOptsForChatFileDestination,
+} from '@nexus/chat-core';
+import { holdSttCommands } from '../dictation/holdStt.js';
 import type { ChatSlots } from '../slots.js';
 import { appendComposerDraft } from '../utils/composerDraft.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
@@ -54,6 +61,10 @@ export type ComposerProps = {
   showModelPicker?: boolean;
   dictationMethod?: DictationMethod;
   sttModelId?: string | null;
+  /** Speech model accepts a live session while the button is held. */
+  sttLive?: boolean;
+  /** Grant is missing. Hold must not record or send. */
+  grantMissing?: boolean;
   dictationNote?: string | null;
   commandClient?: { send: (command: string, payload?: Record<string, unknown>) => Promise<unknown> };
   onOpenFile?: (file: ViewerFileRef) => void;
@@ -89,6 +100,8 @@ export function Composer({
   reasoningEffort = null,
   dictationMethod = 'phone',
   sttModelId = null,
+  sttLive = false,
+  grantMissing = false,
   dictationNote = null,
   commandClient,
   onOpenFile,
@@ -227,6 +240,10 @@ export function Composer({
 
   const beginHold = useCallback(async () => {
     if (sessionRef.current) return;
+    if (grantMissing) {
+      setActionError('Sign in with Nexus to chat.');
+      return;
+    }
     releasedRef.current = null;
     setActionError(null);
     setHoldPhase('recording');
@@ -265,16 +282,42 @@ export function Composer({
       } else if (dictationMethod === 'phone') {
         throw new Error(dictationNote || 'Speech recognition is not available on this device.');
       } else {
-      const capture = await startMicCapture();
+      let liveText = '';
+      let liveSocket: { send: (frame: ArrayBuffer) => void; close: () => void } | null = null;
+      if (sttLive && commandClient && sttModelId && dictationMethod !== 'direct') {
+        const session = await createLiveSttSession(commandClient, { modelId: sttModelId });
+        const endpoint = Array.isArray(session.endpoints) ? session.endpoints[0] : null;
+        if (session.token && endpoint) {
+          liveSocket = connectLiveSttWebSocket({
+            wsUrl: endpoint,
+            token: session.token,
+            modelId: session.modelId || sttModelId,
+            onPartial: (text) => {
+              liveText = text;
+            },
+            onFinal: (text) => {
+              liveText = `${liveText} ${text}`.trim();
+            },
+          });
+        }
+      }
+      const capture = await startMicCapture({
+        onChunk: liveSocket ? (frame) => liveSocket?.send(frame) : undefined,
+      });
       sessionRef.current = {
-        cancel: () => capture.cancel(),
+        cancel: () => {
+          capture.cancel();
+          liveSocket?.close();
+        },
         finish: async (commit) => {
           if (!commit) {
             capture.cancel();
+            liveSocket?.close();
             return;
           }
           const blob = await capture.stop();
-          if (!blob.size) throw new Error('The recording was empty.');
+          liveSocket?.close();
+          if (!blob.size && !liveText.trim()) throw new Error('The recording was empty.');
           if (dictationMethod === 'direct') {
             const audio = await blobToInlineAudio(blob, 'voice-message.webm');
             const result = await chat.sendMessage('Voice message', {
@@ -283,6 +326,7 @@ export function Composer({
               attachments: [audio],
               ...(modelOverride ? { modelOverride } : {}),
               ...(reasoningEffort ? { reasoningEffort } : {}),
+              bypassFallback: true,
             });
             if (!result.ok) throw new Error(result.message || 'Could not send the recording.');
             return;
@@ -291,6 +335,15 @@ export function Composer({
             throw new Error(dictationNote || 'No speech model is available on this subscription.');
           }
           setHoldPhase('working');
+          const said = liveText.trim();
+          const commands = holdSttCommands({ live: Boolean(liveSocket), hasLiveText: Boolean(said) });
+          if (said) {
+            appendTranscript(said);
+            return;
+          }
+          if (!commands.includes('anx.inference.stt.create')) {
+            throw new Error('The speech model returned no transcript.');
+          }
           const transcribed = await transcribeOrNull(commandClient, { modelId: sttModelId, audioBlob: blob });
           if (!transcribed.text) throw new Error('The speech model returned no transcript.');
           appendTranscript(transcribed.text);
@@ -319,7 +372,9 @@ export function Composer({
     conversationId,
     dictationMethod,
     dictationNote,
+    grantMissing,
     modelOverride,
+    sttLive,
     sttModelId,
   ]);
 

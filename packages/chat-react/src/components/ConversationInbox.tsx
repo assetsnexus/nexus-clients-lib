@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
+import { conversationHighlightsAgent } from '@nexus/chat-core';
 import { matchesKindFilter, type InboxRow, type KindFilter } from '../inbox/inboxRows.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 
@@ -23,6 +24,7 @@ export function ConversationInbox(props: {
   loading: boolean;
   error: string | null;
   activeRowId: string | null;
+  highlightAgentId?: string | null;
   onToggleIdentity: (key: string) => void;
   onOpen: (row: InboxRow) => void;
   onRetry: () => void;
@@ -107,7 +109,10 @@ export function ConversationInbox(props: {
             key={row.id}
             type="button"
             role="listitem"
-            className={`nexus-chat__inbox-row${props.activeRowId === row.id ? ' nexus-chat__inbox-row--active' : ''}`}
+            className={`nexus-chat__inbox-row${props.activeRowId === row.id ? ' nexus-chat__inbox-row--active' : ''}${
+              conversationHighlightsAgent(row, props.highlightAgentId) ? ' nexus-chat__inbox-row--highlight' : ''
+            }`}
+            aria-current={conversationHighlightsAgent(row, props.highlightAgentId) ? 'true' : undefined}
             onClick={() => props.onOpen(row)}
           >
             <span className="nexus-chat__stack">

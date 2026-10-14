@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import type { ChatContact, ConversationRow, NexusChat } from '@nexus/chat-core';
+import { conversationHighlightsAgent, type ChatContact, type ConversationRow, type NexusChat } from '@nexus/chat-core';
 import type { ChatSlots } from '../slots.js';
 import { sortContactsForList } from '../utils/sortContacts.js';
 import { openContactThread } from '../utils/openContactFlow.js';
@@ -10,6 +10,7 @@ export type ContactListProps = {
   contacts: ChatContact[];
   conversationRows?: ConversationRow[];
   activeContactId?: string | null;
+  highlightAgentId?: string | null;
   slots?: ChatSlots;
   onActionSheet?: (contactId: string) => void;
 };
@@ -17,12 +18,14 @@ export type ContactListProps = {
 function DefaultRow({
   contact,
   active,
+  highlighted,
   onOpen,
   onContext,
   onLongPress,
 }: {
   contact: ChatContact;
   active: boolean;
+  highlighted: boolean;
   onOpen: () => void;
   onContext: (e: React.MouseEvent) => void;
   onLongPress: () => void;
@@ -38,7 +41,8 @@ function DefaultRow({
   return (
     <button
       type="button"
-      className={`nexus-chat__contact${active ? ' nexus-chat__contact--active' : ''}`}
+      className={`nexus-chat__contact${active ? ' nexus-chat__contact--active' : ''}${highlighted ? ' nexus-chat__contact--highlight' : ''}`}
+      aria-current={highlighted ? 'true' : undefined}
       onClick={onOpen}
       onContextMenu={onContext}
       onTouchStart={() => {
@@ -72,6 +76,7 @@ export function ContactList({
   contacts,
   conversationRows,
   activeContactId,
+  highlightAgentId,
   slots,
   onActionSheet,
 }: ContactListProps) {
@@ -102,6 +107,15 @@ export function ContactList({
             key={contact.id}
             contact={contact}
             active={active}
+            highlighted={conversationHighlightsAgent(
+              {
+                virtualEmployeeId: contact.virtualEmployeeId,
+                agentId: contact.agentId,
+                contactId: contact.id,
+                id: contact.id,
+              },
+              highlightAgentId,
+            )}
             onOpen={() => void handleOpen(contact)}
             onContext={(e) => {
               e.preventDefault();

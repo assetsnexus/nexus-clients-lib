@@ -8,7 +8,11 @@ import {
   parseLockedAgent,
   threadEmptyLabel,
 } from '../index.js';
-import { filterConversationsForLockedAgent } from './locked-agent.js';
+import {
+  conversationHighlightsAgent,
+  filterConversationsForLockedAgent,
+  resolveConversationListMode,
+} from './locked-agent.js';
 
 const LOCKED = 've-locked';
 
@@ -24,6 +28,7 @@ function conversations() {
     {
       conversationId: 'mine',
       virtualEmployeeId: LOCKED,
+      agentId: '11111111-1111-4111-8111-111111111111',
       status: 'active',
       lastActivityAt: '2026-01-01T00:00:00.000Z',
       title: 'Locked agent',
@@ -70,6 +75,33 @@ describe('filterConversationsForLockedAgent', () => {
   });
 });
 
+describe('conversation list rails', () => {
+  it('hides the list when locked and shows it when the host asks', () => {
+    expect(resolveConversationListMode({ lockedAgent: { virtualEmployeeId: LOCKED } })).toBe('hidden');
+    expect(resolveConversationListMode({ lockedAgent: null })).toBe('sidebar');
+    expect(
+      resolveConversationListMode({
+        lockedAgent: { virtualEmployeeId: LOCKED },
+        conversationList: 'drawer',
+      }),
+    ).toBe('drawer');
+    expect(resolveConversationListMode({ conversationList: 'sidebar' })).toBe('sidebar');
+  });
+
+  it('marks only the highlighted agent and leaves other rows visible', () => {
+    expect(
+      conversationHighlightsAgent(
+        { virtualEmployeeId: LOCKED, id: 'other' },
+        LOCKED,
+      ),
+    ).toBe(true);
+    expect(
+      conversationHighlightsAgent({ virtualEmployeeId: 've-other', id: 'row-2' }, LOCKED),
+    ).toBe(false);
+    expect(conversationHighlightsAgent({ virtualEmployeeId: LOCKED }, '  ')).toBe(false);
+  });
+});
+
 describe('createNexusChat lockedAgent', () => {
   it('opens the existing conversation and drops other agents from the inbox list', async () => {
     const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
@@ -104,6 +136,9 @@ describe('createNexusChat lockedAgent', () => {
     expect(sent.some((entry) => entry.command === 'anx.communicate.rooms.list')).toBe(false);
     expect(chat.getState().conversationId).toBe('mine');
     expect(chat.getState().selectedAgentId).toBe(LOCKED);
+    expect(chat.getState().contacts.find((row) => row.id === LOCKED)?.agentId).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
     expect(chat.getState().turns.some((turn) => turn.text === 'hello')).toBe(true);
 
     const listed = await chat.listConversations({ status: 'active', limit: 50 });

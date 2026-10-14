@@ -1270,6 +1270,62 @@ describe('chat-core', () => {
     }
   });
 
+  it('uploadAttachment uses upload-complete when presign is forbidden for an app identity', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error('fetch must not run when presign is forbidden');
+    }) as typeof fetch;
+    try {
+      const chat = createNexusChat({
+        client: {
+          send: async (command: string) => {
+            sent.push({ command });
+            if (command === 'anx.file.upload-init') {
+              return {
+                ok: true,
+                data: {
+                  fileId: 'f-app',
+                  storageKey: 'chat/f-app.bin',
+                  workspaceId: 'ws-1',
+                  presignPut: true,
+                },
+              };
+            }
+            if (command === 'anx.storage.presign.put') {
+              return {
+                ok: false,
+                error: {
+                  code: 'APP_ACCESS_FORBIDDEN',
+                  message: 'This command is not available to app identities',
+                },
+              };
+            }
+            if (command === 'anx.file.upload-complete') {
+              return { ok: true, data: { fileId: 'f-app' } };
+            }
+            return { ok: true, data: {} };
+          },
+        },
+      });
+      const bytes = new Uint8Array([4, 5]);
+      const result = await chat.uploadAttachment({
+        name: 'note.txt',
+        type: 'text/plain',
+        size: bytes.byteLength,
+        body: bytes,
+      });
+      expect(result.fileId).toBe('f-app');
+      expect(sent.map((s) => s.command)).toEqual([
+        'anx.file.upload-init',
+        'anx.storage.presign.put',
+        'anx.file.upload-complete',
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('uploadAttachment reports progress on the base64 complete path', async () => {
     const fractions: number[] = [];
     const chat = createNexusChat({

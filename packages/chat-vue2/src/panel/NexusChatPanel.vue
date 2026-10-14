@@ -78,6 +78,17 @@
           ◉
         </button>
         <button
+          v-if="listMode === 'drawer'"
+          type="button"
+          class="nexus-btn-link"
+          :aria-expanded="drawerOpen ? 'true' : 'false'"
+          title="Past conversations"
+          @click="drawerOpen = !drawerOpen"
+        >
+          Past conversations
+        </button>
+        <button
+          v-else-if="listMode !== 'hidden'"
           type="button"
           class="nexus-btn-link"
           :title="sidebarOpen ? 'Hide sidebar' : 'Show sidebar'"
@@ -110,7 +121,7 @@
     </div>
 
     <div v-show="!collapsed" class="nexus-chat-panel__body">
-      <aside v-if="sidebarOpen" class="nexus-chat-panel__sidebar">
+      <aside v-if="listVisible" class="nexus-chat-panel__sidebar" :class="{ 'nexus-chat-panel__sidebar--drawer': listMode === 'drawer' }">
         <slot
           name="sidebar-main"
           :panel="resolvedPanel"
@@ -120,11 +131,11 @@
           <div class="nexus-sidebar-title">{{ resolvedLabels.contacts }}</div>
           <ul class="nexus-contacts-list">
             <li
-              v-for="c in resolvedContacts"
+              v-for="c in listedContacts"
               :key="c.id"
               class="nexus-contact-row"
-              :class="{ active: c.id === resolvedPanel.contactId }"
-              @click="$emit('select-contact', c)"
+              :class="{ active: c.id === resolvedPanel.contactId, 'nexus-contact-row--highlight': contactHighlighted(c) }"
+              @click="openListedContact(c)"
             >
               <div class="nexus-contact-row__top">
                 <span>{{ c.name }}</span>
@@ -133,8 +144,8 @@
               <div v-if="c.lastMessagePreview" class="nexus-contact-preview">{{ c.lastMessagePreview }}</div>
             </li>
           </ul>
-          <div v-if="rooms.length" class="nexus-sidebar-title">{{ resolvedLabels.rooms }}</div>
-          <ul v-if="rooms.length" class="nexus-contacts-list">
+          <div v-if="listMode !== 'drawer' && rooms.length" class="nexus-sidebar-title">{{ resolvedLabels.rooms }}</div>
+          <ul v-if="listMode !== 'drawer' && rooms.length" class="nexus-contacts-list">
             <li
               v-for="room in rooms"
               :key="room.id"
@@ -611,6 +622,8 @@ import {
   formatModeTransitionCountdown,
   modeLabel,
   formatTurnSenderLine,
+  conversationHighlightsAgent,
+  resolveConversationListMode,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
 import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip } from '../tools';
@@ -697,6 +710,15 @@ export default {
     presentation: { type: String, default: null },
     collapsed: { type: Boolean, default: false },
     sidebarOpen: { type: Boolean, default: true },
+    /**
+     * sidebar: full list. hidden: no list. drawer: button opens the list
+     * filtered to lockedAgent. Omitted follows the lock.
+     */
+    conversationList: { type: String, default: '' },
+    /** Mark this virtual employee's rows. Other rows stay visible. */
+    highlightAgentId: { type: String, default: '' },
+    /** When set, a drawer lists only this virtual employee's threads. */
+    lockedAgent: { type: Object, default: null },
     /** When false, host provides its own context % / History / Compact cluster in header-actions. */
     showDefaultContextButton: { type: Boolean, default: true },
     /** Host chrome: split-screen toggle between sidebar collapse and minimize. */
@@ -769,11 +791,41 @@ export default {
       subchatDelivery: 'queue',
       billingOpen: false,
       dismissedSubAgentIds: [],
+      drawerOpen: false,
     };
   },
   computed: {
     resolvedLabels() {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
+    },
+    listMode() {
+      const requested = this.conversationList;
+      return resolveConversationListMode({
+        conversationList: requested === 'sidebar' || requested === 'hidden' || requested === 'drawer' ? requested : null,
+        lockedAgent: this.lockedAgent && this.lockedAgent.virtualEmployeeId ? this.lockedAgent : null,
+      });
+    },
+    listVisible() {
+      if (this.listMode === 'hidden') return false;
+      if (this.listMode === 'drawer') return this.drawerOpen;
+      return this.sidebarOpen;
+    },
+    listedContacts() {
+      const rows = this.resolvedContacts || [];
+      if (this.listMode !== 'drawer') return rows;
+      const id = (this.lockedAgent && this.lockedAgent.virtualEmployeeId) || '';
+      if (!id) return rows;
+      return rows.filter((contact) =>
+        conversationHighlightsAgent(
+          {
+            virtualEmployeeId: contact && contact.virtualEmployeeId,
+            agentId: contact && contact.agentId,
+            contactId: contact && contact.id,
+            id: contact && contact.id,
+          },
+          id,
+        ),
+      );
     },
     splitButtonTitle() {
       if (this.windowMode === 'split') {
@@ -1188,6 +1240,22 @@ export default {
     this.revokeAllPreviews();
   },
   methods: {
+    contactHighlighted(contact) {
+      if (this.listMode !== 'sidebar') return false;
+      return conversationHighlightsAgent(
+        {
+          virtualEmployeeId: contact && contact.virtualEmployeeId,
+          agentId: contact && contact.agentId,
+          contactId: contact && contact.id,
+          id: contact && contact.id,
+        },
+        this.highlightAgentId,
+      );
+    },
+    openListedContact(contact) {
+      if (this.listMode === 'drawer') this.drawerOpen = false;
+      this.$emit('select-contact', contact);
+    },
     onDismissSubAgentRun(ev) {
       const id = String(ev?.id || ev?.runId || '').trim();
       if (!id) return;
@@ -1880,6 +1948,22 @@ export default {
 .nexus-contact-row:hover,
 .nexus-contact-row.active {
   background: #f5f5f5;
+}
+.nexus-contact-row--highlight {
+  box-shadow: inset 3px 0 0 #3d8bfd;
+}
+.nexus-chat-panel__body {
+  position: relative;
+}
+.nexus-chat-panel__sidebar--drawer {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(280px, 88%);
+  background: #fff;
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.18);
 }
 .nexus-contact-row__top {
   display: flex;

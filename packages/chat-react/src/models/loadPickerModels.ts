@@ -69,11 +69,15 @@ export async function loadPickerModels(
   }
   const availableRows = isCommandOk(availableResult) ? rowsFrom(unwrap(availableResult)) : [];
   const catalogRows = isCommandOk(catalogResult) ? rowsFrom(unwrap(catalogResult)) : [];
-  return mergeEntitledModelsForPicker({
+  const entitlementsPayload = unwrap(entitlementsResult);
+  const models = mergeEntitledModelsForPicker({
     availableRows,
     catalogRows,
-    entitlementsPayload: unwrap(entitlementsResult),
+    entitlementsPayload,
   });
+  const rawDefault = entitlementsPayload.defaultModel ?? entitlementsPayload.defaultModelId;
+  const defaultModelId = typeof rawDefault === 'string' && rawDefault.trim() ? rawDefault.trim() : null;
+  return Object.assign(models, { defaultModelId });
 }
 
 export function buildModelOverride(

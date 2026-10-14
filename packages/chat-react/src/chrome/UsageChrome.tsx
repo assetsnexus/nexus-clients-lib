@@ -6,6 +6,7 @@ import { contextDonutModel } from './context-donut.js';
 import { ContextDonut } from './ContextDonut.js';
 import { ReasoningEffortControl } from './ReasoningEffortControl.js';
 import { ADVANCED_USAGE_OPEN_BY_DEFAULT } from './usage-disclosure.js';
+import { advancedCatalogNotice, advancedModelFacts, contextUsageVisible } from './advanced-model-facts.js';
 
 function formatMinor(minor: number | undefined, currency?: string | null): string {
   if (minor == null || !Number.isFinite(minor)) return '—';
@@ -29,6 +30,8 @@ export function UsageChrome({
   unavailable,
   nexusLogin,
   variant = 'bar',
+  effectiveModel = null,
+  modelsError = null,
 }: {
   panel: PanelState | null;
   models: PickerModel[];
@@ -42,6 +45,10 @@ export function UsageChrome({
   nexusLogin?: ReactNode;
   /** `advanced` hides context, cost, and model selection until the user opens it. */
   variant?: 'bar' | 'advanced';
+  /** Selected model, or the agent default resolved from the catalog. */
+  effectiveModel?: PickerModel | null;
+  /** Catalog command failed. Shown instead of placeholder values. */
+  modelsError?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const usage = panel?.usage;
@@ -50,12 +57,20 @@ export function UsageChrome({
     tokensUsed: usage?.tokensUsed,
     maxContextTokens: usage?.maxContextTokens,
   });
-  const cost =
+  const costLabel =
     usage?.displayCostMinor != null
       ? formatMinor(usage.displayCostMinor, usage.displayCurrency)
       : usage?.costCents != null
         ? formatMinor(usage.costCents, usage.displayCurrency)
-        : '—';
+        : null;
+  const cost = costLabel && costLabel !== '—' ? costLabel : null;
+  const facts = models.length ? advancedModelFacts(effectiveModel ?? null) : null;
+  const showContext = contextUsageVisible(model);
+  const catalogNotice = advancedCatalogNotice({
+    modelsError,
+    modelCount: models.length,
+    loading: modelsLoading,
+  });
 
   if (variant === 'advanced') {
     return (
@@ -76,27 +91,44 @@ export function UsageChrome({
             value={reasoningEffort}
             onChange={onReasoningEffort}
           />
-          <div data-nexus-context="">
-            <ContextDonut model={model} />
-            {model.slices.length ? (
-              <ul className="nexus-chat__donut-legend">
-                {model.slices.map((slice) => (
-                  <li key={slice.category}>
-                    <span>
-                      <span className="nexus-chat__donut-dot" style={{ background: slice.color }} />
-                      {slice.label}
-                    </span>
-                    <span>{slice.pct}%</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="nexus-chat__muted">{model.tokenLabel}</p>
-            )}
-          </div>
-          <div data-nexus-cost="" title="Cost">
-            {cost}
-          </div>
+          {catalogNotice ? (
+            <p className="nexus-chat__muted" role={modelsError ? 'alert' : undefined}>
+              {catalogNotice}
+            </p>
+          ) : null}
+          {facts ? (
+            <div className="nexus-chat__model-facts" data-nexus-model-facts="">
+              {facts.name ? <strong>{facts.name}</strong> : null}
+              {facts.author ? <span>{facts.author}</span> : null}
+              {facts.price ? <span title="Catalog price">{facts.price}</span> : null}
+              {facts.intel ? <span title="Intelligence score">{facts.intel}</span> : null}
+            </div>
+          ) : null}
+          {showContext ? (
+            <div data-nexus-context="">
+              <ContextDonut model={model} />
+              {model.slices.length ? (
+                <ul className="nexus-chat__donut-legend">
+                  {model.slices.map((slice) => (
+                    <li key={slice.category}>
+                      <span>
+                        <span className="nexus-chat__donut-dot" style={{ background: slice.color }} />
+                        {slice.label}
+                      </span>
+                      <span>{slice.pct}%</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : model.tokenLabel && model.tokenLabel !== '—' ? (
+                <p className="nexus-chat__muted">{model.tokenLabel}</p>
+              ) : null}
+            </div>
+          ) : null}
+          {cost ? (
+            <div data-nexus-cost="" title="Cost">
+              {cost}
+            </div>
+          ) : null}
         </div>
       </details>
     );
@@ -127,7 +159,7 @@ export function UsageChrome({
         {model.pct == null ? '—' : `${model.pct}%`}
       </button>
       <span data-nexus-cost="" title="Cost">
-        {cost}
+        {cost || '—'}
       </span>
       {open ? (
         <div className="nexus-chat__sheet-backdrop" onClick={() => setOpen(false)} role="presentation">
@@ -159,7 +191,7 @@ export function UsageChrome({
             ) : (
               <p className="nexus-chat__muted">{model.tokenLabel}</p>
             )}
-            <div>{cost}</div>
+            <div>{cost || '—'}</div>
           </div>
         </div>
       ) : null}

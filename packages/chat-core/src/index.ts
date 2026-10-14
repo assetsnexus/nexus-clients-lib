@@ -134,6 +134,14 @@ import {
   type ModelsAvailableCatalog,
 } from './models/available-models.js';
 import { discardableUnsentTurnIds } from './outgoing/unsent-turns.js';
+import {
+  browserLockedThreadStorage,
+  readLockedThread,
+  writeLockedThread,
+} from './session/locked-thread-memory.js';
+
+const lockedOpenInflight = new Map<string, Promise<{ conversationId: string; created: boolean; greetingText?: string | null }>>();
+const openingRequested = new Set<string>();
 
 
 export type {
@@ -278,8 +286,13 @@ export {
   humanAgentLabel,
   usableAvatarUrl,
   resolveDisplayAvatar,
+  resolveConversationListMode,
+  parseHighlightAgentId,
+  conversationHighlightsAgent,
+  filterConversationsForLockedAgent,
   CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID,
 } from './session/locked-agent.js';
+export type { ConversationListMode } from './session/locked-agent.js';
 export {
   fallbackTransportSelected,
   fallbackMessagesFromTurns,
@@ -978,7 +991,13 @@ export type AiDispatchSummary = {
 };
 
 export type SendMessageResult =
-  | { ok: true; aiDispatch?: AiDispatchSummary | null; dispatched?: boolean; transport?: 'fallback' }
+  | {
+      ok: true;
+      aiDispatch?: AiDispatchSummary | null;
+      dispatched?: boolean;
+      transport?: 'fallback';
+      greetingText?: string;
+    }
   | { ok: false; code: string; message: string; kind?: string; localTurnId?: string };
 
 function readAiDispatch(data: Record<string, unknown>): AiDispatchSummary | null {
@@ -3227,9 +3246,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         }>;
         pageFunctionCalls?: string[];
         bypassFallback?: boolean;
+        /** Empty thread: ask the agent to greet. Do not show a user turn. */
+        conversationOpen?: boolean;
       } = {},
     ): Promise<SendMessageResult> {
-      if (!sendOpts.bypassFallback && fallbackTransportSelected(opts.fallbackTransport)) {
+      if (
+        !sendOpts.conversationOpen &&
+        !sendOpts.bypassFallback &&
+        fallbackTransportSelected(opts.fallbackTransport)
+      ) {
         return sendWithFallback(text);
       }
       let createdForLockedAgent: string | null = null;
@@ -3291,7 +3316,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         deliveryError: null,
         createdAt: nowIso,
       };
-      syncMessagesFromTurns([...prevTurns, userTurn]);
+      if (!sendOpts.conversationOpen) {
+        syncMessagesFromTurns([...prevTurns, userTurn]);
+      }
       store.setState({ streaming: true });
       patchCurrentPanel({ streaming: true, billingIssue: null });
       opts.hooks?.onStreamState?.('streaming');
@@ -3440,7 +3467,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             : explicitTools;
         const pageContext = normalizeHostPageContext(sendOpts.pageContext) ?? hostPageContext;
         const result = (await opts.client.send(command, {
-          text,
+          text: sendOpts.conversationOpen ? '' : text,
+          ...(sendOpts.conversationOpen ? { conversationOpen: true } : {}),
           message: command === 'anx.inference.chat.completions' ? text : undefined,
           conversationId: roomId ? undefined : store.getState().conversationId || conversationId,
           contactId: roomId || conversationId ? undefined : contactId,
@@ -3515,6 +3543,33 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         }
 
         const data = unwrapData(result);
+        if (sendOpts.conversationOpen) {
+          const greetingText = typeof data.greetingText === 'string' ? data.greetingText.trim() : '';
+          const dispatched = data.dispatched === true;
+          if (greetingText) {
+            const filled = store.getState().turns.map((turn) =>
+              turn.id === assistantId ? { ...turn, text: greetingText } : turn,
+            );
+            syncMessagesFromTurns(filled);
+            store.setState({ streaming: false });
+            patchCurrentPanel({ streaming: false });
+            opts.hooks?.onStreamState?.('idle');
+            closeSocket();
+            emitSendOutcome(opts.hooks, 'ok');
+            return { ok: true, dispatched: false, greetingText };
+          }
+          if (!dispatched) {
+            syncMessagesFromTurns(store.getState().turns.filter((turn) => turn.id !== assistantId));
+            store.setState({ streaming: false });
+            patchCurrentPanel({ streaming: false });
+            opts.hooks?.onStreamState?.('idle');
+            closeSocket();
+            emitSendOutcome(opts.hooks, 'ok');
+            return { ok: true, dispatched: false };
+          }
+          emitSendOutcome(opts.hooks, 'ok');
+          return { ok: true, dispatched: true };
+        }
         const aiDispatch = readAiDispatch(data);
         if (roomId && !shouldKeepRoomAssistantPlaceholder(aiDispatch)) {
           syncMessagesFromTurns(store.getState().turns.filter((t) => t.id !== assistantId));
@@ -3751,6 +3806,29 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       if (streamResolver.getOrderedEndpoints().length === 0) {
         opts.logger?.warn?.('live_attach_no_endpoints', { conversationId });
         return resumeObserverAfter({ attached: false, outcome: 'failed' });
+      }
+
+      let generationLive = false;
+      try {
+        const liveRes = (await opts.client.send('anx.communicate.conversations.get', {
+          conversationId,
+        })) as { ok?: boolean } | null;
+        if (!liveRes || liveRes.ok !== false) {
+          generationLive = unwrapData(liveRes).generationInProgress === true;
+        }
+      } catch (err) {
+        opts.logger?.warn?.('live_attach_liveness_check_failed', {
+          conversationId,
+          message: String(err),
+        });
+        generationLive = false;
+      }
+      if (!generationLive) {
+        log('live_attach_skip', { reason: 'not_live', conversationId });
+        return resumeObserverAfter({ attached: false, outcome: 'not_live' });
+      }
+      if (store.getState().conversationId !== conversationId || hasLiveStream()) {
+        return resumeObserverAfter({ attached: false, outcome: 'superseded' });
       }
 
       const panelId = currentPanel(store.getState())?.id;
@@ -4126,16 +4204,22 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
 
   if (lockedAgent) {
     const contact = lockedAgentContact(lockedAgent);
+    const remembered = readLockedThread(browserLockedThreadStorage(), lockedAgent.virtualEmployeeId);
     store.setState({
       contacts: [contact],
       selectedAgentId: contact.id,
+      ...(remembered?.conversationId ? { conversationId: remembered.conversationId } : {}),
     });
     patchCurrentPanel({
       contactId: contact.id,
       contactType: 'agent',
+      conversationId: remembered?.conversationId || null,
       roomId: null,
       roomPurpose: 'conversation',
     });
+    if (remembered?.conversationId && remembered.greetingText) {
+      keepLockedGreeting(remembered.conversationId, remembered.greetingText);
+    }
     whenLockedAgentReady = fallbackTransportSelected(opts.fallbackTransport)
       ? Promise.resolve(null)
       : ensureLockedAgentConversation(lockedAgent);
@@ -4144,24 +4228,197 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   return controller;
 
   async function ensureLockedAgentConversation(locked: LockedAgent) {
+    const key = locked.virtualEmployeeId;
+    const pending = lockedOpenInflight.get(key);
+    if (pending) {
+      const shared = await pending;
+      await adoptLockedConversation(locked, shared);
+      return { conversationId: shared.conversationId, created: false as const };
+    }
+    const run = openLockedAgentConversation(locked);
+    lockedOpenInflight.set(key, run);
+    try {
+      const result = await run;
+      return { conversationId: result.conversationId, created: result.created };
+    } finally {
+      lockedOpenInflight.delete(key);
+    }
+  }
+
+  function rehydrateLockedHistory(conversationId: string, messages: unknown[]) {
+    const rows = rehydrateRowsFromMessages(messages);
+    const serverHasText = rows.some((row) => String(row.content || row.text || '').trim());
+    const localGreeting = store
+      .getState()
+      .turns.some((turn) => turn.role === 'assistant' && turn.text.trim());
+    if (!serverHasText && localGreeting) return;
+    controller.rehydrateTurns(rows, { conversationId, detachStream: true });
+  }
+
+  function keepLockedGreeting(conversationId: string, text: string | null | undefined) {
+    const greeting = typeof text === 'string' ? text.trim() : '';
+    if (!conversationId || !greeting) return;
+    const turns = store.getState().turns;
+    if (turns.some((turn) => turn.role === 'assistant' && turn.text.trim())) return;
+    syncMessagesFromTurns([
+      ...turns,
+      {
+        id: `a_open_${conversationId}`,
+        role: 'assistant',
+        text: greeting,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }
+
+  async function adoptLockedConversation(
+    locked: LockedAgent,
+    shared: { conversationId: string; greetingText?: string | null },
+  ) {
+    const contact = lockedAgentContact(locked);
+    if (!shared.conversationId) return;
+    store.setState({
+      conversationId: shared.conversationId,
+      selectedAgentId: contact.id,
+    });
+    patchCurrentPanel({
+      contactId: contact.id,
+      contactType: 'agent',
+      conversationId: shared.conversationId,
+      roomId: null,
+      roomPurpose: 'conversation',
+    });
+    try {
+      const messages = await controller.listMessages(shared.conversationId, { limit: 50 });
+      rehydrateLockedHistory(shared.conversationId, messages);
+    } catch (err) {
+      opts.logger?.warn?.('locked_agent_history_failed', {
+        virtualEmployeeId: locked.virtualEmployeeId,
+        conversationId: shared.conversationId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    keepLockedGreeting(shared.conversationId, shared.greetingText);
+    const stillEmpty = !store
+      .getState()
+      .turns.some((turn) => turn.role === 'assistant' && turn.text.trim());
+    if (stillEmpty) {
+      try {
+        await controller.attachLiveGeneration({ conversationId: shared.conversationId });
+      } catch (err) {
+        opts.logger?.warn?.('locked_agent_live_attach_failed', {
+          virtualEmployeeId: locked.virtualEmployeeId,
+          conversationId: shared.conversationId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  async function openLockedAgentConversation(locked: LockedAgent) {
     const virtualEmployeeId = locked.virtualEmployeeId;
     const contact = lockedAgentContact(locked);
     opts.logger?.debug?.('locked_agent_open_start', { virtualEmployeeId });
     try {
-      const opened = await controller.openLatest(contact);
+      const storage = browserLockedThreadStorage();
+      const remembered = readLockedThread(storage, virtualEmployeeId);
+      const rememberedGreeting = remembered?.greetingText?.trim() || '';
+      let opened: { conversationId: string; created: boolean } | null = null;
+      if (remembered?.conversationId) {
+        try {
+          const got = await opts.client.send('anx.communicate.conversations.get', {
+            conversationId: remembered.conversationId,
+          });
+          const failed =
+            got && typeof got === 'object' && 'ok' in got && (got as { ok?: boolean }).ok === false;
+          if (!failed) {
+            const data = unwrapData(got);
+            const ve = String(data.virtualEmployeeId || data.anxVeId || '').trim();
+            const serverAgentId = typeof data.agentId === 'string' ? data.agentId.trim() : '';
+            if (!ve || ve === virtualEmployeeId) {
+              if (serverAgentId) {
+                store.setState({
+                  contacts: store.getState().contacts.map((entry) =>
+                    entry.id === contact.id ? { ...entry, agentId: serverAgentId } : entry,
+                  ),
+                });
+              }
+              agentIndex.remember({
+                conversationId: remembered.conversationId,
+                virtualEmployeeId,
+                agentId: serverAgentId || null,
+                contactId: contact.id,
+              });
+              store.setState({
+                conversationId: remembered.conversationId,
+                selectedAgentId: contact.id,
+              });
+              patchCurrentPanel({
+                contactId: contact.id,
+                contactType: 'agent',
+                conversationId: remembered.conversationId,
+                roomId: null,
+                roomPurpose: 'conversation',
+              });
+              opened = { conversationId: remembered.conversationId, created: false };
+            }
+          }
+        } catch (err) {
+          opts.logger?.warn?.('locked_agent_reuse_failed', {
+            virtualEmployeeId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (!opened) opened = await controller.openLatest(contact);
       const conversationId = opened.conversationId;
+      if (conversationId) {
+        writeLockedThread(storage, virtualEmployeeId, { conversationId, agentId: null });
+      }
       if (conversationId && !opened.created) {
         try {
           const messages = await controller.listMessages(conversationId, { limit: 50 });
-          controller.rehydrateTurns(rehydrateRowsFromMessages(messages), {
-            conversationId,
-            detachStream: true,
-          });
+          rehydrateLockedHistory(conversationId, messages);
         } catch (err) {
           opts.logger?.warn?.('locked_agent_history_failed', {
             virtualEmployeeId,
             conversationId,
             message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      let greetingText: string | null = null;
+      if (conversationId) {
+        const turnsNow = store.getState().turns;
+        const hasAssistant = turnsNow.some((turn) => turn.role === 'assistant' && turn.text.trim());
+        const hasUser = turnsNow.some((turn) => turn.role === 'user' && turn.text.trim());
+        if (!hasAssistant && !hasUser && !openingRequested.has(conversationId)) {
+          openingRequested.add(conversationId);
+          try {
+            const sent = await controller.sendMessage('', {
+              conversationId,
+              conversationOpen: true,
+              bypassFallback: true,
+            });
+            if (!sent.ok) openingRequested.delete(conversationId);
+            else if (sent.greetingText) greetingText = sent.greetingText;
+          } catch (err) {
+            openingRequested.delete(conversationId);
+            opts.logger?.warn?.('locked_agent_opening_failed', {
+              virtualEmployeeId,
+              conversationId,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
+        } else if (!hasAssistant && !hasUser && rememberedGreeting) {
+          greetingText = rememberedGreeting;
+          keepLockedGreeting(conversationId, rememberedGreeting);
+        }
+        if (greetingText) {
+          writeLockedThread(storage, virtualEmployeeId, {
+            conversationId,
+            agentId: null,
+            greetingText,
           });
         }
       }
@@ -4175,7 +4432,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             message: err instanceof Error ? err.message : String(err),
           });
         }
-        if (streamResolver.getOrderedEndpoints().length > 0) {
+        if (streamResolver.getOrderedEndpoints().length > 0 && !store.getState().streaming) {
           controller.observeSubAgents({ conversationId });
           try {
             await controller.attachLiveGeneration({ conversationId });
@@ -4204,6 +4461,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             (typeof openedRow?.avatarUrl === 'string' && openedRow.avatarUrl) ||
             (typeof openedRow?.profilePicture === 'string' && openedRow.profilePicture) ||
             '';
+          const rowAgentId =
+            (typeof openedRow?.agentId === 'string' && openedRow.agentId.trim()) || '';
           store.setState({
             contacts: store.getState().contacts.map((entry) =>
               entry.id === contact.id
@@ -4211,6 +4470,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                     ...entry,
                     name: label,
                     avatarUrl: resolveDisplayAvatar(locked.avatarUrl, serverAvatar || entry.avatarUrl),
+                    ...(rowAgentId ? { agentId: rowAgentId } : {}),
                   }
                 : entry,
             ),
@@ -4227,7 +4487,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         conversationId: conversationId || null,
         created: opened.created,
       });
-      return { conversationId, created: opened.created };
+      return { conversationId, created: opened.created, greetingText };
     } catch (err) {
       opts.logger?.warn?.('locked_agent_open_failed', {
         virtualEmployeeId,

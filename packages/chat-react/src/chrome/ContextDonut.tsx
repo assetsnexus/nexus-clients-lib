@@ -19,8 +19,10 @@ export function ContextDonut({ model }: { model: ContextDonutModel }) {
         ))}
       </svg>
       <div className="nexus-chat__donut-center">
-        <div className="nexus-chat__donut-pct">{model.pct == null ? '—' : `${model.pct}%`}</div>
-        <div className="nexus-chat__muted">{model.tokenLabel}</div>
+        <div className="nexus-chat__donut-pct">{model.pct == null ? '' : `${model.pct}%`}</div>
+        {model.tokenLabel && model.tokenLabel !== '—' ? (
+          <div className="nexus-chat__muted">{model.tokenLabel}</div>
+        ) : null}
       </div>
     </div>
   );

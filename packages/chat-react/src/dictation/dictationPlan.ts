@@ -62,6 +62,8 @@ export function resolveDictationSelection<T extends DictationModel>(input: {
   phoneAvailable: boolean;
   models: T[] | null | undefined;
   directSupported: boolean;
+  /** Agent rail: use a speech model when one is entitled, including when the phone can listen. */
+  preferWorkload?: boolean;
 }): {
   method: DictationMethod;
   sttModel: T | null;
@@ -97,6 +99,10 @@ export function resolveDictationSelection<T extends DictationModel>(input: {
         ? 'No speech model is on this subscription. Using the phone microphone.'
         : 'No speech model is on this subscription.',
     };
+  }
+
+  if (input.preferWorkload && chosen && modelHasSttCapability(chosen)) {
+    return { method: 'model', sttModel: chosen, note: null };
   }
 
   if (input.phoneAvailable) return { method: 'phone', sttModel: chosen, note: null };

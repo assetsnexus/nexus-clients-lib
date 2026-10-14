@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   createNexusChat,
+  conversationHighlightsAgent,
+  conversationIdFromRow,
+  filterConversationsForLockedAgent,
   findChatContact,
   isUnreachableLabel,
   parseLockedAgent,
+  type ConversationListMode,
   resolveReasoningEffortLevels,
   sessionErrorAfterFailure,
   type ChatHooks,
@@ -17,6 +21,8 @@ import {
   type NexusChat,
   type ReasoningEffortLevel,
   filterSttModelsForPicker,
+  listAudioModels,
+  modelSupportsSttStream,
 } from '@nexus/chat-core';
 import { applyThemeToElement } from '../theme.js';
 import type { NexusChatTheme } from '../theme.js';
@@ -84,9 +90,12 @@ import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { ConversationInbox } from './ConversationInbox.js';
+import { filterInboxRowsForLockedAgent } from '../inbox/inboxRows.js';
 import { resolveChatChrome } from '../chrome/chat-chrome.js';
 import { chatFailureInfo, lockedEmbedPresentation } from '../chrome/locked-embed.js';
 import { UsageChrome } from '../chrome/UsageChrome.js';
+import { resolveEffectivePickerModel } from '../chrome/advanced-model-facts.js';
+import type { DictationModel } from '../dictation/dictationPlan.js';
 import { mergeInboxAgentAvatars } from '../inbox/inboxRows.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
@@ -123,6 +132,17 @@ export type NexusChatAppProps = {
    * builds the controller.
    */
   lockedAgent?: LockedAgent | null;
+  /**
+   * Full list, with rows for this virtual employee marked.
+   * Other agents, people, and groups stay visible.
+   */
+  highlightAgentId?: string | null;
+  /**
+   * `sidebar` is the portal list. `hidden` is a locked column with no list.
+   * `drawer` keeps the column and opens the same list, filtered to `lockedAgent`.
+   * Omitted: hidden when locked, otherwise sidebar.
+   */
+  conversationList?: ConversationListMode;
   /**
    * Structured context from the host page. Optional. When it includes a
    * project id, later sends carry that id. A context brain may set the same
@@ -191,6 +211,8 @@ function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
   };
 }
 
+const EMPTY_IDENTITIES: ChatIdentitySession[] = [];
+
 export function NexusChatApp({
   chat: chatProp,
   createOptions,
@@ -205,9 +227,11 @@ export function NexusChatApp({
   locale: localeProp,
   isAdmin,
   currentUserId,
-  identities = [],
+  identities = EMPTY_IDENTITIES,
   agentTarget = null,
   lockedAgent: lockedAgentProp = null,
+  highlightAgentId = null,
+  conversationList,
   pageContext = null,
   onError,
   displayName: displayNameProp,
@@ -222,7 +246,24 @@ export function NexusChatApp({
   onErrorRef.current = onError;
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
   const pendingDraftRef = useRef('');
-  const features = useMemo(() => mergeReactFeatures(featuresProp), [featuresProp]);
+  const features = useMemo(
+    () => mergeReactFeatures(featuresProp),
+    [
+      featuresProp?.contacts,
+      featuresProp?.groups,
+      featuresProp?.aiGroups,
+      featuresProp?.userDatabases,
+      featuresProp?.modelPicker,
+      featuresProp?.modelPricing,
+      featuresProp?.publicEdgeBadges,
+      featuresProp?.agentContextDetails,
+      featuresProp?.agentApprovals,
+      featuresProp?.encryptionModes,
+      featuresProp?.spendLimits,
+      featuresProp?.calls,
+      featuresProp?.adminPanels,
+    ],
+  );
   const fallbackTransportRef = useRef(fallbackTransport);
   fallbackTransportRef.current = fallbackTransport;
   const lockedAgent = useMemo(() => {
@@ -234,15 +275,27 @@ export function NexusChatApp({
       displayName: displayNameProp || requested.displayName,
       avatarUrl,
     });
-  }, [lockedAgentProp, createOptions, chatProp, displayNameProp, avatarUrlProp]);
+  }, [
+    lockedAgentProp?.virtualEmployeeId,
+    lockedAgentProp?.displayName,
+    lockedAgentProp?.avatarUrl,
+    createOptions?.lockedAgent?.virtualEmployeeId,
+    createOptions?.lockedAgent?.displayName,
+    createOptions?.lockedAgent?.avatarUrl,
+    chatProp,
+    displayNameProp,
+    avatarUrlProp,
+  ]);
   const chrome = useMemo(
     () =>
       resolveChatChrome({
         contacts: features.contacts,
         groups: features.groups,
         lockedAgent,
+        conversationList,
+        highlightAgentId,
       }),
-    [features.contacts, features.groups, lockedAgent],
+    [features.contacts, features.groups, lockedAgent, conversationList, highlightAgentId],
   );
   const uiHooksRef = useRef<ChatHooks>({});
   const reachRef = useRef({
@@ -344,6 +397,9 @@ export function NexusChatApp({
   const [voiceView, setVoiceView] = useState<'background' | 'transcript' | 'avatar'>('background');
   const [moreOpen, setMoreOpen] = useState(false);
   const [catalog, setCatalog] = useState<PickerModel[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [defaultModelId, setDefaultModelId] = useState<string | null>(null);
+  const [audioModels, setAudioModels] = useState<DictationModel[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffortLevel | null>(null);
@@ -356,6 +412,7 @@ export function NexusChatApp({
   const [workspacePopupOpen, setWorkspacePopupOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [listCollapsed, setListCollapsed] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [dictationPrefs, setDictationPrefs] = useState<DictationPrefs | null>(null);
   const [phoneSttAvailable, setPhoneSttAvailable] = useState(true);
 
@@ -387,10 +444,11 @@ export function NexusChatApp({
   }, []);
 
   const activeContactId = panel?.contactId || state.selectedAgentId;
-  const visibleInbox = useMemo(
-    () => mergeInboxAgentAvatars(inboxRows, state.contacts),
-    [inboxRows, state.contacts],
-  );
+  const visibleInbox = useMemo(() => {
+    const rows = mergeInboxAgentAvatars(inboxRows, state.contacts);
+    if (chrome.conversationList !== 'drawer' || !lockedAgent) return rows;
+    return filterInboxRowsForLockedAgent(rows, lockedAgent.virtualEmployeeId);
+  }, [inboxRows, state.contacts, chrome.conversationList, lockedAgent]);
   const activeInbox = visibleInbox.find((row) => row.id === activeInboxId) || null;
   const listedContact = findChatContact(state.contacts, activeContactId || activeInbox?.contactId || '') || null;
   const contact =
@@ -503,7 +561,8 @@ export function NexusChatApp({
   }, [activeTheme]);
 
   const reloadLists = useCallback(async () => {
-    if (!chrome.showContactsTab) return;
+    if (!chrome.showConversationList) return;
+    const listLock = chrome.conversationList === 'drawer' ? lockedAgent : null;
     setListError(null);
     if (identities.length && client) {
       setInboxLoading(true);
@@ -511,7 +570,7 @@ export function NexusChatApp({
         const loaded = await loadIdentityInbox({
           identities,
           hiddenKeys: hiddenIdentityKeys,
-          lockedAgent,
+          lockedAgent: listLock,
           send: sendWithClient(client as CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void }),
         });
         setInboxRows(loaded.rows);
@@ -531,17 +590,18 @@ export function NexusChatApp({
       return;
     }
     try {
-      const rows = await chat.listConversations({ status: 'active', limit: 200 });
-      setConversationRows(rows);
+      const rows = await chat.listConversations({ status: 'active', limit: 100 });
+      setConversationRows(listLock ? filterConversationsForLockedAgent(rows, listLock) : rows);
     } catch (error) {
       setConversationRows([]);
       setListError(error instanceof Error ? error.message : 'Could not load conversations');
     }
-  }, [chat, chrome.showContactsTab, client, identities, hiddenIdentityKeys, lockedAgent]);
+  }, [chat, chrome.showConversationList, chrome.conversationList, client, identities, hiddenIdentityKeys, lockedAgent?.virtualEmployeeId]);
 
   useEffect(() => {
+    if (chrome.conversationList === 'drawer' && !drawerOpen) return;
     void reloadLists();
-  }, [reloadLists]);
+  }, [reloadLists, chrome.conversationList, drawerOpen]);
 
   useEffect(() => {
     if (!chrome.showContactsTab && chrome.showRoomsTab) setSidebarTab('rooms');
@@ -549,6 +609,21 @@ export function NexusChatApp({
 
   const openInboxRow = useCallback(
     async (row: InboxRow) => {
+      if (
+        lockedAgent &&
+        !conversationHighlightsAgent(
+          {
+            virtualEmployeeId: row.virtualEmployeeId,
+            agentId: row.agentId,
+            contactId: row.contactId,
+            id: row.contactId,
+          },
+          lockedAgent.virtualEmployeeId,
+        )
+      ) {
+        return;
+      }
+      if (chrome.showConversationDrawer) setDrawerOpen(false);
       const identity = identities.find((item) => item.key === row.identityKey);
       const region = client as (CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void }) | undefined;
       if (identity && region?.updateAuth) {
@@ -571,7 +646,29 @@ export function NexusChatApp({
         setListError(error instanceof Error ? error.message : 'Could not open conversation');
       }
     },
-    [chat, client, identities],
+    [chat, chrome.showConversationDrawer, client, identities, lockedAgent],
+  );
+
+  const openListedConversation = useCallback(
+    async (row: ConversationRow) => {
+      const id = conversationIdFromRow(row);
+      if (!id || !client) return;
+      if (lockedAgent && !filterConversationsForLockedAgent([row], lockedAgent).length) return;
+      if (chrome.showConversationDrawer) setDrawerOpen(false);
+      const contactId =
+        typeof row.virtualEmployeeId === 'string'
+          ? row.virtualEmployeeId
+          : typeof row.contactId === 'string'
+            ? row.contactId
+            : undefined;
+      try {
+        await loadConversationHistory(client, chat, id);
+        await chat.streamInit({ conversationId: id, contactId });
+      } catch (error) {
+        setListError(error instanceof Error ? error.message : 'Could not open conversation');
+      }
+    },
+    [chat, chrome.showConversationDrawer, client, lockedAgent],
   );
 
   useEffect(() => {
@@ -602,11 +699,15 @@ export function NexusChatApp({
   useEffect(() => {
     if (nexusUnavailable) {
       setCatalog([]);
+      setCatalogError(null);
+      setDefaultModelId(null);
+      setAudioModels([]);
       setCatalogLoading(false);
       return;
     }
     let cancelled = false;
     setCatalogLoading(true);
+    setCatalogError(null);
     const employeeId = contact?.virtualEmployeeId || undefined;
     const load = client
       ? loadPickerModels(client, { employeeId })
@@ -629,10 +730,19 @@ export function NexusChatApp({
         );
     void load
       .then((models) => {
-        if (!cancelled) setCatalog(models);
+        if (cancelled) return;
+        setCatalog(models);
+        setCatalogError(null);
+        const listed = models as PickerModel[] & { defaultModelId?: string | null };
+        setDefaultModelId(listed.defaultModelId?.trim() || null);
       })
-      .catch(() => {
-        if (!cancelled) setCatalog([]);
+      .catch((error) => {
+        if (!cancelled) {
+          setCatalog([]);
+          setDefaultModelId(null);
+          const message = error instanceof Error ? error.message.trim() : '';
+          setCatalogError(message || 'Models could not be loaded.');
+        }
       })
       .finally(() => {
         if (!cancelled) setCatalogLoading(false);
@@ -641,6 +751,35 @@ export function NexusChatApp({
       cancelled = true;
     };
   }, [chat, client, contact?.virtualEmployeeId, nexusUnavailable]);
+
+  useEffect(() => {
+    if (!client || nexusUnavailable) {
+      setAudioModels([]);
+      return;
+    }
+    let cancelled = false;
+    void listAudioModels(client, 'stt')
+      .then((rows) => {
+        if (cancelled) return;
+        setAudioModels(
+          rows.map((row) => ({
+            id: row.id,
+            label: row.displayName,
+            externalModelId: row.externalModelId || undefined,
+            capabilities: row.capabilities?.length ? row.capabilities : ['stt'],
+            category: 'stt',
+            modalityTransport: row.modalityTransport,
+          })),
+        );
+      })
+      .catch((error) => {
+        console.warn('anx.chat.stt models failed', error instanceof Error ? error.message : error);
+        if (!cancelled) setAudioModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client, nexusUnavailable]);
 
   useEffect(() => {
     if (nexusUnavailable) return;
@@ -757,12 +896,15 @@ export function NexusChatApp({
   }, [chat, contact, conversationId]);
 
   const selectedChatModel = catalog.find((model) => model.id === selectedModelId) || null;
+  const effectiveModel = resolveEffectivePickerModel(catalog, selectedModelId, defaultModelId);
   const dictation = resolveDictationSelection({
     prefs: dictationPrefs,
     phoneAvailable: phoneSttAvailable,
-    models: catalog,
+    models: [...catalog, ...audioModels],
     directSupported: modelAcceptsDirectAudio(selectedChatModel),
+    preferWorkload: dictationPrefs?.method !== 'phone',
   });
+  const sttLive = modelSupportsSttStream(dictation.sttModel);
   const sttChoices = filterSttModelsForPicker(catalog);
   const updateDictation = (next: DictationPrefs) => {
     setDictationPrefs(next);
@@ -780,7 +922,67 @@ export function NexusChatApp({
   const EmptySlot = slots?.empty;
 
   const showAdmin = features.adminPanels && route === 'admin';
-  const columnTurns = panel?.turns || state.turns;
+  const columnTurns = panel?.turns?.length ? panel.turns : state.turns;
+
+  const pastDrawer = chrome.showConversationDrawer && drawerOpen && !collapsed ? (
+    <aside className="nexus-chat__sidebar nexus-chat__sidebar--drawer" role="dialog" aria-label="Past conversations">
+      <div className="nexus-chat__tabs">
+        <button type="button" className="nexus-chat__btn" onClick={() => setDrawerOpen(false)}>
+          Close
+        </button>
+      </div>
+      {identities.length ? (
+        <ConversationInbox
+          identities={identities}
+          hiddenKeys={hiddenIdentityKeys}
+          rows={visibleInbox}
+          loading={inboxLoading}
+          error={listError}
+          activeRowId={activeInboxId}
+          onToggleIdentity={(key) =>
+            setHiddenIdentityKeys((prev) =>
+              prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+            )
+          }
+          onOpen={(row) => void openInboxRow(row)}
+          onRetry={() => void reloadLists()}
+        />
+      ) : (
+        <div className="nexus-chat__inbox-list" role="list">
+          {listError ? (
+            <div className="nexus-chat__banner" role="alert">
+              <span>{listError}</span>
+              <button type="button" className="nexus-chat__btn" onClick={() => void reloadLists()}>
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {!inboxLoading && !conversationRows.length ? (
+            <p className="nexus-chat__empty">No conversations yet.</p>
+          ) : null}
+          {conversationRows.map((row) => {
+            const id = conversationIdFromRow(row);
+            const title =
+              (typeof row.title === 'string' && row.title) ||
+              (typeof row.name === 'string' && row.name) ||
+              (typeof row.displayName === 'string' && row.displayName) ||
+              'Conversation';
+            return (
+              <button
+                key={id || title}
+                type="button"
+                role="listitem"
+                className="nexus-chat__inbox-row"
+                onClick={() => void openListedConversation(row)}
+              >
+                <span className="nexus-chat__inbox-title">{title}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </aside>
+  ) : null;
 
   if (layout === 'column') {
     return (
@@ -790,6 +992,18 @@ export function NexusChatApp({
         lang={locale}
         data-nexus-layout="column"
       >
+        {chrome.showConversationDrawer ? (
+          <button
+            type="button"
+            className="nexus-chat__btn nexus-chat__past"
+            aria-label="Past conversations"
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen((open) => !open)}
+          >
+            Past conversations
+          </button>
+        ) : null}
+        {pastDrawer}
         <div className="nexus-chat__column-thread">
           {sessionError ? (
             <div className="nexus-chat__banner" role="alert">
@@ -858,6 +1072,8 @@ export function NexusChatApp({
           onReasoningEffort={setReasoningEffort}
           unavailable={nexusUnavailable}
           nexusLogin={nexusLogin}
+          effectiveModel={effectiveModel}
+          modelsError={catalogError}
         />
         {agentTarget ? (
           <FundingQuickSelect
@@ -891,6 +1107,8 @@ export function NexusChatApp({
           showModelPicker={false}
           dictationMethod={dictation.method}
           sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
+          sttLive={sttLive}
+          grantMissing={Boolean(nexusUnavailable)}
           dictationNote={dictation.note}
           commandClient={client}
           onOpenFile={openFile}
@@ -917,6 +1135,17 @@ export function NexusChatApp({
           <HeaderSlot chat={chat} locale={locale} />
         ) : (
           <>
+            {chrome.showConversationDrawer ? (
+              <button
+                type="button"
+                className="nexus-chat__btn"
+                aria-label="Past conversations"
+                aria-expanded={drawerOpen}
+                onClick={() => setDrawerOpen((open) => !open)}
+              >
+                Past conversations
+              </button>
+            ) : null}
             {chrome.showSidebar ? (
               <button
                 type="button"
@@ -1011,6 +1240,7 @@ export function NexusChatApp({
                   loading={inboxLoading}
                   error={listError}
                   activeRowId={activeInboxId}
+                  highlightAgentId={chrome.highlightAgentId}
                   onToggleIdentity={(key) =>
                     setHiddenIdentityKeys((prev) =>
                       prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
@@ -1021,6 +1251,38 @@ export function NexusChatApp({
                 />
               ) : chrome.showNewDm && chrome.showContactsTab && sidebarTab !== 'rooms' ? (
                 <>
+                  {conversationRows.length ? (
+                    <div className="nexus-chat__inbox-list" role="list" aria-label="Conversations">
+                      {conversationRows.map((row) => {
+                        const id = conversationIdFromRow(row);
+                        const title =
+                          (typeof row.title === 'string' && row.title) ||
+                          (typeof row.name === 'string' && row.name) ||
+                          (typeof row.displayName === 'string' && row.displayName) ||
+                          'Conversation';
+                        const marked = conversationHighlightsAgent(
+                          {
+                            virtualEmployeeId: typeof row.virtualEmployeeId === 'string' ? row.virtualEmployeeId : null,
+                            agentId: typeof row.agentId === 'string' ? row.agentId : null,
+                            contactId: typeof row.contactId === 'string' ? row.contactId : null,
+                          },
+                          chrome.highlightAgentId,
+                        );
+                        return (
+                          <button
+                            key={id || title}
+                            type="button"
+                            role="listitem"
+                            className={`nexus-chat__inbox-row${marked ? ' nexus-chat__inbox-row--highlight' : ''}`}
+                            aria-current={marked ? 'true' : undefined}
+                            onClick={() => void openListedConversation(row)}
+                          >
+                            <span className="nexus-chat__inbox-title">{title}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   {listError ? (
                     <div className="nexus-chat__banner" role="alert">
                       <span>{listError}</span>
@@ -1034,6 +1296,7 @@ export function NexusChatApp({
                     contacts={state.contacts}
                     conversationRows={conversationRows}
                     activeContactId={activeContactId}
+                    highlightAgentId={chrome.highlightAgentId}
                     slots={slots}
                     onActionSheet={
                       chrome.showContactSheet ? (id) => setSheetContactId(id) : undefined
@@ -1045,6 +1308,7 @@ export function NexusChatApp({
               ) : null}
             </aside>
           ) : null}
+          {pastDrawer}
 
           <main className="nexus-chat__main">
             {voiceOpen && voiceView === 'background' ? (
@@ -1165,6 +1429,8 @@ export function NexusChatApp({
                 onReasoningEffort={setReasoningEffort}
                 unavailable={nexusUnavailable}
                 nexusLogin={nexusLogin}
+                effectiveModel={effectiveModel}
+                modelsError={catalogError}
               />
             ) : null}
             {showComposer ? (
@@ -1194,6 +1460,8 @@ export function NexusChatApp({
                 showModelPicker={composerModelPickerVisible()}
                 dictationMethod={dictation.method}
                 sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
+                sttLive={sttLive}
+                grantMissing={Boolean(nexusUnavailable)}
                 dictationNote={dictation.note}
                 commandClient={client}
                 onOpenFile={openFile}

@@ -200,6 +200,20 @@ describe('createContactThreadApi', () => {
   });
 });
 
+describe('listConversations limit', () => {
+  it('clamps a requested page above the inference maximum of 100', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const api = createContactThreadApi({
+      send: async (command, payload) => {
+        sent.push({ command, payload });
+        return { ok: true, data: { conversations: [] } };
+      },
+    });
+    await api.listConversations({ status: 'active', limit: 200 });
+    expect(sent[0]?.payload).toEqual({ status: 'active', limit: 100 });
+  });
+});
+
 describe('NexusChat.openLatest panel bind', () => {
   it('sets selectedAgentId and panel conversation after openLatest', async () => {
     const chat = createNexusChat({

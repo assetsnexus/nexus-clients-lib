@@ -6,7 +6,9 @@ function pickMimeType(): string {
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || 'audio/webm';
 }
 
-export async function startMicCapture(): Promise<{
+export async function startMicCapture(opts?: {
+  onChunk?: (frame: ArrayBuffer) => void;
+}): Promise<{
   stop: () => Promise<Blob>;
   cancel: () => void;
 }> {
@@ -19,6 +21,9 @@ export async function startMicCapture(): Promise<{
   const chunks: Blob[] = [];
   recorder.ondataavailable = (event) => {
     if (event.data.size) chunks.push(event.data);
+    if (opts?.onChunk && event.data.size) {
+      void event.data.arrayBuffer().then((frame) => opts.onChunk?.(frame)).catch(() => undefined);
+    }
   };
   const stopped = new Promise<Blob>((resolve, reject) => {
     recorder.onerror = () => reject(new Error('Recording failed.'));
@@ -27,7 +32,7 @@ export async function startMicCapture(): Promise<{
       resolve(new Blob(chunks, { type: recorder.mimeType || mimeType }));
     };
   });
-  recorder.start();
+  recorder.start(opts?.onChunk ? 250 : undefined);
   return {
     stop: async () => {
       if (recorder.state !== 'inactive') recorder.stop();

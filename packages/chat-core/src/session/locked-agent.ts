@@ -156,6 +156,48 @@ export function filterConversationsForLockedAgent(
   );
 }
 
+/** Where the shared conversation list is drawn. Omitted follows the lock. */
+export type ConversationListMode = 'sidebar' | 'hidden' | 'drawer';
+
+/**
+ * A locked chat hides the list. An explicit mode wins, so a host can show
+ * the full list, keep it hidden, or open a filtered drawer.
+ */
+export function resolveConversationListMode(input: {
+  conversationList?: ConversationListMode | null;
+  lockedAgent?: Pick<LockedAgent, 'virtualEmployeeId'> | null;
+}): ConversationListMode {
+  const requested = input.conversationList;
+  if (requested === 'sidebar' || requested === 'hidden' || requested === 'drawer') return requested;
+  return cleanLabel(input.lockedAgent?.virtualEmployeeId) ? 'hidden' : 'sidebar';
+}
+
+/** Optional id used only to mark rows. Empty or oversized values mark nothing. */
+export function parseHighlightAgentId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const id = value.trim();
+  if (!id || id.length > MAX_VIRTUAL_EMPLOYEE_ID) return null;
+  return id;
+}
+
+/** True when a list row is the agent a host asked to mark. Other rows stay visible. */
+export function conversationHighlightsAgent(
+  row: {
+    virtualEmployeeId?: string | null;
+    agentId?: string | null;
+    contactId?: string | null;
+    id?: string | null;
+  },
+  highlightAgentId: string | null | undefined,
+): boolean {
+  const id = parseHighlightAgentId(highlightAgentId);
+  if (!id) return false;
+  const keys = [row.virtualEmployeeId, row.agentId, row.contactId, row.id]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
+  return keys.includes(id);
+}
+
 export type RehydrateMessageRow = {
   id?: string;
   role: string;
@@ -173,7 +215,12 @@ export function rehydrateRowsFromMessages(messages: unknown[]): RehydrateMessage
     const row =
       message && typeof message === 'object' ? (message as Record<string, unknown>) : {};
     return {
-      id: typeof row.id === 'string' ? row.id : undefined,
+      id:
+        typeof row.id === 'string'
+          ? row.id
+          : typeof row.messageId === 'string'
+            ? row.messageId
+            : undefined,
       role: String(row.role || 'assistant'),
       content: String(row.content ?? row.text ?? ''),
       toolCalls: Array.isArray(row.toolCalls)

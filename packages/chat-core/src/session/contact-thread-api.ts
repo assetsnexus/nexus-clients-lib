@@ -24,6 +24,16 @@ export type CommandClientLike = {
 
 type ContactRef = Partial<ChatContact> & { id: string };
 
+/** Inference `conversations.list` rejects limit above 100. */
+const CONVERSATIONS_LIST_LIMIT_MAX = 100;
+
+function conversationsListLimit(value: number | undefined): number | undefined {
+  if (value == null || !Number.isFinite(value)) return undefined;
+  const rounded = Math.floor(value);
+  if (rounded < 1) return 1;
+  return Math.min(rounded, CONVERSATIONS_LIST_LIMIT_MAX);
+}
+
 function unwrapData(result: unknown): Record<string, unknown> {
   if (!result || typeof result !== 'object') return {};
   const r = result as Record<string, unknown>;
@@ -78,7 +88,8 @@ async function listConversationRows(
 ): Promise<ConversationRow[]> {
   const payload: Record<string, unknown> = {};
   if (opts?.status) payload.status = opts.status;
-  if (opts?.limit != null) payload.limit = opts.limit;
+  const limit = conversationsListLimit(opts?.limit);
+  if (limit != null) payload.limit = limit;
   if (opts?.contactId) payload.contactId = opts.contactId;
 
   const result = await client.send(

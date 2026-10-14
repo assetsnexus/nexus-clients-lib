@@ -93,16 +93,28 @@ function advertisedPresignPut(init: Record<string, unknown>): boolean | undefine
   return undefined;
 }
 
+function errorCode(err: unknown): string {
+  if (!err || typeof err !== 'object' || !('code' in err)) return '';
+  return String((err as { code?: unknown }).code || '');
+}
+
 function isPresignUnsupported(err: unknown): boolean {
-  const code =
-    err && typeof err === 'object' && 'code' in err
-      ? String((err as { code?: unknown }).code || '')
-      : '';
+  const code = errorCode(err);
   const msg = err instanceof Error ? err.message : String(err);
   return (
     code === 'STORAGE_CAPABILITY_UNSUPPORTED' ||
     /presignPut|does not support ['"]?presignPut/i.test(msg)
   );
+}
+
+/**
+ * Presign URLs are hard-forbidden for app identities. The file command
+ * `upload-complete` is the path those grants are allowed to use.
+ */
+function presignBlockedForApp(err: unknown): boolean {
+  const code = errorCode(err);
+  const msg = err instanceof Error ? err.message : String(err);
+  return code === 'APP_ACCESS_FORBIDDEN' || /not available to app identities/i.test(msg);
 }
 
 async function bodyToBase64(body: Blob | ArrayBuffer | Uint8Array | string): Promise<string> {
@@ -404,8 +416,14 @@ export async function uploadAttachment(
           onProgress: opts?.onProgress,
         });
       } catch (err) {
-        if (advertisedPresignPut(init) === true || !isPresignUnsupported(err)) {
-          throw err;
+        const advertised = advertisedPresignPut(init) === true;
+        const fallback =
+          presignBlockedForApp(err) || (!advertised && isPresignUnsupported(err));
+        if (!fallback) throw err;
+        if (presignBlockedForApp(err)) {
+          console.warn(
+            'chat attachment presign refused for this app identity; completing through upload-complete',
+          );
         }
         await uploadViaComplete(client, {
           fileId,
