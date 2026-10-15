@@ -4324,6 +4324,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const remembered = readLockedThread(storage, virtualEmployeeId);
       const rememberedGreeting = remembered?.greetingText?.trim() || '';
       let opened: { conversationId: string; created: boolean } | null = null;
+      let openedUsage: ChatUsageSnapshot | null = null;
       if (remembered?.conversationId) {
         try {
           const got = await opts.client.send('anx.communicate.conversations.get', {
@@ -4361,6 +4362,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 roomPurpose: 'conversation',
               });
               opened = { conversationId: remembered.conversationId, created: false };
+              if (data.usage && typeof data.usage === 'object') {
+                openedUsage = data.usage as ChatUsageSnapshot;
+              }
             }
           }
         } catch (err) {
@@ -4386,6 +4390,28 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             message: err instanceof Error ? err.message : String(err),
           });
         }
+      }
+      if (conversationId && !openedUsage && !opened.created) {
+        try {
+          const got = await opts.client.send('anx.communicate.conversations.get', { conversationId });
+          const failed = got && typeof got === 'object' && 'ok' in got && (got as { ok?: boolean }).ok === false;
+          if (!failed) {
+            const data = unwrapData(got);
+            if (data.usage && typeof data.usage === 'object') {
+              openedUsage = data.usage as ChatUsageSnapshot;
+            }
+          }
+        } catch (err) {
+          opts.logger?.warn?.('locked_agent_usage_failed', {
+            virtualEmployeeId,
+            conversationId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (openedUsage) {
+        const panel = currentPanel(store.getState());
+        if (panel?.id) applyUsageToPanel(panel.id, openedUsage);
       }
       let greetingText: string | null = null;
       if (conversationId) {

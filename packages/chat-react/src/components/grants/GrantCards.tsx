@@ -190,6 +190,245 @@ export type PermissionElevationPromptModel = {
   onboardingSatisfied?: boolean;
 };
 
+type ElevationDecision = 'deny' | 'allow_once' | 'allow_session';
+
+function elevationCommandNames(prompt: PermissionElevationPromptModel): string[] {
+  return [...(prompt.commandNames || []), ...(prompt.command ? [prompt.command] : [])]
+    .filter((name, index, all) => name.trim() && all.indexOf(name) === index)
+    .slice(0, 6);
+}
+
+function promptNeedsOnboarding(prompt: PermissionElevationPromptModel): boolean {
+  return Boolean(prompt.requiredOnboardingType && !prompt.onboardingSatisfied);
+}
+
+async function sendElevationDecision(
+  client: CommandClient | undefined,
+  elevationId: string,
+  decision: ElevationDecision,
+): Promise<
+  | { kind: 'ok' }
+  | { kind: 'sca'; authRequestId: string | null }
+  | { kind: 'error'; message: string }
+> {
+  if (!client?.send) return { kind: 'ok' };
+  const result = (await client.send('anx.ai-agents.elevations.respond', {
+    elevationId,
+    decision,
+  })) as {
+    ok?: boolean;
+    kind?: string;
+    authRequestId?: string | null;
+    responseCode?: number;
+    response?: { responseCode?: number; errorObjects?: Array<{ message?: string }> };
+    message?: string;
+    error?: { message?: string };
+    errorObjects?: Array<{ message?: string }>;
+  };
+  if (result?.kind === 'sca_required' || result?.responseCode === 202) {
+    return { kind: 'sca', authRequestId: result.authRequestId ?? null };
+  }
+  const ok =
+    result?.ok === true ||
+    result?.kind === 'ok' ||
+    result?.responseCode === 200 ||
+    result?.response?.responseCode === 200;
+  if (!ok) {
+    const message =
+      result?.error?.message ||
+      result?.errorObjects?.[0]?.message ||
+      result?.response?.errorObjects?.[0]?.message ||
+      result?.message ||
+      'Failed to record decision';
+    if (decision !== 'deny' && /in status 'active'/.test(message)) {
+      return { kind: 'ok' };
+    }
+    return { kind: 'error', message };
+  }
+  return { kind: 'ok' };
+}
+
+/**
+ * Open-chat grant dock. Supports one or many pending elevations; bulk actions
+ * apply the same lasting decision to every row that is ready to grant.
+ */
+export function PermissionElevationDock({
+  prompts,
+  client,
+  onChange,
+  onSca,
+}: {
+  prompts: PermissionElevationPromptModel[];
+  client?: CommandClient;
+  onChange: (next: PermissionElevationPromptModel[]) => void;
+  onSca?: (info: { authRequestId: string | null; command: string }) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  if (!prompts.length) return null;
+
+  const decidable = prompts.filter((prompt) => prompt.elevationId && !promptNeedsOnboarding(prompt));
+
+  const respondOne = async (prompt: PermissionElevationPromptModel, decision: ElevationDecision) => {
+    const elevationId = String(prompt.elevationId || '').trim();
+    if (!elevationId) {
+      setError('Missing elevationId');
+      return;
+    }
+    setBusyId(elevationId);
+    setError(null);
+    try {
+      const outcome = await sendElevationDecision(client, elevationId, decision);
+      if (outcome.kind === 'sca') {
+        onSca?.({
+          authRequestId: outcome.authRequestId,
+          command: 'anx.ai-agents.elevations.respond',
+        });
+        return;
+      }
+      if (outcome.kind === 'error') {
+        setError(outcome.message);
+        return;
+      }
+      onChange(prompts.filter((row) => row.elevationId !== elevationId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const respondMany = async (decision: ElevationDecision) => {
+    if (!decidable.length) return;
+    setBulkBusy(true);
+    setError(null);
+    const remaining = [...prompts];
+    const failures: string[] = [];
+    try {
+      for (const prompt of decidable) {
+        const elevationId = String(prompt.elevationId || '').trim();
+        if (!elevationId) continue;
+        const outcome = await sendElevationDecision(client, elevationId, decision);
+        if (outcome.kind === 'sca') {
+          onSca?.({
+            authRequestId: outcome.authRequestId,
+            command: 'anx.ai-agents.elevations.respond',
+          });
+          break;
+        }
+        if (outcome.kind === 'error') {
+          failures.push(`${prompt.pack || elevationId}: ${outcome.message}`);
+          continue;
+        }
+        const idx = remaining.findIndex((row) => row.elevationId === elevationId);
+        if (idx >= 0) remaining.splice(idx, 1);
+      }
+      onChange(remaining);
+      if (failures.length) setError(failures[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const busy = bulkBusy || busyId != null;
+  const multi = prompts.length > 1;
+
+  return (
+    <div className="nexus-chat__elevation-dock" role="region" aria-label="Permission elevation">
+      <div className="nexus-chat__elevation-head">
+        <strong>{multi ? `Permissions needed (${prompts.length})` : 'Permission needed'}</strong>
+      </div>
+      {multi && decidable.length > 1 ? (
+        <div className="nexus-chat__grant-actions nexus-chat__elevation-bulk">
+          <button
+            type="button"
+            className="nexus-chat__btn"
+            disabled={busy}
+            onClick={() => void respondMany('deny')}
+          >
+            Deny all
+          </button>
+          <button
+            type="button"
+            className="nexus-chat__btn nexus-chat__btn--primary"
+            disabled={busy}
+            onClick={() => void respondMany('allow_session')}
+          >
+            Allow all for conversation
+          </button>
+        </div>
+      ) : null}
+      <ul className="nexus-chat__elevation-items">
+        {prompts.map((prompt) => {
+          const elevationId = String(prompt.elevationId || '');
+          const needsOnboarding = promptNeedsOnboarding(prompt);
+          const commandNames = elevationCommandNames(prompt);
+          const rowBusy = busyId === elevationId || bulkBusy;
+          return (
+            <li key={elevationId || commandNames[0] || prompt.pack || 'elevation'} className="nexus-chat__elevation-item">
+              <div className="nexus-chat__elevation-item-head">
+                {prompt.pack ? <span className="nexus-chat__elevation-pack">{prompt.pack}</span> : null}
+                <p className="nexus-chat__elevation-reason">
+                  {prompt.reason ||
+                    prompt.message ||
+                    'This action needs your approval before the agent can continue.'}
+                </p>
+              </div>
+              {commandNames.length ? (
+                <ul className="nexus-chat__elevation-commands">
+                  {commandNames.map((name) => (
+                    <li key={name}>
+                      <code>{name}</code>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {needsOnboarding ? (
+                <div className="nexus-chat__error">
+                  Complete {prompt.requiredOnboardingType} onboarding before granting this permission.
+                </div>
+              ) : (
+                <div className="nexus-chat__grant-actions">
+                  <button
+                    type="button"
+                    className="nexus-chat__btn"
+                    disabled={rowBusy}
+                    onClick={() => void respondOne(prompt, 'deny')}
+                  >
+                    Deny
+                  </button>
+                  <button
+                    type="button"
+                    className="nexus-chat__btn"
+                    disabled={rowBusy}
+                    onClick={() => void respondOne(prompt, 'allow_once')}
+                  >
+                    Allow once
+                  </button>
+                  <button
+                    type="button"
+                    className="nexus-chat__btn nexus-chat__btn--primary"
+                    disabled={rowBusy}
+                    onClick={() => void respondOne(prompt, 'allow_session')}
+                  >
+                    Allow for conversation
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {error ? <div className="nexus-chat__error">{elevationDecisionError(error)}</div> : null}
+    </div>
+  );
+}
+
+/** @deprecated Prefer PermissionElevationDock for one or many pending elevations. */
 export function PermissionElevationCard({
   prompt,
   client,
@@ -201,97 +440,26 @@ export function PermissionElevationCard({
   onResponded: () => void;
   onSca?: (info: { authRequestId: string | null; command: string }) => void;
 }) {
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const needsOnboarding = Boolean(prompt.requiredOnboardingType && !prompt.onboardingSatisfied);
-
-  const respond = async (decision: string) => {
-    if (!prompt.elevationId) {
-      setError('Missing elevationId');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      if (!client?.send) {
-        onResponded();
-        return;
-      }
-      const result = (await client.send('anx.ai-agents.elevations.respond', {
-        elevationId: prompt.elevationId,
-        decision,
-      })) as {
-        ok?: boolean;
-        kind?: string;
-        authRequestId?: string | null;
-        responseCode?: number;
-        message?: string;
-        error?: { message?: string };
-      };
-      if (result?.kind === 'sca_required' || result?.responseCode === 202) {
-        onSca?.({
-          authRequestId: result.authRequestId ?? null,
-          command: 'anx.ai-agents.elevations.respond',
-        });
-        return;
-      }
-      const ok = result?.ok === true || result?.responseCode === 200;
-      if (!ok) {
-        const message = result?.error?.message || result?.message || 'Failed to record decision';
-        if (decision !== 'deny' && /in status 'active'/.test(message)) {
-          onResponded();
-          return;
-        }
-        setError(message);
-        return;
-      }
-      onResponded();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <div className="nexus-chat__grant-card" role="region" aria-label="Permission elevation">
-      <strong>Permission elevation required</strong>
-      <p className="nexus-chat__muted">{prompt.reason || prompt.message || ''}</p>
-      {prompt.pack ? (
-        <div className="nexus-chat__muted">
-          Pack: <code>{prompt.pack}</code>
-        </div>
-      ) : null}
-      {needsOnboarding ? (
-        <div className="nexus-chat__error">
-          Complete {prompt.requiredOnboardingType} onboarding before granting this permission.
-        </div>
-      ) : (
-        <div className="nexus-chat__grant-actions">
-          <button type="button" className="nexus-chat__btn" disabled={busy} onClick={() => void respond('deny')}>
-            Deny
-          </button>
-          <button
-            type="button"
-            className="nexus-chat__btn nexus-chat__btn--primary"
-            disabled={busy}
-            onClick={() => void respond('allow_once')}
-          >
-            Allow once
-          </button>
-          <button
-            type="button"
-            className="nexus-chat__btn"
-            disabled={busy}
-            onClick={() => void respond('allow_session')}
-          >
-            Allow for conversation
-          </button>
-        </div>
-      )}
-      {error ? <div className="nexus-chat__error">{error}</div> : null}
-    </div>
+    <PermissionElevationDock
+      prompts={[prompt]}
+      client={client}
+      onChange={(next) => {
+        if (!next.length) onResponded();
+      }}
+      onSca={onSca}
+    />
   );
+}
+
+function elevationDecisionError(message: string): string {
+  if (message === 'COMMAND_NOT_ALLOWED' || message.includes('COMMAND_NOT_ALLOWED')) {
+    return 'This app cannot record that decision yet.';
+  }
+  if (/OAuth2 app grant|APP_COMMAND_FORBIDDEN/i.test(message)) {
+    return 'Sign in again so this app can approve agent permissions.';
+  }
+  return message;
 }
 
 export function ScaRequiredBanner({

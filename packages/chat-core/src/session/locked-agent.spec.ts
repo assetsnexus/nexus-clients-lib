@@ -143,6 +143,11 @@ describe('createNexusChat lockedAgent', () => {
 
     const listed = await chat.listConversations({ status: 'active', limit: 50 });
     expect(listed.map((row) => row.conversationId)).toEqual(['mine']);
+    expect(
+      sent
+        .filter((entry) => entry.command === 'anx.communicate.conversations.list')
+        .find((entry) => entry.payload?.limit === 50)?.payload,
+    ).toMatchObject({ virtualEmployeeId: LOCKED, status: 'active', limit: 50 });
     await expect(chat.loadContacts()).resolves.toBeUndefined();
     expect(sent.some((entry) => entry.command === 'anx.communicate.contacts.list')).toBe(false);
   });

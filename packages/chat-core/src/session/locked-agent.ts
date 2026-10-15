@@ -20,13 +20,12 @@ export type LockedAgent = {
 };
 
 /**
- * `anx.communicate.conversations.list` returns `virtualEmployeeId` on each row.
- * The request schema accepts `limit`, `status`, `partnerKind`,
- * `excludeAppAgentsOfClientId`, and `groupBy`. `virtualEmployeeId` is not a
- * filter — unknown keys are stripped — so locked lists filter the response.
- * When a list payload starts accepting the id, pass it from here.
+ * `anx.communicate.conversations.list` accepts `virtualEmployeeId`. Inference
+ * limits the page to that employee and keeps the employee when an app
+ * identity would otherwise hide its own agents. The client still drops any
+ * other agent's rows.
  */
-export const CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID = false;
+export const CONVERSATIONS_LIST_ACCEPTS_VIRTUAL_EMPLOYEE_ID = true;
 
 const MAX_VIRTUAL_EMPLOYEE_ID = 200;
 const MAX_DISPLAY_NAME = 80;

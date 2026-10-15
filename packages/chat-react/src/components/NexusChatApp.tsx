@@ -37,6 +37,7 @@ import { useOutgoingQueue } from '../hooks/useOutgoingQueue.js';
 import { applyPrefillComposer } from '../bridge/applyPrefillComposer.js';
 import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bridge/host-bridge.js';
 import { ContactList } from './ContactList.js';
+import { PastConversationList } from './PastConversationList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 export type { ComposerControls, ComposerCallMode } from './composerHost.js';
@@ -80,12 +81,17 @@ import { WorkspacePopup } from './workspace/WorkspacePopup.js';
 import {
   ClientToolGrantCard,
   DataAccessPromptCard,
-  PermissionElevationCard,
+  PermissionElevationDock,
   ScaRequiredBanner,
   type ClientToolRequest,
   type DataAccessPromptModel,
   type PermissionElevationPromptModel,
 } from './grants/GrantCards.js';
+import {
+  pendingElevationPrompts,
+  unwrapElevationList,
+  upsertElevationPrompt,
+} from '../grants/pending-elevation.js';
 import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
@@ -93,6 +99,9 @@ import { ConversationInbox } from './ConversationInbox.js';
 import { filterInboxRowsForLockedAgent } from '../inbox/inboxRows.js';
 import { resolveChatChrome } from '../chrome/chat-chrome.js';
 import { chatFailureInfo, lockedEmbedPresentation } from '../chrome/locked-embed.js';
+import { ContextCostMeters } from '../chrome/ContextCostMeters.js';
+import { coerceReasoningEffort } from '../chrome/reasoning-slider.js';
+import { ReasoningEffortControl } from '../chrome/ReasoningEffortControl.js';
 import { UsageChrome } from '../chrome/UsageChrome.js';
 import { resolveEffectivePickerModel } from '../chrome/advanced-model-facts.js';
 import type { DictationModel } from '../dictation/dictationPlan.js';
@@ -402,7 +411,7 @@ export function NexusChatApp({
   const [audioModels, setAudioModels] = useState<DictationModel[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffortLevel | null>(null);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffortLevel>('xhigh');
 
   const [viewerTabs, setViewerTabs] = useState<FileViewerTab[]>([]);
   const [activeViewerTabId, setActiveViewerTabId] = useState<string | null>(null);
@@ -418,8 +427,7 @@ export function NexusChatApp({
 
   const [clientToolReq, setClientToolReq] = useState<ClientToolRequest | null>(null);
   const [dataAccessPrompt, setDataAccessPrompt] = useState<DataAccessPromptModel | null>(null);
-  const [elevationPrompt, setElevationPrompt] =
-    useState<PermissionElevationPromptModel | null>(null);
+  const [elevationPrompts, setElevationPrompts] = useState<PermissionElevationPromptModel[]>([]);
   const [scaInfo, setScaInfo] = useState<{ authRequestId: string | null; command: string } | null>(
     null,
   );
@@ -475,8 +483,18 @@ export function NexusChatApp({
   const reasoningLevels = useMemo(() => {
     const selected = catalog.find((model) => model.id === selectedModelId);
     if (!selected) return null;
-    return resolveReasoningEffortLevels(selected.externalModelId || selected.id, selected.category, selected.capabilities);
+    return (
+      resolveReasoningEffortLevels(
+        selected.externalModelId || selected.id,
+        selected.category,
+        selected.capabilities,
+      ) ?? []
+    );
   }, [catalog, selectedModelId]);
+  const reasoningForSend = useMemo(
+    () => (reasoningLevels && !reasoningLevels.length ? null : coerceReasoningEffort(reasoningEffort, reasoningLevels)),
+    [reasoningEffort, reasoningLevels],
+  );
 
   const modelOverride: ChatModelOverride | null = useMemo(
     () => buildModelOverride(selectedModelId, catalog),
@@ -522,12 +540,37 @@ export function NexusChatApp({
       if (mapped) setDataAccessPrompt(mapped);
     };
     uiHooksRef.current.onPermissionElevationRequired = (info) => {
-      setElevationPrompt(info);
+      setElevationPrompts((prev) => upsertElevationPrompt(prev, info));
     };
     uiHooksRef.current.onClientToolRequest = async (req) => {
       setClientToolReq(req);
     };
   }, [handleSca]);
+
+  // Clear dock when leaving a conversation; rehydrate pending rows on open.
+  useEffect(() => {
+    setElevationPrompts([]);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!presentation.mountGrants || !client?.send || !conversationId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await client.send('anx.ai-agents.elevations.list', {
+          conversationId,
+          status: ['pending'],
+        });
+        if (cancelled) return;
+        setElevationPrompts(pendingElevationPrompts(unwrapElevationList(result)));
+      } catch {
+        // Stream / next send can still surface the card; list is best-effort.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [presentation.mountGrants, client, conversationId]);
 
   // When chat was passed in already created, merge UI hooks into createOptions.hooks if shared.
   useEffect(() => {
@@ -545,7 +588,7 @@ export function NexusChatApp({
     };
     h.onPermissionElevationRequired = (info) => {
       prev.onPermissionElevationRequired?.(info);
-      setElevationPrompt(info);
+      setElevationPrompts((current) => upsertElevationPrompt(current, info));
     };
     h.onClientToolRequest = async (req) => {
       await prev.onClientToolRequest?.(req);
@@ -583,18 +626,23 @@ export function NexusChatApp({
       }
       return;
     }
+    setInboxLoading(true);
     try {
-      await chat.loadContacts();
-    } catch (error) {
-      setListError(error instanceof Error ? error.message : 'Could not load contacts');
-      return;
-    }
-    try {
-      const rows = await chat.listConversations({ status: 'active', limit: 100 });
-      setConversationRows(listLock ? filterConversationsForLockedAgent(rows, listLock) : rows);
-    } catch (error) {
-      setConversationRows([]);
-      setListError(error instanceof Error ? error.message : 'Could not load conversations');
+      try {
+        await chat.loadContacts();
+      } catch (error) {
+        setListError(error instanceof Error ? error.message : 'Could not load contacts');
+        return;
+      }
+      try {
+        const rows = await chat.listConversations({ status: 'active', limit: 100 });
+        setConversationRows(listLock ? filterConversationsForLockedAgent(rows, listLock) : rows);
+      } catch (error) {
+        setConversationRows([]);
+        setListError(error instanceof Error ? error.message : 'Could not load conversations');
+      }
+    } finally {
+      setInboxLoading(false);
     }
   }, [chat, chrome.showConversationList, chrome.conversationList, client, identities, hiddenIdentityKeys, lockedAgent?.virtualEmployeeId]);
 
@@ -925,64 +973,62 @@ export function NexusChatApp({
   const columnTurns = panel?.turns?.length ? panel.turns : state.turns;
 
   const pastDrawer = chrome.showConversationDrawer && drawerOpen && !collapsed ? (
-    <aside className="nexus-chat__sidebar nexus-chat__sidebar--drawer" role="dialog" aria-label="Past conversations">
-      <div className="nexus-chat__tabs">
-        <button type="button" className="nexus-chat__btn" onClick={() => setDrawerOpen(false)}>
-          Close
-        </button>
-      </div>
-      {identities.length ? (
-        <ConversationInbox
-          identities={identities}
-          hiddenKeys={hiddenIdentityKeys}
-          rows={visibleInbox}
-          loading={inboxLoading}
-          error={listError}
-          activeRowId={activeInboxId}
-          onToggleIdentity={(key) =>
-            setHiddenIdentityKeys((prev) =>
-              prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
-            )
-          }
-          onOpen={(row) => void openInboxRow(row)}
-          onRetry={() => void reloadLists()}
-        />
-      ) : (
-        <div className="nexus-chat__inbox-list" role="list">
-          {listError ? (
-            <div className="nexus-chat__banner" role="alert">
-              <span>{listError}</span>
-              <button type="button" className="nexus-chat__btn" onClick={() => void reloadLists()}>
-                Retry
-              </button>
-            </div>
-          ) : null}
-          {!inboxLoading && !conversationRows.length ? (
-            <p className="nexus-chat__empty">No conversations yet.</p>
-          ) : null}
-          {conversationRows.map((row) => {
-            const id = conversationIdFromRow(row);
-            const title =
-              (typeof row.title === 'string' && row.title) ||
-              (typeof row.name === 'string' && row.name) ||
-              (typeof row.displayName === 'string' && row.displayName) ||
-              'Conversation';
-            return (
-              <button
-                key={id || title}
-                type="button"
-                role="listitem"
-                className="nexus-chat__inbox-row"
-                onClick={() => void openListedConversation(row)}
-              >
-                <span className="nexus-chat__inbox-title">{title}</span>
-              </button>
-            );
-          })}
+    <div className="nexus-chat__past-backdrop" role="presentation" onClick={() => setDrawerOpen(false)}>
+      <aside
+        className="nexus-chat__past-dialog"
+        role="dialog"
+        aria-label="Past conversations"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="nexus-chat__past-dialog-head">
+          <strong>Past conversations</strong>
+          <button type="button" className="nexus-chat__btn" onClick={() => setDrawerOpen(false)}>
+            Close
+          </button>
         </div>
-      )}
-    </aside>
+        {identities.length ? (
+          <ConversationInbox
+            identities={identities}
+            hiddenKeys={hiddenIdentityKeys}
+            rows={visibleInbox}
+            loading={inboxLoading}
+            error={listError}
+            activeRowId={activeInboxId}
+            onToggleIdentity={(key) =>
+              setHiddenIdentityKeys((prev) =>
+                prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+              )
+            }
+            onOpen={(row) => void openInboxRow(row)}
+            onRetry={() => void reloadLists()}
+          />
+        ) : (
+          <PastConversationList
+            rows={conversationRows}
+            activeId={conversationId}
+            locale={locale}
+            loading={inboxLoading}
+            error={listError}
+            onRetry={() => void reloadLists()}
+            onOpen={(id) => {
+              const row = conversationRows.find((item) => conversationIdFromRow(item) === id);
+              if (row) void openListedConversation(row);
+            }}
+          />
+        )}
+      </aside>
+    </div>
   ) : null;
+
+  const elevationDock =
+    presentation.mountGrants && elevationPrompts.length ? (
+      <PermissionElevationDock
+        prompts={elevationPrompts}
+        client={client}
+        onChange={setElevationPrompts}
+        onSca={handleSca}
+      />
+    ) : null;
 
   if (layout === 'column') {
     return (
@@ -992,17 +1038,22 @@ export function NexusChatApp({
         lang={locale}
         data-nexus-layout="column"
       >
-        {chrome.showConversationDrawer ? (
-          <button
-            type="button"
-            className="nexus-chat__btn nexus-chat__past"
-            aria-label="Past conversations"
-            aria-expanded={drawerOpen}
-            onClick={() => setDrawerOpen((open) => !open)}
-          >
-            Past conversations
-          </button>
-        ) : null}
+        <div className="nexus-chat__column-bar">
+          {chrome.showConversationDrawer ? (
+            <button
+              type="button"
+              className="nexus-chat__btn nexus-chat__past"
+              aria-label="Past conversations"
+              aria-expanded={drawerOpen}
+              onClick={() => setDrawerOpen((open) => !open)}
+            >
+              Past conversations
+            </button>
+          ) : (
+            <span />
+          )}
+          <ContextCostMeters panel={panel} />
+        </div>
         {pastDrawer}
         <div className="nexus-chat__column-thread">
           {sessionError ? (
@@ -1025,14 +1076,6 @@ export function NexusChatApp({
                   prompt={dataAccessPrompt}
                   client={client}
                   onResponded={() => setDataAccessPrompt(null)}
-                  onSca={handleSca}
-                />
-              ) : null}
-              {elevationPrompt ? (
-                <PermissionElevationCard
-                  prompt={elevationPrompt}
-                  client={client}
-                  onResponded={() => setElevationPrompt(null)}
                   onSca={handleSca}
                 />
               ) : null}
@@ -1060,27 +1103,33 @@ export function NexusChatApp({
             />
           </div>
         </div>
-        <UsageChrome
-          variant="advanced"
-          panel={panel}
-          models={features.modelPicker ? catalog : []}
-          modelsLoading={catalogLoading}
-          selectedModelId={selectedModelId}
-          onSelectModel={setSelectedModelId}
-          reasoningLevels={reasoningLevels}
-          reasoningEffort={reasoningEffort}
-          onReasoningEffort={setReasoningEffort}
-          unavailable={nexusUnavailable}
-          nexusLogin={nexusLogin}
-          effectiveModel={effectiveModel}
-          modelsError={catalogError}
-        />
+        <div className="nexus-chat__model-row">
+          {features.modelPicker ? (
+            <ModelPicker
+              models={catalog}
+              value={selectedModelId}
+              loading={catalogLoading}
+              onChange={setSelectedModelId}
+            />
+          ) : null}
+          <ReasoningEffortControl
+            levels={reasoningLevels}
+            value={reasoningForSend}
+            onChange={setReasoningEffort}
+          />
+        </div>
+        {catalogError ? (
+          <p className="nexus-chat__muted" role="alert">
+            {catalogError}
+          </p>
+        ) : null}
         {agentTarget ? (
           <FundingQuickSelect
             gate={fundingGate}
             onSelectFunding={(funding) => setFundingGate((prev) => selectFunding(prev, funding))}
           />
         ) : null}
+        {elevationDock}
         <Composer
           chat={chat}
           contacts={state.contacts}
@@ -1103,7 +1152,7 @@ export function NexusChatApp({
           selectedModelId={selectedModelId}
           onSelectModel={setSelectedModelId}
           modelOverride={modelOverride}
-          reasoningEffort={reasoningEffort}
+          reasoningEffort={reasoningForSend}
           showModelPicker={false}
           dictationMethod={dictation.method}
           sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
@@ -1345,14 +1394,6 @@ export function NexusChatApp({
                   onSca={handleSca}
                 />
               ) : null}
-              {elevationPrompt ? (
-                <PermissionElevationCard
-                  prompt={elevationPrompt}
-                  client={client}
-                  onResponded={() => setElevationPrompt(null)}
-                  onSca={handleSca}
-                />
-              ) : null}
             </div>
             ) : null}
             {presentation.mountApprovals ? (
@@ -1425,7 +1466,7 @@ export function NexusChatApp({
                 selectedModelId={selectedModelId}
                 onSelectModel={setSelectedModelId}
                 reasoningLevels={reasoningLevels}
-                reasoningEffort={reasoningEffort}
+                reasoningEffort={reasoningForSend}
                 onReasoningEffort={setReasoningEffort}
                 unavailable={nexusUnavailable}
                 nexusLogin={nexusLogin}
@@ -1433,6 +1474,7 @@ export function NexusChatApp({
                 modelsError={catalogError}
               />
             ) : null}
+            {showComposer ? elevationDock : null}
             {showComposer ? (
               <Composer
                 chat={chat}
@@ -1456,7 +1498,7 @@ export function NexusChatApp({
                 selectedModelId={selectedModelId}
                 onSelectModel={setSelectedModelId}
                 modelOverride={modelOverride}
-                reasoningEffort={reasoningEffort}
+                reasoningEffort={reasoningForSend}
                 showModelPicker={composerModelPickerVisible()}
                 dictationMethod={dictation.method}
                 sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}

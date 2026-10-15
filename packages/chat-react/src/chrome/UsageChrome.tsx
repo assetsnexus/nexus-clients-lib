@@ -40,7 +40,7 @@ export function UsageChrome({
   onSelectModel: (modelId: string | null) => void;
   reasoningLevels: readonly ReasoningEffortLevel[] | null;
   reasoningEffort: ReasoningEffortLevel | null;
-  onReasoningEffort: (next: ReasoningEffortLevel | null) => void;
+  onReasoningEffort: (next: ReasoningEffortLevel) => void;
   unavailable?: boolean;
   nexusLogin?: ReactNode;
   /** `advanced` hides context, cost, and model selection until the user opens it. */

@@ -32,9 +32,18 @@ export {
   ClientToolGrantCard,
   DataAccessPromptCard,
   PermissionElevationCard,
+  PermissionElevationDock,
   ScaRequiredBanner,
 } from './components/grants/GrantCards.js';
 export { CheckBackCard } from './components/grants/CheckBackCard.js';
+export {
+  pendingElevationPrompt,
+  pendingElevationPrompts,
+  unwrapElevationList,
+  upsertElevationPrompt,
+  removeElevationPrompt,
+} from './grants/pending-elevation.js';
+export type { ElevationListRow } from './grants/pending-elevation.js';
 
 export { FundingQuickSelect } from './components/FundingQuickSelect.js';
 export type { FundingQuickSelectProps } from './components/FundingQuickSelect.js';
