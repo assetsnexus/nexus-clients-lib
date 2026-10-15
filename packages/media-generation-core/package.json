@@ -1,6 +1,6 @@
 {
   "name": "@nexus/media-generation-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Headless Nexus media generation session (framework-free)",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -18,7 +18,11 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist", "README.md", "CHANGELOG.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "test": "vitest run",

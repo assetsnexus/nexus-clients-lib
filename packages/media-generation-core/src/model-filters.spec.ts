@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isImageResultModel,
   isVideoResultModel,
+  modelReferenceImageLimits,
   resolveModelOutputType,
 } from './model-filters.js';
 import type { MediaGenerationModel } from './types.js';
@@ -66,5 +67,55 @@ describe('model filters', () => {
         capabilities: ['t2v'],
       }),
     ).toBe(true);
+  });
+
+  it('uses generationIo reference max, and i2i caps when that max is missing', () => {
+    expect(modelReferenceImageLimits(imageIoModel()).max).toBe(1);
+    expect(
+      modelReferenceImageLimits({
+        id: 't2i',
+        capabilities: ['t2i', 'image_gen'],
+        generationIo: {
+          outputType: 'image',
+          prompt: true,
+          negativePrompt: false,
+          seed: { supported: false },
+          size: { mode: 'none' },
+          referenceImages: { min: 0, max: 0 },
+        },
+      }).max,
+    ).toBe(0);
+    expect(
+      modelReferenceImageLimits({
+        id: 'i2i',
+        capabilities: ['i2i'],
+      }).max,
+    ).toBe(1);
+    expect(
+      modelReferenceImageLimits({
+        id: 'edit',
+        capabilities: ['image_edit'],
+      }).max,
+    ).toBe(1);
+    expect(
+      modelReferenceImageLimits({
+        id: 'declared',
+        capabilities: ['i2i'],
+        generationIo: {
+          outputType: 'image',
+          prompt: true,
+          negativePrompt: false,
+          seed: { supported: false },
+          size: { mode: 'none' },
+          referenceImages: { min: 1, max: 4 },
+        },
+      }),
+    ).toEqual({ min: 1, max: 4 });
+    expect(
+      modelReferenceImageLimits({
+        id: 't2i-bare',
+        capabilities: ['t2i'],
+      }).max,
+    ).toBe(0);
   });
 });

@@ -12,12 +12,13 @@ export default defineConfig({
       fileName: (format) => (format === 'es' ? 'index.mjs' : 'index.js'),
     },
     rollupOptions: {
-      external: ['vue', '@nexus/media-generation-core'],
+      external: ['vue', '@nexus/media-generation-core', '@nexus/chat-core'],
       output: {
         exports: 'named',
         globals: {
           vue: 'Vue',
           '@nexus/media-generation-core': 'NexusMediaGenerationCore',
+          '@nexus/chat-core': 'NexusChatCore',
         },
       },
     },

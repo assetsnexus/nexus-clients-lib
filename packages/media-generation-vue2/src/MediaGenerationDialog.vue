@@ -1,5 +1,5 @@
 <template>
-  <div v-if="isOpen" class="nx-mg-overlay" @click.self="onOverlayClose">
+  <div v-if="isOpen" class="nx-mg-overlay">
     <div class="nx-mg-dialog" role="dialog" aria-modal="true" :aria-label="title">
       <header class="nx-mg-header">
         <h2 class="nx-mg-title">{{ title }}</h2>
@@ -13,12 +13,23 @@
           No matching models in the catalog yet.
         </p>
 
-        <label class="nx-mg-field">
+        <label class="nx-mg-field" for="nx-mg-model">
           <span class="nx-mg-label">Model</span>
-          <select class="nx-mg-input" :value="modelId" :disabled="busy" @change="onModelChange">
-            <option v-for="m in filteredModels" :key="m.id" :value="m.id">
-              {{ modelLabel(m) }}
+          <select
+            id="nx-mg-model"
+            class="nx-mg-input"
+            :value="modelId"
+            :disabled="busy || !filteredModels.length"
+            @change="onModelChange"
+          >
+            <option v-if="!filteredModels.length" disabled value="">
+              No matching models in the catalog yet.
             </option>
+            <option
+              v-for="m in filteredModels"
+              :key="m.id"
+              :value="m.id"
+            >{{ modelOptionLabel(m) }}</option>
           </select>
         </label>
         <p v-if="selectedSummary" class="nx-mg-hint">{{ selectedSummary }}</p>
@@ -141,8 +152,24 @@
 
         <div v-if="maxRefs > 0" class="nx-mg-section">
           <p class="nx-mg-hint">
-            Reference images ({{ references.length }}/{{ maxRefs }})
+            Reference images ({{ references.length }}/{{ maxRefs }}). Check the pictures to send. Order is the order sent.
           </p>
+          <div v-if="libraryItems.length" class="nx-mg-library">
+            <label
+              v-for="item in libraryItems"
+              :key="item.id"
+              class="nx-mg-library-item"
+            >
+              <input
+                type="checkbox"
+                :checked="isLibrarySelected(item.id)"
+                :disabled="libraryCheckboxDisabled(item.id)"
+                @change="onLibraryToggle(item, $event)"
+              />
+              <img v-if="item.url" :src="item.url" alt="" />
+              <span>{{ item.label || 'Image' }}</span>
+            </label>
+          </div>
           <input
             ref="refFile"
             type="file"
@@ -157,18 +184,42 @@
               :disabled="busy || references.length >= maxRefs"
               @click="$refs.refFile && $refs.refFile.click()"
             >
-              {{ references.length ? 'Add reference' : 'Reference image' }}
+              {{ references.length ? 'Add reference' : 'Add another image' }}
             </button>
-            <button
-              v-for="ref in references"
+          </div>
+          <div v-if="references.length" class="nx-mg-order">
+            <div
+              v-for="(ref, idx) in references"
               :key="ref.id"
-              type="button"
-              class="nx-mg-thumb"
-              @click="removeReference(ref.id)"
-              title="Remove reference"
+              class="nx-mg-order-row"
             >
               <img :src="ref.preview" alt="" />
-            </button>
+              <span class="nx-mg-order-index">{{ idx + 1 }}</span>
+              <button
+                type="button"
+                class="nx-mg-btn nx-mg-btn--ghost"
+                :disabled="busy || idx === 0"
+                @click="moveReference(ref.id, -1)"
+              >
+                Up
+              </button>
+              <button
+                type="button"
+                class="nx-mg-btn nx-mg-btn--ghost"
+                :disabled="busy || idx === references.length - 1"
+                @click="moveReference(ref.id, 1)"
+              >
+                Down
+              </button>
+              <button
+                type="button"
+                class="nx-mg-btn nx-mg-btn--ghost"
+                :disabled="busy"
+                @click="removeOrderedReference(ref.id)"
+              >
+                Remove
+              </button>
+            </div>
           </div>
         </div>
 
@@ -288,6 +339,7 @@ import {
   modelReferenceImageLimits,
   modelSupportsNegativePrompt,
 } from '@nexus/media-generation-core';
+import { HOSTING_BADGE_LABELS } from '@nexus/chat-core';
 import { pickRandomMediaPromptExample } from './prompt-examples';
 
 export default {
@@ -307,6 +359,11 @@ export default {
     title: { type: String, default: 'Generate media' },
     /** Direct upload bypass (default false — avatar hosts use their own upload). */
     allowUpload: { type: Boolean, default: false },
+    /**
+     * Existing pictures the user can check as references.
+     * `{ id, label, url }[]`. Unchecked items are not sent.
+     */
+    referenceLibrary: { type: Array, default: () => [] },
   },
   data() {
     return {
@@ -315,6 +372,8 @@ export default {
       snap: null,
       examplePrompt: pickRandomMediaPromptExample(),
       applying: false,
+      libraryBindings: {},
+      libraryBusyId: null,
     };
   },
   computed: {
@@ -424,6 +483,20 @@ export default {
       if (!list.length) return null;
       return list.find((c) => c.id === this.selectedCandidateId) ?? list[0];
     },
+    libraryItems() {
+      const rows = Array.isArray(this.referenceLibrary) ? this.referenceLibrary : [];
+      return rows
+        .map((item, index) => {
+          const url = String(item?.url || '').trim();
+          if (!url) return null;
+          return {
+            id: String(item.id || `library-${index}`),
+            label: item.label ? String(item.label) : '',
+            url,
+          };
+        })
+        .filter(Boolean);
+    },
   },
   watch: {
     isOpen: {
@@ -448,6 +521,8 @@ export default {
     },
     async bootstrap() {
       this.teardown();
+      this.libraryBindings = {};
+      this.libraryBusyId = null;
       this.examplePrompt = pickRandomMediaPromptExample();
       const adapter = this.resolveAdapter();
       this.session = createMediaGenerationSession({ adapter });
@@ -480,14 +555,33 @@ export default {
     modelLabel(m) {
       return m.displayName || m.name || m.id;
     },
+    hostingTypesOf(model) {
+      return Array.isArray(model?.availableHostingTypes) ? model.availableHostingTypes : [];
+    },
+    hostingLabel(type) {
+      return HOSTING_BADGE_LABELS[type] || String(type || '').replace(/_cloud|_processing/g, '');
+    },
+    modelOptionLabel(m) {
+      const name = this.modelLabel(m);
+      const hosting = this.hostingTypesOf(m)
+        .map((h) => this.hostingLabel(h))
+        .filter(Boolean);
+      if (!hosting.length) return name;
+      return `${name} · ${hosting.join(', ')}`;
+    },
+    selectModel(id) {
+      this.session?.setModelId(id);
+    },
+    onModelChange(e) {
+      const id = e.target && e.target.value;
+      if (!id || id === this.modelId) return;
+      this.selectModel(id);
+    },
     onPromptInput(e) {
       this.session?.setPrompt(e.target.value);
     },
     onNegativeInput(e) {
       this.session?.setNegativePrompt(e.target.value);
-    },
-    onModelChange(e) {
-      this.session?.setModelId(e.target.value);
     },
     onSizeChange(e) {
       this.session?.setOptions({ size: e.target.value });
@@ -550,6 +644,46 @@ export default {
       reader.readAsDataURL(file);
     },
     removeReference(id) {
+      this.removeOrderedReference(id);
+    },
+    isLibrarySelected(id) {
+      const refId = this.libraryBindings[id];
+      return !!(refId && this.references.some((ref) => ref.id === refId));
+    },
+    libraryCheckboxDisabled(id) {
+      if (this.busy || this.libraryBusyId) return true;
+      if (this.isLibrarySelected(id)) return false;
+      return this.references.length >= this.maxRefs;
+    },
+    async onLibraryToggle(item, event) {
+      const checked = !!(event.target && event.target.checked);
+      if (!this.session) return;
+      if (!checked) {
+        const refId = this.libraryBindings[item.id];
+        if (refId) this.session.removeReference(refId);
+        this.$delete(this.libraryBindings, item.id);
+        return;
+      }
+      this.libraryBusyId = item.id;
+      try {
+        const entry = await this.session.addReferenceFromUrl(item.url);
+        this.$set(this.libraryBindings, item.id, entry.id);
+      } catch (err) {
+        if (event.target) event.target.checked = false;
+        const message = err instanceof Error ? err.message : 'Could not read that image';
+        this.session.setError(message);
+      } finally {
+        this.libraryBusyId = null;
+      }
+    },
+    moveReference(id, direction) {
+      this.session?.moveReference(id, direction);
+    },
+    removeOrderedReference(id) {
+      const binding = Object.keys(this.libraryBindings).find(
+        (libraryId) => this.libraryBindings[libraryId] === id,
+      );
+      if (binding) this.$delete(this.libraryBindings, binding);
       this.session?.removeReference(id);
     },
     selectCandidate(id) {
@@ -596,10 +730,6 @@ export default {
       } finally {
         this.applying = false;
       }
-    },
-    onOverlayClose() {
-      if (this.busy && this.workloadId) return;
-      this.close();
     },
     close() {
       this.$emit('input', false);
@@ -670,6 +800,14 @@ export default {
   font: inherit;
   background: #fff;
 }
+select.nx-mg-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+select.nx-mg-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .nx-mg-textarea {
   resize: vertical;
   min-height: 4rem;
@@ -725,6 +863,47 @@ export default {
   flex-wrap: wrap;
   gap: 0.4rem;
   align-items: center;
+}
+.nx-mg-library {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.nx-mg-library-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.875rem;
+}
+.nx-mg-library-item img {
+  width: 2.5rem;
+  height: 2.5rem;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #d8dde3;
+}
+.nx-mg-order {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.nx-mg-order-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.nx-mg-order-row img {
+  width: 2.5rem;
+  height: 2.5rem;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #d8dde3;
+}
+.nx-mg-order-index {
+  min-width: 1rem;
+  font-size: 0.75rem;
+  color: #5b6570;
 }
 .nx-mg-thumb {
   width: 3.25rem;

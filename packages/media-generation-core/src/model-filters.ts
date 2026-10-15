@@ -53,10 +53,14 @@ export function modelReferenceImageLimits(
   model: MediaGenerationModel | null | undefined,
 ): { min: number; max: number } {
   const refs = model?.generationIo?.referenceImages;
-  return {
-    min: Math.max(0, refs?.min ?? 0),
-    max: Math.max(0, refs?.max ?? 0),
-  };
+  const min = Math.max(0, refs?.min ?? 0);
+  const declaredMax = Math.max(0, refs?.max ?? 0);
+  if (declaredMax > 0) return { min, max: declaredMax };
+  const caps = normalizeList(model?.capabilities);
+  if (caps.includes('i2i') || caps.includes('image_edit')) {
+    return { min, max: 1 };
+  }
+  return { min, max: 0 };
 }
 
 export function getModelGenerationIo(

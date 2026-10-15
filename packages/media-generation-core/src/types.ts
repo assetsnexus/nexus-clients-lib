@@ -47,6 +47,10 @@ export type MediaGenerationModel = {
   computeTier?: string | null;
   externalModelId?: string | null;
   providerId?: string | null;
+  /** Chat hosting rails: public_cloud, managed_cloud, private_cloud, edge_processing. */
+  availableHostingTypes?: string[] | null;
+  /** Entitled picker row. Org surfaces send this subscription on create. */
+  subscriptionId?: string | null;
 };
 
 export type MediaKind = 'image' | 'video';
@@ -113,6 +117,8 @@ export type GenerateRequestBody = {
   batchSize?: number;
   durationSec?: number | null;
   fps?: number | null;
+  /** Payer subscriptions copied from the selected model or a pinned agent. */
+  subscriptionIds?: string[];
 };
 
 export type GenerateResultCandidate = {

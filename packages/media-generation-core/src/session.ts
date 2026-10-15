@@ -24,7 +24,9 @@ export type MediaGenerationSession = {
   setModelId(modelId: string): void;
   setOptions(patch: Partial<MediaGenerationOptions>): void;
   addReferenceFromFile(input: { base64: string; mime: string; preview?: string }): MediaReference;
+  addReferenceFromUrl(url: string): Promise<MediaReference>;
   removeReference(id: string): void;
+  moveReference(id: string, direction: -1 | 1): void;
   useSelectedAsReference(candidateIds?: string[]): Promise<void>;
   selectCandidate(id: string | null): void;
   appendCandidate(input: { url: string; kind: MediaKind; generated?: boolean }): MediaCandidate;
@@ -116,7 +118,13 @@ function collectUrlsFromWorkload(wl: WorkloadSnapshot): Array<{ url: string; kin
 async function defaultFetchUrlAsReference(
   url: string,
 ): Promise<{ base64: string; mime: string; preview: string }> {
-  const res = await fetch(url);
+  const raw = String(url || '').trim();
+  if (raw.startsWith('data:')) {
+    const match = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(raw);
+    if (!match?.[2]) throw new Error('Reference image is not a base64 data URL');
+    return { base64: match[2], mime: match[1] || 'image/png', preview: raw };
+  }
+  const res = await fetch(raw);
   if (!res.ok) {
     throw new Error(`Failed to fetch reference (${res.status})`);
   }
@@ -193,15 +201,25 @@ export function createMediaGenerationSession(
   };
 
   const appendCandidates = (items: Array<{ url: string; kind: MediaKind }>, generated: boolean) => {
+    const seen = new Set<string>();
     const next = items
-      .filter((i) => Boolean(i.url))
+      .filter((i) => {
+        if (!i.url || seen.has(i.url)) return false;
+        seen.add(i.url);
+        return true;
+      })
       .map((i) => ({
         id: newId(),
         url: i.url,
         kind: i.kind,
         generated,
       }));
-    if (!next.length) return;
+    if (!next.length) {
+      if (items.some((i) => Boolean(i.url))) {
+        setState({ busy: false, workloadId: null, workload: null });
+      }
+      return;
+    }
     const candidates = [...next, ...state.candidates];
     setState({
       candidates,
@@ -219,13 +237,14 @@ export function createMediaGenerationSession(
       return;
     }
     if (wl.status === 'failed' || wl.status === 'cancelled') {
+      const reason = typeof wl.cancelReason === 'string' ? wl.cancelReason.trim() : '';
       setState({
         busy: false,
         workloadId: null,
         workload: null,
         error:
           wl.status === 'failed'
-            ? 'Generation failed. Try again or adjust the prompt.'
+            ? reason || 'Generation failed. Try again or adjust the prompt.'
             : null,
       });
     }
@@ -240,10 +259,20 @@ export function createMediaGenerationSession(
       });
       return;
     }
-    pollTimer = setInterval(() => {
+    let pollFailures = 0;
+    let inFlight = false;
+    let settled = false;
+    const tick = () => {
+      // A preview download can outlast the poll interval. A second read of the
+      // same completed workload must not stage the same image again.
+      if (settled || inFlight) return;
+      inFlight = true;
       void adapter
         .getWorkload!(id)
         .then((wl) => {
+          inFlight = false;
+          if (settled) return;
+          pollFailures = 0;
           if (!wl) return;
           setState({
             workload: {
@@ -261,10 +290,19 @@ export function createMediaGenerationSession(
             },
           });
           if (wl.status === 'completed' || wl.status === 'failed' || wl.status === 'cancelled') {
+            settled = true;
+            stopPolling();
             handleWorkloadTerminal(wl);
           }
         })
         .catch((e: unknown) => {
+          inFlight = false;
+          if (settled) return;
+          pollFailures += 1;
+          // One timed-out status read must not discard a workload that is
+          // still running. Surface the error only after repeated failures.
+          if (pollFailures < 8) return;
+          settled = true;
           stopPolling();
           setState({
             busy: false,
@@ -273,7 +311,8 @@ export function createMediaGenerationSession(
             error: e instanceof Error ? e.message : String(e),
           });
         });
-    }, pollIntervalMs);
+    };
+    pollTimer = setInterval(tick, pollIntervalMs);
   };
 
   const session: MediaGenerationSession = {
@@ -360,6 +399,26 @@ export function createMediaGenerationSession(
       setState({
         references: state.references.filter((r) => r.id !== id),
       });
+    },
+
+    async addReferenceFromUrl(url) {
+      const fetched = await fetchUrlAsReference(url);
+      return session.addReferenceFromFile({
+        base64: fetched.base64,
+        mime: fetched.mime,
+        preview: fetched.preview,
+      });
+    },
+
+    moveReference(id, direction) {
+      const idx = state.references.findIndex((r) => r.id === id);
+      const next = idx + direction;
+      if (idx < 0 || next < 0 || next >= state.references.length) return;
+      const references = state.references.slice();
+      const [item] = references.splice(idx, 1);
+      if (!item) return;
+      references.splice(next, 0, item);
+      setState({ references });
     },
 
     async useSelectedAsReference(candidateIds) {
@@ -480,6 +539,7 @@ export function createMediaGenerationSession(
           ? state.options.durationSec ?? io.durationSec.default
           : null,
         fps: io?.fps ? state.options.fps ?? io.fps.default : null,
+        subscriptionIds: model?.subscriptionId ? [model.subscriptionId] : undefined,
       };
 
       setState({ busy: true, error: null, workloadId: null, workload: null });

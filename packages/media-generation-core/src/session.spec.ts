@@ -101,6 +101,54 @@ describe('createMediaGenerationSession ref max', () => {
     expect(sessionMin.getState().error).toMatch(/at least 1/);
   });
 
+  it('sends references in the order the user sorted', async () => {
+    const generate = vi.fn(async (body) => ({
+      mode: 'inline' as const,
+      imageUrl: 'https://example.com/out.png',
+      echo: body,
+    }));
+    const session = createMediaGenerationSession({
+      adapter: makeAdapter([model('m1', 3)], generate),
+    });
+    await session.loadModels();
+    const a = session.addReferenceFromFile({ base64: 'aaa', mime: 'image/png' });
+    const b = session.addReferenceFromFile({ base64: 'bbb', mime: 'image/png' });
+    session.moveReference(b.id, -1);
+    expect(session.getState().references.map((ref) => ref.id)).toEqual([b.id, a.id]);
+    await session.generate();
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImages: [
+          { base64: 'bbb', mime: 'image/png' },
+          { base64: 'aaa', mime: 'image/png' },
+        ],
+      }),
+    );
+  });
+
+  it('shows the adapter error instead of a generic failure', async () => {
+    const session = createMediaGenerationSession({
+      adapter: makeAdapter([model('m1', 0)], async () => {
+        throw new Error('Not enough credits to generate this image.');
+      }),
+    });
+    await session.loadModels();
+    await session.generate();
+    expect(session.getState().error).toBe('Not enough credits to generate this image.');
+    expect(session.getState().busy).toBe(false);
+  });
+
+  it('loads a data-url reference without fetching', async () => {
+    const session = createMediaGenerationSession({
+      adapter: makeAdapter([model('m1', 1)]),
+    });
+    await session.loadModels();
+    const entry = await session.addReferenceFromUrl('data:image/png;base64,aGVsbG8=');
+    expect(entry.base64).toBe('aGVsbG8=');
+    expect(entry.mime).toBe('image/png');
+    expect(session.getState().references).toHaveLength(1);
+  });
+
   it('appends inline generate candidates', async () => {
     const session = createMediaGenerationSession({
       adapter: makeAdapter([model('m1', 0)]),
@@ -111,5 +159,81 @@ describe('createMediaGenerationSession ref max', () => {
     expect(session.getState().candidates).toHaveLength(1);
     expect(session.getState().candidates[0]?.url).toContain('out.png');
     expect(session.getState().busy).toBe(false);
+  });
+
+  it('stages one image when status reads overlap on a single result', async () => {
+    const pending: Array<(value: {
+      status: string;
+      resultImageUrl?: string;
+      resultPayload?: { batchAcceptedImageUrls?: string[] };
+    }) => void> = [];
+    const getWorkload = vi.fn(
+      () =>
+        new Promise<{ status: string; resultImageUrl: string }>((resolve) => {
+          pending.push(resolve);
+        }),
+    );
+    const session = createMediaGenerationSession({
+      adapter: {
+        listModels: async () => ({ models: [model('m1', 0)], generationEnabled: true }),
+        generate: async () => ({ mode: 'gpu_async' as const, workloadId: 'w1', status: 'queued' }),
+        getWorkload,
+      },
+      pollIntervalMs: 5,
+    });
+    await session.loadModels();
+    session.setPrompt('portrait');
+    await session.generate();
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(getWorkload).toHaveBeenCalledTimes(1);
+
+    pending[0]!({ status: 'completed', resultImageUrl: 'data:image/png;base64,ONE' });
+    await vi.waitFor(() => expect(session.getState().busy).toBe(false));
+    expect(session.getState().candidates.map((c) => c.url)).toEqual(['data:image/png;base64,ONE']);
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(getWorkload).toHaveBeenCalledTimes(1);
+    expect(session.getState().candidates).toHaveLength(1);
+  });
+
+  it('stages each distinct image in a batch of n', async () => {
+    const pending: Array<(value: {
+      status: string;
+      resultImageUrl: string;
+      resultPayload: { batchAcceptedImageUrls: string[] };
+    }) => void> = [];
+    const session = createMediaGenerationSession({
+      adapter: {
+        listModels: async () => ({ models: [model('m1', 0)], generationEnabled: true }),
+        generate: async () => ({ mode: 'gpu_async' as const, workloadId: 'w-batch', status: 'queued' }),
+        getWorkload: () =>
+          new Promise((resolve) => {
+            pending.push(resolve);
+          }),
+      },
+      pollIntervalMs: 5,
+    });
+    await session.loadModels();
+    session.setPrompt('batch');
+    await session.generate();
+    await vi.waitFor(() => expect(pending.length).toBe(1));
+    pending[0]!({
+      status: 'completed',
+      resultImageUrl: 'https://files/a.png',
+      resultPayload: {
+        batchAcceptedImageUrls: [
+          'https://files/a.png',
+          'https://files/b.png',
+          'https://files/c.png',
+        ],
+      },
+    });
+    await vi.waitFor(() => expect(session.getState().busy).toBe(false));
+    expect(session.getState().candidates.map((c) => c.url)).toEqual([
+      'https://files/a.png',
+      'https://files/b.png',
+      'https://files/c.png',
+    ]);
   });
 });
