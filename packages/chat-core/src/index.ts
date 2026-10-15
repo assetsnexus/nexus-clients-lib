@@ -1100,6 +1100,8 @@ export type NexusChat = {
        * Used when the session list would show the agent online.
        */
       bypassFallback?: boolean;
+      /** Empty thread: ask the agent to greet. Do not show a user turn. */
+      conversationOpen?: boolean;
     },
   ) => Promise<SendMessageResult>;
   /** Compact conversation context via anx.communicate.conversations.compact. */
