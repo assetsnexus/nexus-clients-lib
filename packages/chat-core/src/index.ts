@@ -390,6 +390,28 @@ export type {
   SpeakTurnState,
   SpeakTurnController,
 } from './voice/speak-turn.js';
+export {
+  EMPTY_CALL_STATE,
+  buildCallBanner,
+  isVoiceBubble,
+  isPostedFromVoice,
+  postedFromVoiceMarker,
+  voiceSpeakerLabel,
+  applyTranscriptEvent,
+  mergeStoredWithLive,
+  canStartCallFromRoom,
+  applyChatVisibility,
+  deliveredHint,
+} from './voice/chat-call-surface.js';
+export type {
+  VoiceMessageModality,
+  ChatVoiceMessageFields,
+  CallInProgressState,
+  CallBannerView,
+  PartialTranscriptEvent,
+  TranscriptMessage,
+  StartCallFromRoomCheck,
+} from './voice/chat-call-surface.js';
 export { formatTurnSenderLine, formatTurnTime } from './turn-meta.js';
 export {
   findChatContact,
