@@ -114,6 +114,21 @@ export type ChatTurn = {
   deliveryError?: { code?: string; message: string; details?: string } | null;
   /** ISO timestamp or epoch-ms string when the turn was created. */
   createdAt?: string | null;
+  /**
+   * Part D item 29: `voice` render a mic marker (a spoken utterance streamed
+   * into the chat), `chat_only` render a "posted from voice" marker (an
+   * assistant message the agent posted with `post_to_chat`). Absent on typed
+   * messages.
+   */
+  modality?: 'voice' | 'chat_only' | null;
+  /** Dedupe key for a voice utterance; the client replaces a partial in place. */
+  utteranceId?: string | null;
+  /** Voice call the utterance belongs to (only set when `modality === 'voice'`). */
+  callSid?: string | null;
+  /** Human-readable speaker label for a voice utterance. */
+  speakerLabel?: string | null;
+  /** True while a live partial transcript is still being replaced. */
+  pending?: boolean;
   /** Actor id (user / agent) that authored the turn. */
   senderId?: string | null;
   /** Display name when known (rooms / multi-party). */

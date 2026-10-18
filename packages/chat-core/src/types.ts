@@ -260,6 +260,20 @@ export type ChatVoiceCallSession = {
   realtime?: Record<string, unknown> | null;
   dialIn?: ChatVoiceDialInInfo | null;
   toMasked?: string | null;
+  /**
+   * Part D item 29 — the running group room the call was started from, when
+   * the host supplied one. Members of that room read the live transcript and
+   * see the call controls.
+   */
+  roomId?: string | null;
+  /** True when a chat surface is attached to this call (item 23/24). */
+  chatVisible?: boolean;
+  /** Epoch-ms when the call went live, for the banner clock. */
+  startedAtMs?: number | null;
+  /** Human who owns an inbound PSTN call, when known. */
+  ownerUserId?: string | null;
+  /** Participants the room can see on the call controls. */
+  participants?: Array<{ id: string; label: string; kind: 'human' | 'agent' | 'support' }>;
 };
 
 export type ChatSendOutcomeCode =

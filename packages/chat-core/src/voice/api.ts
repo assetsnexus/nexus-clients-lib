@@ -175,10 +175,12 @@ export function createVoiceApi(deps: VoiceApiDeps) {
   async function createBrowserCall(
     agentId: string,
     conversationId?: string | null,
+    roomId?: string | null,
   ): Promise<ChatVoiceCallSession> {
     const result = (await deps.client.send('anx.agents.voice-channel.browser-call.create', {
       agentId,
       conversationId: conversationId ?? undefined,
+      roomId: roomId ?? undefined,
     })) as SendResult | unknown;
     assertOk(result, 'voice-channel.browser-call.create failed');
     const data = deps.unwrapData(result);
@@ -189,6 +191,7 @@ export function createVoiceApi(deps: VoiceApiDeps) {
         typeof data.conversationId === 'string' ? data.conversationId : conversationId ?? null,
       mode: 'browser',
       status: 'connecting',
+      roomId: roomId ?? (typeof data.roomId === 'string' ? data.roomId : null),
     });
   }
 
@@ -365,6 +368,8 @@ export function createVoiceApi(deps: VoiceApiDeps) {
       agentId: string;
       conversationId?: string | null;
       virtualAgentId?: string | null;
+      /** Part D item 29 — start the call from a running group room. */
+      roomId?: string | null;
       pageContext?: Record<string, unknown>;
       instructions?: string;
     }): Promise<ChatVoiceCallSession> {
@@ -376,7 +381,7 @@ export function createVoiceApi(deps: VoiceApiDeps) {
         if (existing) return existing;
       }
 
-      const call = await createBrowserCall(input.agentId, input.conversationId);
+      const call = await createBrowserCall(input.agentId, input.conversationId, input.roomId ?? null);
       try {
         await session.start({
           agentId: input.agentId,

@@ -119,6 +119,13 @@ export type NexusChatPanelLabels = {
   pending?: string;
   voiceSession?: string;
   endCall?: string;
+  /** Part D item 29 — voice bubble / chat-only markers. */
+  voiceUtterance?: string;
+  voiceTranscribing?: string;
+  postedFromVoice?: string;
+  callInChat?: string;
+  muteCall?: string;
+  unmute?: string;
   dial?: string;
   code?: string;
   uploading?: string;
@@ -207,6 +214,13 @@ export const DEFAULT_PANEL_LABELS: Required<NexusChatPanelLabels> = {
   pending: 'pending',
   voiceSession: 'Voice session',
   endCall: 'End call',
+  /** Part D item 29 */
+  voiceUtterance: 'Spoken in a call',
+  voiceTranscribing: 'transcribing…',
+  postedFromVoice: 'posted from voice',
+  callInChat: 'in this chat',
+  muteCall: 'Mute',
+  unmute: 'Unmute',
   dial: 'Dial',
   code: 'Code',
   uploading: 'Uploading…',

@@ -1290,12 +1290,18 @@ export type NexusChat = {
   }) => Promise<unknown>;
   updateRoomPresence: (presence: ChatRoomPresence) => void;
   pollWorkload: (workloadId: string, opts?: WorkloadPollOptions) => Promise<Record<string, unknown>>;
-  createBrowserCall: (agentId: string, conversationId?: string | null) => Promise<ChatVoiceCallSession>;
+  createBrowserCall: (
+    agentId: string,
+    conversationId?: string | null,
+    roomId?: string | null,
+  ) => Promise<ChatVoiceCallSession>;
   /** Full WebRTC browser call: create → getUserMedia → offer → realtime.call.create → answer. */
   startBrowserCall: (input: {
     agentId: string;
     conversationId?: string | null;
     virtualAgentId?: string | null;
+    /** Part D item 29 — start the call from a running group room. */
+    roomId?: string | null;
     pageContext?: Record<string, unknown>;
     instructions?: string;
   }) => Promise<ChatVoiceCallSession>;

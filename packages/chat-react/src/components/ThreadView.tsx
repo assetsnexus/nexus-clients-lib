@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ChatTurn, IoDescriptor, NexusChat } from '@nexus/chat-core';
+import { isPostedFromVoice, isVoiceBubble } from '@nexus/chat-core';
 import { CHAT_MARKDOWN_ROOT_CLASS, renderChatMarkdown } from '../markdown.js';
 import { ToolTimeline } from './ToolTimeline.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
@@ -60,14 +61,32 @@ export function ThreadView({
         const isUser = turn.role === 'user';
         const isStreamingBubble =
           !isUser && streaming && turn === turns[turns.length - 1] && !turn.text?.trim();
+        const isVoice = isVoiceBubble(turn);
+        const isChatOnly = isPostedFromVoice(turn);
         return (
           <div
             key={turn.id}
-            className={`nexus-chat__turn nexus-chat__turn--${isUser ? 'user' : 'assistant'}${isStreamingBubble ? ' nexus-chat__turn--streaming' : ''}`}
+            className={`nexus-chat__turn nexus-chat__turn--${isUser ? 'user' : 'assistant'}${isStreamingBubble ? ' nexus-chat__turn--streaming' : ''}${isVoice ? ' nexus-chat__turn--voice' : ''}${isChatOnly ? ' nexus-chat__turn--chat-only' : ''}`}
+            data-nexus-modality={isVoice ? 'voice' : isChatOnly ? 'chat_only' : undefined}
           >
-            {turn.senderName ? (
+            {turn.senderName || isVoice ? (
               <div style={{ fontSize: 11, color: 'var(--nx-chat-muted)', marginBottom: 4 }}>
+                {/* Part D item 29 — a spoken utterance carries the mic marker. */}
+                {isVoice ? <span title="Spoken in a call">🎙 </span> : null}
                 {turn.senderName}
+              </div>
+            ) : null}
+            {isChatOnly ? (
+              <div
+                className="nexus-chat__posted-from-voice"
+                style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--nx-chat-muted)', marginBottom: 2 }}
+              >
+                posted from voice
+              </div>
+            ) : null}
+            {turn.pending ? (
+              <div style={{ fontSize: 11, fontStyle: 'italic', color: 'var(--nx-chat-muted)', marginTop: 2 }}>
+                transcribing…
               </div>
             ) : null}
             {turn.compaction ? (

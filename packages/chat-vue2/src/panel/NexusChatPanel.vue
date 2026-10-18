@@ -334,6 +334,40 @@
           @retry="$emit('retry-call', { panelIndex, call: resolvedPanel.activeCall })"
         />
 
+        <!-- Part D item 29 — call banner while voice utterances stream into the chat. -->
+        <div
+          v-if="callBanner.visible"
+          class="nexus-call-banner"
+          role="status"
+        >
+          <span class="nexus-call-banner__dot" aria-hidden="true" />
+          <span class="nexus-call-banner__label">{{ callBanner.label }}</span>
+          <span v-if="callBanner.elapsedSec != null" class="nexus-call-banner__elapsed">
+            {{ formatCallDuration(callBanner.elapsedSec) }}
+          </span>
+          <span v-if="callParticipantLabel" class="nexus-call-banner__who">{{ callParticipantLabel }}</span>
+          <span class="nexus-call-banner__spacer" />
+          <span v-if="callBanner.chatVisible" class="nexus-call-banner__chip">
+            {{ resolvedLabels.callInChat || 'in this chat' }}
+          </span>
+          <button
+            v-if="callBanner.controlsVisible"
+            type="button"
+            class="nexus-btn-link nexus-call-banner__control"
+            @click="$emit('toggle-mute')"
+          >
+            {{ browserCallSurface.muted ? (resolvedLabels.unmute || 'Unmute') : (resolvedLabels.muteCall || 'Mute') }}
+          </button>
+          <button
+            v-if="callBanner.controlsVisible"
+            type="button"
+            class="nexus-btn-link nexus-call-banner__control"
+            @click="$emit('end-call', { panelIndex, call: resolvedPanel.activeCall })"
+          >
+            {{ resolvedLabels.endCall }}
+          </button>
+        </div>
+
         <slot name="queue" :panel="resolvedPanel" />
 
         <linked-sub-chat-banner
@@ -386,7 +420,14 @@
             :class="'nexus-message-row--' + turn.role"
           >
             <div class="nexus-message-bubble" :class="turn.role">
-              <div class="nexus-turn-meta">{{ turnSenderLine(turn) }}</div>
+              <div class="nexus-turn-meta">
+                <span v-if="turnIsVoice(turn)" class="nexus-turn-meta__mic" :title="resolvedLabels.voiceUtterance || 'Spoken in a call'">🎙</span>
+                {{ turnSenderLine(turn) }}
+                <span
+                  v-if="turnPostedFromVoice(turn)"
+                  class="nexus-turn-meta__posted-from-voice"
+                >{{ resolvedLabels.postedFromVoice || 'posted from voice' }}</span>
+              </div>
               <div v-if="turn.compaction" class="nexus-compaction">
                 {{ resolvedLabels.contextCompacted }}
                 <span v-if="turn.compaction.beforeTokens != null">
@@ -397,6 +438,7 @@
                 <span v-for="m in turn.mentions" :key="m.id" class="nexus-chip">@{{ m.label || m.id }}</span>
               </div>
               <div class="nexus-chat-markdown" v-html="renderMarkdown(turn.text)" />
+              <div v-if="turn.pending" class="nexus-voice-partial">{{ resolvedLabels.voiceTranscribing || 'transcribing…' }}</div>
               <div v-if="turnAttachments(turn).length" class="nexus-attachment-chips">
                 <button
                   v-for="attachment in turnAttachments(turn)"
@@ -634,7 +676,7 @@ import SessionSummaryChips from './SessionSummaryChips.vue';
 import LinkedSubChatBanner from './LinkedSubChatBanner.vue';
 import SpeakTurnWidget from './SpeakTurnWidget.vue';
 import ConversationBillingPopover from './ConversationBillingPopover.vue';
-import { DEFAULT_PANEL_LABELS, formatMoneyMinor, spendLabelForCurrency } from './labels';
+import { DEFAULT_PANEL_LABELS, formatCallDuration, formatMoneyMinor, spendLabelForCurrency } from './labels';
 import { createMessageListAutoScroll } from './message-list-scroll';
 import {
   applyDraftRestore,
@@ -645,6 +687,7 @@ import {
   shouldRenderImageThumb,
   turnAttachmentsFromPending,
 } from './attachment-render.util';
+import { isPostedFromVoice, isVoiceBubble, buildCallBanner } from '@nexus/chat-core';
 
 function emptyPanel() {
   return {
@@ -792,6 +835,9 @@ export default {
       billingOpen: false,
       dismissedSubAgentIds: [],
       drawerOpen: false,
+      /** Part D item 29 — ticks once a second while a call banner is live. */
+      callTickMs: Date.now(),
+      callTickTimer: null,
     };
   },
   computed: {
@@ -1122,6 +1168,40 @@ export default {
       }
       return null;
     },
+    // Part D item 29 — the chat-side banner for a call that is streaming its
+    // utterances into this conversation (browser, app or PSTN).
+    callBanner() {
+      const call = this.resolvedPanel.activeCall || null;
+      if (!call) return { visible: false, label: '', controlsVisible: false, elapsedSec: null };
+      const state = {
+        callSid: call.callSid || null,
+        surface: call.mode === 'inbound' ? 'pstn' : call.mode || 'browser',
+        chatVisible: call.chatVisible !== false,
+        startedAtMs: call.startedAtMs != null ? call.startedAtMs : null,
+        participants: Array.isArray(call.participants) ? call.participants : [],
+      };
+      return buildCallBanner(state, {
+        viewerIsOwner: this.viewerIsCallOwner,
+        nowMs: this.callBannerNowMs,
+      });
+    },
+    /** The banner ticks once a second while a call is live. */
+    callBannerNowMs() {
+      return this.callTickMs;
+    },
+    viewerIsCallOwner() {
+      const call = this.resolvedPanel.activeCall;
+      if (!call) return false;
+      const me = this.viewerUserId;
+      if (!me) return true;
+      return !call.ownerUserId || String(call.ownerUserId) === String(me);
+    },
+    callParticipantLabel() {
+      const call = this.resolvedPanel.activeCall;
+      const participants = call && Array.isArray(call.participants) ? call.participants : [];
+      if (!participants.length) return '';
+      return participants.map((p) => (p && (p.label || p.id)) || 'unknown').join(', ');
+    },
     browserCallSurface() {
       const call = this.resolvedPanel.activeCall || {};
       return {
@@ -1231,9 +1311,18 @@ export default {
     });
     this.bindMessageListObservers();
     this.pinAndScrollMessages();
+    // Part D item 29 — the call banner's elapsed clock. It only runs while a
+    // call is actually active, so an idle chat has no timer.
+    this.callTickTimer = setInterval(() => {
+      if (this.resolvedPanel.activeCall) this.callTickMs = Date.now();
+    }, 1000);
   },
   beforeDestroy() {
     this.unbindMessageListObservers();
+    if (this.callTickTimer) {
+      clearInterval(this.callTickTimer);
+      this.callTickTimer = null;
+    }
     if (this.embedUnsubscribe) this.embedUnsubscribe();
     if (this._modeTransitionUnsubscribe) this._modeTransitionUnsubscribe();
     if (this._modeTransitionController) this._modeTransitionController.destroy();
@@ -1757,6 +1846,14 @@ export default {
         unknownLabel: this.resolvedLabels.unknown,
       });
     },
+    /** Part D item 29 — a spoken utterance bubble shows the mic marker. */
+    turnIsVoice(turn) {
+      return isVoiceBubble(turn);
+    },
+    /** Part D item 29 — an assistant `post_to_chat` message is marked. */
+    turnPostedFromVoice(turn) {
+      return isPostedFromVoice(turn);
+    },
     isLastAssistantTurn(turn) {
       if (!turn || turn.role !== 'assistant') return false;
       const turns = this.resolvedPanel.turns || [];
@@ -2086,6 +2183,76 @@ export default {
 }
 .nexus-message-bubble.user .nexus-turn-meta {
   opacity: 0.85;
+}
+/* Part D item 29 — mic marker on a spoken utterance, "posted from voice" chip. */
+.nexus-turn-meta__mic {
+  margin-right: 3px;
+  font-size: 10px;
+}
+.nexus-turn-meta__posted-from-voice {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 10px;
+  font-style: italic;
+}
+.nexus-voice-partial {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.6;
+  font-style: italic;
+}
+/* Part D item 29 — the call-in-progress banner. */
+.nexus-call-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(81, 203, 206, 0.12);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.nexus-call-banner__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #51cbce;
+  animation: nexus-call-banner-pulse 1.4s infinite ease-in-out;
+}
+@keyframes nexus-call-banner-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.nexus-call-banner__elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.nexus-call-banner__who {
+  color: var(--nx-muted, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nexus-call-banner__spacer {
+  flex: 1 1 auto;
+}
+.nexus-call-banner__chip {
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+}
+.nexus-call-banner__control {
+  flex: 0 0 auto;
+}
 }
 .nexus-message-bubble.user {
   background: #51cbce;
