@@ -5,6 +5,7 @@ import type {
   ChatHooks,
   ChatSendOutcomeCode,
   ChatToolDescriptor,
+  ChatClientToolAccess,
   ChatContact,
   ChatCreditsState,
   ChatBillingIssueState,
@@ -153,6 +154,19 @@ import {
   readLockedThread,
   writeLockedThread,
 } from './session/locked-thread-memory.js';
+import {
+  ClientToolRegistry,
+  buildQuestionAnswer,
+  clientToolAccessOf,
+  isIndexedClientTool,
+  normalizePendingPauseKind,
+  parsePendingPauseCard,
+  type ClientToolIndexEntry,
+  type PendingPauseCard,
+  type PendingPauseKind,
+  type QuestionAnswer,
+} from './tools/index.js';
+import { parseModeChangedEvent } from './mode-transition.js';
 
 const lockedOpenInflight = new Map<string, Promise<{ conversationId: string; created: boolean; greetingText?: string | null }>>();
 const openingRequested = new Set<string>();
@@ -165,6 +179,7 @@ export type {
   ChatHooks,
   ChatSendOutcomeCode,
   ChatToolDescriptor,
+  ChatClientToolAccess,
   ChatContact,
   ChatCreditsState,
   ChatBillingIssueState,
@@ -477,6 +492,7 @@ export {
   useModeTransition,
   formatModeTransitionCountdown,
   modeLabel,
+  parseModeChangedEvent,
 } from './mode-transition.js';
 export type {
   ChatExecutionMode,
@@ -485,6 +501,7 @@ export type {
   ModeTransitionListener,
   ModeTransitionOptions,
   ModeTransitionController,
+  ChatModeChangedEvent,
 } from './mode-transition.js';
 export {
   uploadAttachment,
@@ -554,6 +571,31 @@ export {
   isWorkloadResultApiPath,
   workloadResultPathsNeedFileUrl,
   parseUserChoiceOptions,
+  // Pending-pause rails (client tool / Plan-write approval / mode switch).
+  normalizePendingPauseKind,
+  normalizeClientToolAccess,
+  parsePendingPauseCard,
+  parsePendingApprovalCard,
+  parsePendingModeSwitchCard,
+  parsePendingClientToolCard,
+  normalizePendingResumeDecision,
+  // Ask card (`ask_user_choice`).
+  parseUserChoiceQuestion,
+  buildQuestionAnswer,
+  questionAnswerIsActionable,
+  userChoiceQuestionIsExpired,
+  // Plan card.
+  parsePlanTodos,
+  summarizePlanTodos,
+  parsePlanCard,
+  parsePlanPointer,
+  planProgressLabel,
+  normalizePlanTodoStatus,
+  // Client-tool registry (pinned vs discoverable).
+  ClientToolRegistry,
+  clientToolAccessOf,
+  clientToolAvailabilityOf,
+  isIndexedClientTool,
 } from './tools/index.js';
 export type {
   ScheduleCheckBackResult,
@@ -562,6 +604,25 @@ export type {
   ToolRunRowModel,
   MediaCarouselImage,
   UserChoiceOption,
+  PendingPauseKind,
+  ClientToolAccess,
+  PendingPauseCard,
+  PendingApprovalCard,
+  PendingModeSwitchCard,
+  PendingClientToolCard,
+  UserChoiceQuestion,
+  UserChoiceQuestionOption,
+  UserChoiceQuestionTarget,
+  UserChoiceQuestionStatus,
+  QuestionAnswer,
+  PlanTodoItem,
+  PlanTodoStatus,
+  PlanCard,
+  PlanCardStatus,
+  PlanPointer,
+  ClientToolIndexEntry,
+  ClientToolRegistration,
+  ClientToolFunctionSchema,
 } from './tools/index.js';
 
 export {
@@ -672,6 +733,10 @@ export type ChatState = {
   streaming: boolean;
   /** Pending client_tool_request callId (page tools); keep WS open until resume. */
   pausedCallId?: string | null;
+  /** Which rail the paused turn is on (`client_tool` | `approval` | `mode_switch`). */
+  pendingPauseKind?: 'client_tool' | 'approval' | 'mode_switch' | null;
+  /** Typed card the paused turn renders; `null` when nothing is paused. */
+  pendingPause?: PendingPauseCard | null;
   selectedAgentId: string | null;
   conversationId: string | null;
   features: ChatFeatures;
@@ -1259,6 +1324,16 @@ export type NexusChat = {
       }>;
       pageFunctionCalls?: string[];
       /**
+       * Compact index of discoverable client tools for this turn. Defaults to the
+       * registry's discoverable tools; pass `[]` to send none.
+       */
+      clientToolIndex?: ClientToolIndexEntry[];
+      /**
+       * Structured answer to the open `ask_user_choice` question. When present the
+       * server validates it against the stored question and replaces `text`.
+       */
+      questionAnswer?: QuestionAnswer;
+      /**
        * Send on the Nexus command path even when the host fallback flag is set.
        * Used when the session list would show the agent online.
        */
@@ -1585,6 +1660,21 @@ export type NexusChat = {
   ) => Promise<UploadAttachmentResult>;
   registerTool: (descriptor: ChatToolDescriptor, handler: (args: unknown) => Promise<unknown> | unknown) => void;
   /**
+   * Register a client tool in the shared registry. `availability: 'discoverable'`
+   * keeps its schema off the wire (only the index rides along) and binds on demand.
+   * A blank name or a non-function handler is ignored.
+   */
+  registerClientTool: (input: {
+    name?: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    access?: 'read' | 'write';
+    availability?: 'pinned' | 'discoverable';
+    handler: (args: unknown) => Promise<unknown> | unknown;
+  }) => void;
+  /** Current discoverable client tools as the compact index sent with a message. */
+  getClientToolIndex: () => ClientToolIndexEntry[];
+  /**
    * Swap the page-tool source for the open screen without rebuilding chat.
    * Pass null to clear it (e.g. when leaving a page that had tools).
    */
@@ -1598,6 +1688,45 @@ export type NexusChat = {
     result: unknown;
     conversationId?: string;
   }) => Promise<{ ok: boolean; message?: string; code?: string }>;
+  /**
+   * Resume an `approval` pause: one click on the preview card. `approved` mints
+   * the server-side execution marker and re-runs the gated command; passing
+   * `switchToMode: 'agent'` tells the model to continue in Agent mode instead.
+   */
+  resolveApproval: (opts: {
+    callId: string;
+    approved: boolean;
+    switchToMode?: 'agent' | 'plan' | 'ask';
+    conversationId?: string;
+  }) => Promise<{ ok: boolean; message?: string; code?: string }>;
+  /**
+   * Resume a `mode_switch` pause. The server applies the switch and emits
+   * `mode_changed` (hosts update their chip from that hook, never by
+   * re-dispatching `set-chat-mode`).
+   */
+  resolveModeSwitch: (opts: {
+    callId: string;
+    approved: boolean;
+    to?: 'agent' | 'plan' | 'ask';
+    conversationId?: string;
+  }) => Promise<{ ok: boolean; message?: string; code?: string }>;
+  /** Answer the open `ask_user_choice` question (structured, validated server-side). */
+  answerQuestion: (opts: {
+    questionId: string;
+    selectedIds?: string[];
+    customText?: string | null;
+    explanation?: string | null;
+    conversationId?: string;
+  }) => Promise<SendMessageResult>;
+  /** Typed card the paused turn is showing, or null. */
+  getPendingPause: () => PendingPauseCard | null;
+  /**
+   * Seed the pending-pause rail from a reload (`anx.communicate.conversations.get`
+   * `pendingPause`). The stream only sets the card on a live pause, so a host
+   * that re-attaches after a refresh restores the same card here — pass null
+   * once the resolved card is dismissed. Does not touch a live generation.
+   */
+  seedPendingPause: (card: PendingPauseCard | null) => void;
   features: ChatFeatures;
   /** Set when this controller may talk to only one virtual employee. */
   lockedAgent: LockedAgent | null;
@@ -1656,6 +1785,19 @@ export type CreateNexusChatOptions = {
    */
   tools?: Array<{
     descriptor: ChatToolDescriptor;
+    handler: (args: unknown) => Promise<unknown> | unknown;
+  }>;
+  /**
+   * Client tools declared by shape, so a host can register one without building
+   * a full descriptor. A `discoverable` entry stays off `browserFunctionCalls`
+   * and only its index entry rides along.
+   */
+  clientTools?: Array<{
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    access?: import('./types.js').ChatClientToolAccess;
+    availability?: 'pinned' | 'discoverable';
     handler: (args: unknown) => Promise<unknown> | unknown;
   }>;
   /**
@@ -1844,7 +1986,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     if (!panel) return;
     mergePanelPatch(panelId, { throttle });
   };
-  const tools = new Map<string, { descriptor: ChatToolDescriptor; handler: (args: unknown) => unknown }>();
+  /**
+   * One registry for pinned + discoverable client tools. The legacy `tools`
+   * option / `registerTool` write here too (pinned unless a descriptor says
+   * otherwise), so existing hosts are unchanged.
+   */
+  const toolRegistry = new ClientToolRegistry();
   /** Page tools for the open screen; swappable with `setPageTools`. */
   let pageTools: PageToolSource | null = opts.pageTools ?? null;
   let activeSocket: WebSocket | null = null;
@@ -1852,20 +1999,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   // Standing tools passed at create time, so a host that does not build the
   // controller (NexusChatApp with `client`) can still register in-page tools.
   for (const tool of opts.tools || []) {
-    if (tool?.descriptor?.name) tools.set(tool.descriptor.name, tool);
+    if (tool?.descriptor?.name) toolRegistry.registerDescriptor(tool.descriptor, tool.handler);
+  }
+  // Shape-declared client tools (`clientTools`); `discoverable` ones only send
+  // a compact index entry and are bound on demand.
+  for (const tool of opts.clientTools || []) {
+    if (tool?.name && typeof tool.handler === 'function') toolRegistry.register(tool);
   }
 
-  /** Tools from `registerTool` + `tools`, in the `browserFunctionCalls` shape communicate expects. */
-  const registeredToolSchemas = () =>
-    [...tools.values()].map(({ descriptor }) => ({
-      name: descriptor.name,
-      description: descriptor.description || `Client tool ${descriptor.name}`,
-      parameters: {
-        type: 'object',
-        properties: {},
-        ...(descriptor.parameters || {}),
-      } as { type: string; properties?: Record<string, unknown>; required?: string[] },
-    }));
+  /** Pinned client tools, in the `browserFunctionCalls` shape communicate expects. */
+  const registeredToolSchemas = () => toolRegistry.pinnedSchemas();
+
+  /** Discoverable client tools as the compact index sent with a message. */
+  const clientToolIndexEntries = () => toolRegistry.indexEntries();
 
   /** Page-tool schemas for the open screen, in the `browserFunctionCalls` shape. */
   const pageToolSchemas = () => {
@@ -1884,23 +2030,40 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   };
 
   /**
-   * Registered tools run here and resume the turn automatically; anything else
-   * goes to `hooks.onClientToolRequest`, which must call `resumeClientTool`.
+   * Resume a `client_tool` pause with the raw handler result. A `bind` pause
+   * instead answers with `{ extraFunctionSchemas }` so the model can call the
+   * discoverable tool on the next assemble loop.
    */
-  const resolveClientTool = (name: string) =>
-    selectClientToolHandler(name, tools, pageTools);
-
-  const dispatchClientToolRequest = async (req: {
-    callId: string;
-    name: string;
-    arguments: Record<string, unknown>;
-    conversationId: string | null;
-  }) => {
+  const answerClientToolPause = async (
+    req: {
+      callId: string;
+      name: string;
+      arguments: Record<string, unknown>;
+      conversationId: string | null;
+      action: 'request' | 'bind';
+    },
+    registry: ClientToolRegistry,
+  ) => {
+    if (req.action === 'bind') {
+      const indexed = isIndexedClientTool(req.name, registry.indexEntries());
+      const bind = indexed ? registry.bindResult(req.name) : null;
+      await controller.resumeClientTool({
+        callId: req.callId,
+        result: bind ?? { error: `Unknown client tool "${req.name}"` },
+        conversationId: req.conversationId ?? undefined,
+      });
+      return;
+    }
     // Resolution order: registered tool, then page tool, then the host hook.
-    const usedPageTool = !tools.has(req.name) && !!pageTools?.canExecute?.(req.name);
-    const handler = resolveClientTool(req.name);
+    const usedPageTool = !registry.has(req.name) && !!pageTools?.canExecute?.(req.name);
+    const handler = selectClientToolHandler(req.name, registry.map(), pageTools);
     if (!handler) {
-      await opts.hooks?.onClientToolRequest?.(req);
+      await opts.hooks?.onClientToolRequest?.({
+        callId: req.callId,
+        name: req.name,
+        arguments: req.arguments,
+        conversationId: req.conversationId,
+      });
       return;
     }
     let result: unknown;
@@ -1923,6 +2086,66 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       } catch (err) {
         log('client_tool_after_result_failed', { message: String(err), name: req.name });
       }
+    }
+  };
+
+  /**
+   * The turn paused on a one-click card. `client_tool` (and a Plan-mode `write`
+   * client tool's `requiresApproval`) may auto-resume when a handler exists;
+   * `approval` / `mode_switch` always surface to the host so a human decides.
+   */
+  const handlePendingPause = async (req: {
+    kind: PendingPauseKind;
+    callId: string;
+    name: string;
+    arguments: Record<string, unknown>;
+    conversationId: string | null;
+    requiresApproval: boolean;
+    action: 'request' | 'bind';
+  }) => {
+    const card = parsePendingPauseCard(
+      req.kind === 'approval'
+        ? 'approval_request'
+        : req.kind === 'mode_switch'
+          ? 'mode_switch_request'
+          : 'client_tool_request',
+      {
+        callId: req.callId,
+        name: req.name,
+        arguments: req.arguments,
+        ...(req.kind === 'client_tool'
+          ? {
+              access: clientToolAccessOf(toolRegistry.get(req.name)?.descriptor),
+              requiresApproval: req.requiresApproval,
+              action: req.action,
+            }
+          : {}),
+      },
+    );
+    store.setState({
+      streaming: false,
+      pausedCallId: req.callId,
+      pendingPauseKind: req.kind,
+      pendingPause: card,
+    });
+    patchCurrentPanel({ streaming: false, pausedCallId: req.callId });
+    opts.hooks?.onStreamState?.('paused');
+    if (card) opts.hooks?.onPendingPause?.(card);
+
+    if (req.kind === 'client_tool' && !req.requiresApproval) {
+      void answerClientToolPause(
+        {
+          callId: req.callId,
+          name: req.name,
+          arguments: req.arguments,
+          conversationId: req.conversationId,
+          action: req.action,
+        },
+        toolRegistry,
+      ).catch((err) => {
+        log('client_tool_hook_failed', { message: String(err), callId: req.callId, name: req.name });
+        opts.hooks?.onError?.(err);
+      });
     }
   };
 
@@ -2283,42 +2506,45 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         emitDataAccessApprovalOnce(dataAccessApprovalInfoFrom(parsed.data));
         finishPausedTurn();
       }
-      let clientToolPause = false;
-      if (parsed.type === 'client_tool_request') {
-        const data = (parsed.data || {}) as {
-          callId?: string;
-          name?: string;
-          arguments?: Record<string, unknown>;
-        };
+      if (parsed.type === 'mode_changed') {
+        const change = parseModeChangedEvent(parsed.data);
+        if (change) opts.hooks?.onModeChanged?.(change);
+      }
+      let pendingPause = false;
+      if (
+        parsed.type === 'client_tool_request' ||
+        parsed.type === 'approval_request' ||
+        parsed.type === 'mode_switch_request'
+      ) {
+        const data = (parsed.data || {}) as Record<string, unknown>;
         const callId = String(data.callId || '');
-        const name = String(data.name || '');
-        if (callId && name) {
-          clientToolPause = true;
-          store.setState({
-            streaming: false,
-            pausedCallId: callId,
-          });
-          patchCurrentPanel({ streaming: false });
-          opts.hooks?.onStreamState?.('paused');
+        const name = String(data.name || data.command || '');
+        if (callId) {
+          pendingPause = true;
           void Promise.resolve(
-            dispatchClientToolRequest({
+            handlePendingPause({
+              kind: normalizePendingPauseKind(
+                parsed.type === 'client_tool_request' ? data.kind : parsed.type.replace('_request', ''),
+              ),
               callId,
               name,
               arguments:
                 data.arguments && typeof data.arguments === 'object'
-                  ? data.arguments
+                  ? (data.arguments as Record<string, unknown>)
                   : {},
               conversationId: store.getState().conversationId || null,
+              requiresApproval: data.requiresApproval === true,
+              action: data.action === 'bind' ? 'bind' : 'request',
             }),
           ).catch((err) => {
-            log('client_tool_hook_failed', { message: String(err), callId, name });
+            log('pending_pause_failed', { message: String(err), callId, type: parsed.type });
             opts.hooks?.onError?.(err);
           });
         }
       }
       if (parsed.type === 'paused') {
-        // Keep WS open for client-tool resume; other pauses finish the turn.
-        if (!clientToolPause && !store.getState().pausedCallId) {
+        // Keep WS open for a pending-pause resume; other pauses finish the turn.
+        if (!pendingPause && !store.getState().pausedCallId) {
           finishPausedTurn();
         }
       }
@@ -2544,7 +2770,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     streamResolver,
     getConversationSummary,
     registerTool(descriptor, handler) {
-      tools.set(descriptor.name, { descriptor, handler });
+      toolRegistry.registerDescriptor(descriptor, handler);
+    },
+    registerClientTool(input) {
+      toolRegistry.register(input);
+    },
+    getClientToolIndex() {
+      return clientToolIndexEntries();
     },
     setPageTools(source) {
       pageTools = source ?? null;
@@ -3574,6 +3806,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           };
         }>;
         pageFunctionCalls?: string[];
+        /**
+         * Compact index of discoverable client tools for this turn. Defaults to the
+         * registry's discoverable tools; pass `[]` to send none.
+         */
+        clientToolIndex?: ClientToolIndexEntry[];
+        /**
+         * Structured answer to the open `ask_user_choice` question. When present the
+         * server validates it against the stored question and replaces `text`.
+         */
+        questionAnswer?: QuestionAnswer;
         bypassFallback?: boolean;
         /** Empty thread: ask the agent to greet. Do not show a user turn. */
         conversationOpen?: boolean;
@@ -3795,6 +4037,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 ...autoTools.filter((t) => !explicitTools.some((e) => e.name === t.name)),
               ]
             : explicitTools;
+        // Discoverable client tools ride as a compact index (not tool schemas):
+        // the model finds one through search and binds it on demand.
+        const discoverableIndex =
+          command === 'anx.communicate.message.send'
+            ? sendOpts.clientToolIndex ?? clientToolIndexEntries()
+            : sendOpts.clientToolIndex ?? [];
         const pageContext = normalizeHostPageContext(sendOpts.pageContext) ?? hostPageContext;
         // Page pointer (path / tiny prompt / entity ref) from the page-tool source,
         // only when the caller did not set that field for this send.
@@ -3840,6 +4088,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.pageFunctionCalls?.length
             ? { pageFunctionCalls: sendOpts.pageFunctionCalls }
             : {}),
+          ...discoverableIndex.length ? { clientToolIndex: discoverableIndex } : {},
+          ...(sendOpts.questionAnswer ? { questionAnswer: sendOpts.questionAnswer } : {}),
         })) as SendResult;
 
         if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -4324,8 +4574,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         },
       ];
       syncMessagesFromTurns(turns);
-      store.setState({ streaming: true, pausedCallId: null });
-      patchCurrentPanel({ streaming: true });
+      store.setState({
+        streaming: true,
+        pausedCallId: null,
+        pendingPauseKind: null,
+        pendingPause: null,
+      });
+      patchCurrentPanel({ streaming: true, pausedCallId: null, pendingPauseKind: null, pendingPause: null });
       opts.hooks?.onStreamState?.('streaming');
 
       try {
@@ -4356,7 +4611,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 }
                 return;
               }
-              let clientToolPause = false;
+              let pendingPause = false;
               if (
                 parsed.type === 'conversation' &&
                 parsed.data &&
@@ -4384,28 +4639,36 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                   : null;
                 if (command) opts.hooks?.onChatCommand?.(command);
               }
-              if (parsed.type === 'client_tool_request') {
-                const data = (parsed.data || {}) as {
-                  callId?: string;
-                  name?: string;
-                  arguments?: Record<string, unknown>;
-                };
+              if (parsed.type === 'mode_changed') {
+                const change = parseModeChangedEvent(parsed.data);
+                if (change) opts.hooks?.onModeChanged?.(change);
+              }
+              if (
+                parsed.type === 'client_tool_request' ||
+                parsed.type === 'approval_request' ||
+                parsed.type === 'mode_switch_request'
+              ) {
+                const data = (parsed.data || {}) as Record<string, unknown>;
                 const nextCallId = String(data.callId || '');
-                const name = String(data.name || '');
-                if (nextCallId && name) {
-                  clientToolPause = true;
-                  store.setState({ pausedCallId: nextCallId, streaming: false });
-                  patchCurrentPanel({ streaming: false });
-                  opts.hooks?.onStreamState?.('paused');
+                const name = String(data.name || data.command || '');
+                if (nextCallId) {
+                  pendingPause = true;
                   void Promise.resolve(
-                    dispatchClientToolRequest({
+                    handlePendingPause({
+                      kind: normalizePendingPauseKind(
+                        parsed.type === 'client_tool_request'
+                          ? data.kind
+                          : parsed.type.replace('_request', ''),
+                      ),
                       callId: nextCallId,
                       name,
                       arguments:
                         data.arguments && typeof data.arguments === 'object'
-                          ? data.arguments
+                          ? (data.arguments as Record<string, unknown>)
                           : {},
                       conversationId,
+                      requiresApproval: data.requiresApproval === true,
+                      action: data.action === 'bind' ? 'bind' : 'request',
                     }),
                   ).catch((err) => opts.hooks?.onError?.(err));
                 }
@@ -4429,7 +4692,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
                 }
               }
               if (parsed.type === 'paused') {
-                if (!clientToolPause && !store.getState().pausedCallId) {
+                if (!pendingPause && !store.getState().pausedCallId) {
                   store.setState({ streaming: false });
                   patchCurrentPanel({ streaming: false });
                   opts.hooks?.onStreamState?.('paused');
@@ -4536,6 +4799,52 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         opts.hooks?.onError?.(err);
         return { ok: false, message };
       }
+    },
+    resolveApproval(approvalOpts) {
+      return controller.resumeClientTool({
+        callId: approvalOpts.callId,
+        result: {
+          approved: approvalOpts.approved === true,
+          ...(approvalOpts.switchToMode ? { switchToMode: approvalOpts.switchToMode } : {}),
+        },
+        conversationId: approvalOpts.conversationId,
+      });
+    },
+    resolveModeSwitch(switchOpts) {
+      return controller.resumeClientTool({
+        callId: switchOpts.callId,
+        result: {
+          approved: switchOpts.approved === true,
+          ...(switchOpts.to ? { to: switchOpts.to } : {}),
+        },
+        conversationId: switchOpts.conversationId,
+      });
+    },
+    answerQuestion(questionOpts) {
+      const answer = buildQuestionAnswer({
+        questionId: questionOpts.questionId,
+        selectedIds: questionOpts.selectedIds,
+        customText: questionOpts.customText,
+        explanation: questionOpts.explanation,
+      });
+      return controller.sendMessage(
+        answer.selectedIds.join(', ') || answer.customText || '',
+        {
+          conversationId: questionOpts.conversationId,
+          questionAnswer: answer,
+        },
+      );
+    },
+    getPendingPause() {
+      return store.getState().pendingPause ?? null;
+    },
+    seedPendingPause(card) {
+      const next = card ?? null;
+      store.setState({
+        pendingPause: next,
+        pendingPauseKind: next?.kind ?? null,
+        pausedCallId: next?.callId ?? null,
+      });
     },
     applySubAgentRunStates(runs) {
       return applyRunStates(Array.isArray(runs) ? runs : []);

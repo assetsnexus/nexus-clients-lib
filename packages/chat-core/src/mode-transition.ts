@@ -17,6 +17,52 @@
 
 export type ChatExecutionMode = 'ask' | 'plan' | 'agent';
 
+/**
+ * `mode_changed` stream payload — an approved mode switch already applied
+ * server-side. Mirrors inference `ConversationModeService.buildModeChangedEvent`.
+ * The host updates its mode chip from this; it must NOT re-dispatch `set-chat-mode`.
+ */
+export type ChatModeChangedEvent = {
+  conversationId: string;
+  from: ChatExecutionMode;
+  to: ChatExecutionMode;
+  switchedBy: 'user' | 'agent' | 'system';
+  reason: string;
+  catalogRevision: number;
+  /** Plan the switch belongs to, when the target was Plan. */
+  planRef?: string | null;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const asMode = (value: unknown): ChatExecutionMode =>
+  value === 'plan' || value === 'agent' ? value : 'ask';
+
+/** Parse a `mode_changed` stream payload; null when malformed. */
+export function parseModeChangedEvent(data: unknown): ChatModeChangedEvent | null {
+  const d = asRecord(data);
+  if (!d) return null;
+  const conversationId = typeof d.conversationId === 'string' ? d.conversationId : '';
+  if (!conversationId) return null;
+  const switchedBy =
+    d.switchedBy === 'agent' || d.switchedBy === 'system' ? d.switchedBy : 'user';
+  return {
+    conversationId,
+    from: asMode(d.from),
+    to: asMode(d.to),
+    switchedBy,
+    reason: typeof d.reason === 'string' ? d.reason : '',
+    catalogRevision:
+      typeof d.catalogRevision === 'number' && Number.isFinite(d.catalogRevision)
+        ? d.catalogRevision
+        : 0,
+    planRef: typeof d.planRef === 'string' ? d.planRef : null,
+  };
+}
+
 export type ModeTransitionPhase = 'idle' | 'transitioning' | 'settled';
 
 export type ModeTransitionState = {

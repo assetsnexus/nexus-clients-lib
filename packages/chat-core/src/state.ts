@@ -173,4 +173,8 @@ export type PanelState = {
   presence?: ChatRoomPresence[];
   activeCall?: ChatVoiceCallSession | null;
   pausedCallId?: string | null;
+  /** Which rail the paused turn is on. Defaults to `client_tool`. */
+  pendingPauseKind?: 'client_tool' | 'approval' | 'mode_switch' | null;
+  /** Typed card the paused turn renders (same discriminator as `pendingPauseKind`). */
+  pendingPause?: import('./tools/pending-pause.js').PendingPauseCard | null;
 };

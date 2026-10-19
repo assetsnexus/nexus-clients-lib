@@ -133,7 +133,13 @@ export function parseMediaWorkloadId(result: unknown): string | null {
   return typeof r.workloadId === 'string' ? r.workloadId : null;
 }
 
-export type UserChoiceOption = { id: string; label: string };
+export type UserChoiceOption = {
+  id: string;
+  label: string;
+  description?: string;
+  /** At most one option may be marked; the card badges it as recommended. */
+  recommended?: boolean;
+};
 
 export function parseUserChoiceOptions(run: {
   args?: Record<string, unknown>;
@@ -149,5 +155,7 @@ export function parseUserChoiceOptions(run: {
     .map((o) => ({
       id: String(o.id ?? o.label),
       label: String(o.label),
+      ...(typeof o.description === 'string' ? { description: o.description } : {}),
+      ...(o.recommended === true ? { recommended: true } : {}),
     }));
 }

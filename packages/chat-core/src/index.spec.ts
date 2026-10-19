@@ -1593,4 +1593,30 @@ describe('chat-core', () => {
     await chat.streamInit({ conversationId: 'c1' });
     expect(chat.getState().conversationId).toBe('c1');
   });
+
+  it('seeds a pending-pause card from a reload and clears it with null', () => {
+    const chat = createNexusChat({
+      client: { send: async () => ({ ok: true, data: {} }) },
+    });
+    expect(chat.getPendingPause()).toBeNull();
+
+    chat.seedPendingPause({
+      callId: 'c9',
+      kind: 'approval',
+      name: 'refund',
+      command: 'anx.finance.refund',
+      arguments: { orderId: 'o1' },
+      mutationClass: 'business_write',
+      mode: 'plan',
+      preview: { amount: 10 },
+    });
+    expect(chat.getState().pendingPauseKind).toBe('approval');
+    expect(chat.getState().pausedCallId).toBe('c9');
+    expect(chat.getPendingPause()).toMatchObject({ kind: 'approval', command: 'anx.finance.refund' });
+
+    chat.seedPendingPause(null);
+    expect(chat.getPendingPause()).toBeNull();
+    expect(chat.getState().pendingPauseKind).toBeNull();
+    expect(chat.getState().pausedCallId).toBeNull();
+  });
 });

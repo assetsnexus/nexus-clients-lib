@@ -37,10 +37,28 @@ export const DEFAULT_FEATURES: ChatFeatures = {
   adminPanels: false,
 };
 
+/** Access a client tool needs. `read` runs directly; `write` pauses for approval in Plan. */
+export type ChatClientToolAccess = 'read' | 'write';
+
 export type ChatToolDescriptor = {
   name: string;
   description?: string;
   parameters?: Record<string, unknown>;
+  /**
+   * Declared access for a client tool. Defaults to `write` (the safe default):
+   * in Plan mode a `write` tool pauses for one-click approval, a `read` one runs
+   * directly. UI-only — it never unlocks a region command.
+   */
+  access?: ChatClientToolAccess;
+  /**
+   * How the tool reaches the model:
+   * - `pinned` (default): joins `browserFunctionCalls` every send, so the model
+   *   always sees it.
+   * - `discoverable`: only its compact index entry is sent; the model finds it via
+   *   `search_anx_commands` and the SDK answers `bind_client_tool` with the full
+   *   schema on demand.
+   */
+  availability?: 'pinned' | 'discoverable';
 };
 
 export type IoDescriptor =
@@ -336,6 +354,18 @@ export type ChatHooks = {
     arguments: Record<string, unknown>;
     conversationId: string | null;
   }) => void | Promise<void>;
+  /**
+   * An approved `request_mode_switch` resumed the turn under a new mode. The host
+   * updates its mode chip + shared `useModeTransition` from this (never by
+   * re-dispatching `set-chat-mode` — the switch already happened server-side).
+   */
+  onModeChanged?: (event: import('./mode-transition.js').ChatModeChangedEvent) => void;
+  /**
+   * The turn paused on a one-click card the host must render: `approval` (a
+   * forced Plan-mode write), `mode_switch` (a `request_mode_switch` proposal), or
+   * `client_tool` (page tool). Resume the matching rail via the controller.
+   */
+  onPendingPause?: (card: import('./tools/pending-pause.js').PendingPauseCard) => void;
   onStreamState?: (state: string) => void;
   onUsage?: (usage: ChatUsageSnapshot) => void;
   /** Server-side slash command, e.g. `/model` switching the picker. */

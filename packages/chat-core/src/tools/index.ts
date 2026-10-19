@@ -4,3 +4,7 @@ export * from './tool-call-display.js';
 export * from './media-result.js';
 export * from './upload-attachment.js';
 export * from './attachment-ingest.js';
+export * from './pending-pause.js';
+export * from './ask-user-choice.js';
+export * from './plan-card.js';
+export * from './client-tool-registry.js';
