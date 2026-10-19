@@ -26,4 +26,15 @@ describe('context donut', () => {
     expect(contextDonutModel({}).pct).toBeNull();
     expect(contextDonutModel({}).tokenLabel).toBe('—');
   });
+
+  it('labels the active-plan slice', () => {
+    const model = contextDonutModel({
+      snapshot: {
+        dispatchedTokens: 10,
+        dispatchBudgetTokens: 100,
+        categories: [{ category: 'plan', tokens: 10, pct: 100 }],
+      },
+    });
+    expect(model.slices.map((slice) => slice.label)).toEqual(['Active plan']);
+  });
 });

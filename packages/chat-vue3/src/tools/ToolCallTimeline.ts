@@ -77,6 +77,8 @@ export const ToolCallTimeline = defineComponent({
     triggerCheckBack: { type: Function, default: null },
     /** P8-8: shared `useModeTransition` state, owned by the panel — drives the refusal chip's ring. */
     modeTransition: { type: Object, default: null },
+    /** The conversation's open `ask_user_choice` question, when the host knows it. */
+    openQuestion: { type: Object, default: null },
   },
   data() {
     return { expandedAll: false };
@@ -167,11 +169,15 @@ export const ToolCallTimeline = defineComponent({
         return h(AskUserChoiceToolWidget, {
           key: run.id,
           props: {
+            question: this.openQuestion,
             options,
             disabled: this.streaming || run.status === 'running',
             active: this.choiceActive,
           },
-          on: { 'choice-select': this.onChoice },
+          on: {
+            'choice-select': this.onChoice,
+            answer: (payload: unknown) => this.$emit('answer-question', payload),
+          },
         });
       }
       if (run.tool === 'generate_image' || run.tool === 'generate_audio') {

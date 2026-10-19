@@ -17,6 +17,19 @@ const dts = `export {
   parsePresentFileItems,
   parseMediaImages,
   parseUserChoiceOptions,
+  parsePendingPauseCard,
+  parsePendingApprovalCard,
+  parsePendingModeSwitchCard,
+  parsePendingClientToolCard,
+  normalizePendingPauseKind,
+  normalizePendingResumeDecision,
+  parseUserChoiceQuestion,
+  parsePlanPointer,
+  buildQuestionAnswer,
+  questionAnswerIsActionable,
+  userChoiceQuestionIsExpired,
+  parseModeChangedEvent,
+  modeLabel,
 } from '@nexus/chat-core';
 export type {
   NexusChat,
@@ -28,6 +41,17 @@ export type {
   MediaCarouselImage,
   UserChoiceOption,
   ScheduleCheckBackResult,
+  PendingPauseCard,
+  PendingPauseKind,
+  PendingApprovalCard,
+  PendingModeSwitchCard,
+  PendingClientToolCard,
+  UserChoiceQuestion,
+  UserChoiceQuestionOption,
+  QuestionAnswer,
+  PlanPointer,
+  ChatModeChangedEvent,
+  ChatExecutionMode,
 } from '@nexus/chat-core';
 
 export declare function renderChatMarkdown(text: string): string;
@@ -36,6 +60,7 @@ export declare const CHAT_MARKDOWN_ROOT_CLASS: string;
 
 export declare const MediaToolWidget: Record<string, unknown>;
 export declare const AskUserChoiceToolWidget: Record<string, unknown>;
+export declare const PendingPauseCardWidget: Record<string, unknown>;
 export declare const ScheduleCheckBackToolWidget: Record<string, unknown>;
 export declare const StorageFileToolWidget: Record<string, unknown>;
 export declare const DefaultToolRunWidget: Record<string, unknown>;

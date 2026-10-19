@@ -1,4 +1,8 @@
-import type { ChatToolDescriptor, PageToolSource } from '@nexus/chat-core';
+import type {
+  ChatClientToolAccess,
+  ChatToolDescriptor,
+  PageToolSource,
+} from '@nexus/chat-core';
 
 /** Minimal controller surface the prop reapplication needs. */
 export type PageToolsPropTarget = {
@@ -6,11 +10,29 @@ export type PageToolsPropTarget = {
     descriptor: ChatToolDescriptor,
     handler: (args: unknown) => Promise<unknown> | unknown,
   ): void;
+  registerClientTool?(input: {
+    name?: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    access?: ChatClientToolAccess;
+    availability?: 'pinned' | 'discoverable';
+    handler: (args: unknown) => Promise<unknown> | unknown;
+  }): void;
   setPageTools?(source: PageToolSource | null): void;
 };
 
 export type StandingToolProp = {
   descriptor: ChatToolDescriptor;
+  handler: (args: unknown) => Promise<unknown> | unknown;
+};
+
+/** A client tool declared by shape (lets a host mark one `discoverable`). */
+export type ClientToolProp = {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  access?: ChatClientToolAccess;
+  availability?: 'pinned' | 'discoverable';
   handler: (args: unknown) => Promise<unknown> | unknown;
 };
 
@@ -28,6 +50,30 @@ export function applyToolsProps(
 ): void {
   for (const tool of tools || []) {
     if (tool?.descriptor?.name) chat.registerTool(tool.descriptor, tool.handler);
+  }
+}
+
+/**
+ * Push shape-declared client tools onto the controller. A `discoverable` entry
+ * keeps its schema off the wire (only the index rides along) and is bound on
+ * demand; `registerClientTool` is optional on the target so an older controller
+ * still compiles.
+ */
+export function applyClientToolsProps(
+  chat: PageToolsPropTarget,
+  tools: ClientToolProp[] | undefined | null,
+): void {
+  for (const tool of tools || []) {
+    if (tool?.name && typeof tool.handler === 'function') {
+      chat.registerClientTool?.({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+        access: tool.access,
+        availability: tool.availability,
+        handler: tool.handler,
+      });
+    }
   }
 }
 

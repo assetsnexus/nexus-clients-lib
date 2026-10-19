@@ -251,9 +251,11 @@
                 :choice-active="isChoiceActive(turn)"
                 :poll-workload="pollWorkload"
                 :trigger-check-back="triggerCheckBack"
+                :open-question="openQuestion"
                 @approve="$emit('approve-tool', $event)"
                 @revert="$emit('revert-tool', $event)"
                 @choice-select="$emit('choice-select', $event)"
+                @answer-question="$emit('answer-question', $event)"
                 @check-back-resume="$emit('check-back-resume')"
                 @subagent-pause="$emit('subagent-pause', $event)"
                 @subagent-cancel="$emit('subagent-cancel', $event)"
@@ -302,6 +304,11 @@
         />
 
         <div class="nexus-chat-panel__approvals">
+          <pending-pause-card-widget
+            v-if="pendingPause"
+            :card="pendingPause"
+            @resolve="$emit('resolve-pending-pause', $event)"
+          />
           <slot name="data-access" :panel="resolvedPanel" />
         </div>
 
@@ -362,7 +369,7 @@
 <script>
 import { collectSubAgentRuns, visibleSubAgentStripRuns, formatTurnSenderLine } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
-import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip } from '../tools';
+import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, PendingPauseCardWidget } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
 import RealtimeCallPanel from '../voice/RealtimeCallPanel.vue';
 import LinkedSubChatBanner from './LinkedSubChatBanner.vue';
@@ -408,6 +415,7 @@ export default {
   name: 'NexusChatPanel',
   components: {
     ToolCallTimeline,
+    PendingPauseCardWidget,
     GroupRoomLeaveSection,
     RealtimeCallPanel,
     SubAgentsStrip,
@@ -444,6 +452,19 @@ export default {
     agentId: { type: String, default: null },
     virtualAgentId: { type: String, default: null },
     fallbackTtsModelId: { type: String, default: null },
+    /**
+     * The conversation's open `ask_user_choice` question (from
+     * `anx.communicate.conversations.get`). The question widget renders it
+     * typed and emits `answer-question`; the host submits the structured answer.
+     */
+    openQuestion: { type: Object, default: null },
+    /**
+     * Active pending-pause card (client tool approval, plan-mode write approval,
+     * or mode-switch approval). `PendingPauseCardWidget` renders it and emits
+     * `resolve`; the host forwards it to `chat.resolveApproval` /
+     * `chat.resolveModeSwitch` / `chat.answerClientToolPause`.
+     */
+    pendingPause: { type: Object, default: null },
   },
   data() {
     return {

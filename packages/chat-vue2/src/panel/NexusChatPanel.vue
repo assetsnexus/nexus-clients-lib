@@ -503,9 +503,11 @@
                 :resolve-stored-file="resolveStoredFile"
                 :trigger-check-back="triggerCheckBack"
                 :mode-transition="modeTransitionState"
+                :open-question="openQuestion"
                 @approve="$emit('approve-tool', $event)"
                 @revert="$emit('revert-tool', $event)"
                 @choice-select="$emit('choice-select', $event)"
+                @answer-question="$emit('answer-question', $event)"
                 @check-back-resume="$emit('check-back-resume')"
                 @switch-mode="onSwitchModeRequested"
                 @subagent-pause="$emit('subagent-pause', $event)"
@@ -587,6 +589,11 @@
         />
 
         <div class="nexus-chat-panel__approvals">
+          <pending-pause-card-widget
+            v-if="pendingPause"
+            :card="pendingPause"
+            @resolve="$emit('resolve-pending-pause', $event)"
+          />
           <slot name="data-access" :panel="resolvedPanel" />
         </div>
 
@@ -702,7 +709,7 @@ import {
   buildPermissionSummary,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
-import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, WorkingOnStrip, PermissionSummaryCard } from '../tools';
+import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, WorkingOnStrip, PermissionSummaryCard, PendingPauseCardWidget } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
 import ComposerAttachmentRail from './ComposerAttachmentRail.vue';
 import RealtimeCallPanel from '../voice/RealtimeCallPanel.vue';
@@ -764,6 +771,7 @@ export default {
   name: 'NexusChatPanel',
   components: {
     ToolCallTimeline,
+    PendingPauseCardWidget,
     GroupRoomLeaveSection,
     RealtimeCallPanel,
     SessionSummaryChips,
@@ -832,6 +840,19 @@ export default {
     autoSend: { type: Boolean, default: true },
     /** P8-8/C-4e: shared mode-transition timer duration — default is a confirmation affordance, not a spinner. */
     modeTransitionDurationMs: { type: Number, default: 600 },
+    /**
+     * The conversation's open `ask_user_choice` question (from
+     * `anx.communicate.conversations.get`). The question widget renders it
+     * typed and emits `answer-question`; the host submits the structured answer.
+     */
+    openQuestion: { type: Object, default: null },
+    /**
+     * Active pending-pause card (client tool approval, plan-mode write approval,
+     * or mode-switch approval). `PendingPauseCardWidget` renders it and emits
+     * `resolve`; the host forwards it to `chat.resolveApproval` /
+     * `chat.resolveModeSwitch` / `chat.answerClientToolPause`.
+     */
+    pendingPause: { type: Object, default: null },
     /** Session rows used to resolve parent conversation title in subagent chats. */
     sessions: { type: Array, default: () => [] },
     /** Room title, else agent nickname. Empty keeps the contact-derived header name. */

@@ -6,6 +6,7 @@ const CONTEXT_CATEGORY_LABELS: Record<string, string> = {
   identity: 'Identity & persona',
   instructions: 'Instructions & tool guidance',
   world_knowledge: 'World knowledge',
+  plan: 'Active plan',
   page_context: 'Page / session context',
   page_tools: 'Page tools',
   workspace: 'Workspace',

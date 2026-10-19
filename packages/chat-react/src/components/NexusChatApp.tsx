@@ -20,6 +20,7 @@ import {
   type AppRouteContext,
   type PageToolSource,
   type ChatToolDescriptor,
+  type UserChoiceQuestion,
   type LockedAgent,
   type NexusChat,
   type ReasoningEffortLevel,
@@ -39,7 +40,12 @@ import { useChatPanel } from '../hooks/useChatState.js';
 import { useOutgoingQueue } from '../hooks/useOutgoingQueue.js';
 import { applyPrefillComposer } from '../bridge/applyPrefillComposer.js';
 import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bridge/host-bridge.js';
-import { applyPageToolsProp, applyToolsProps } from '../page-tools/apply-page-tools-props.js';
+import {
+  applyClientToolsProps,
+  applyPageToolsProp,
+  applyToolsProps,
+  type ClientToolProp,
+} from '../page-tools/apply-page-tools-props.js';
 import { ContactList } from './ContactList.js';
 import { PastConversationList } from './PastConversationList.js';
 import { ThreadView } from './ThreadView.js';
@@ -82,6 +88,8 @@ import type { PickerModel } from '../models/picker-types.js';
 import { FileViewer, type FileViewerTab } from './FileViewer.js';
 import { type WorkspaceRow } from './workspace/WorkspaceStrip.js';
 import { WorkspacePopup } from './workspace/WorkspacePopup.js';
+import { PendingPauseCardView } from './grants/PendingPauseCards.js';
+import { AskUserChoiceWidget, PlanCardView, planFromPointer } from './AskUserChoiceWidget.js';
 import {
   ClientToolGrantCard,
   DataAccessPromptCard,
@@ -175,6 +183,11 @@ export type NexusChatAppProps = {
     handler: (args: unknown) => Promise<unknown> | unknown;
   }>;
   /**
+   * Client tools declared by shape; `availability: 'discoverable'` keeps the
+   * schema off the wire and binds it on demand. Re-registered on prop change.
+   */
+  clientTools?: ClientToolProp[] | null;
+  /**
    * Page tools for the open screen (sitemap search, navigation, per-screen
    * instructions with tool calls). Swapped with `setPageTools` when the route
    * changes, without rebuilding the controller.
@@ -208,6 +221,16 @@ export type NexusChatAppProps = {
    * are derived from the thread; omitted ledger => runs only.
    */
   workingOnLedger?: import('../chrome/chat-chrome-cards.js').WorkingOnLedgerInput[];
+  /**
+   * The conversation's open `ask_user_choice` question (from
+   * `anx.communicate.conversations.get`). When set, the answer card renders
+   * above the thread; the host clears it after the answer lands.
+   */
+  openQuestion?: UserChoiceQuestion | null;
+  /** The conversation's active plan pointer, rendered as a compact plan card. */
+  activePlan?: import('@nexus/chat-core').PlanPointer | null;
+  /** Called after the question answer is submitted (host clears `openQuestion`). */
+  onQuestionAnswered?: () => void;
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -275,7 +298,11 @@ export function NexusChatApp({
   conversationList,
   pageContext = null,
   tools: toolsProp,
+  clientTools: clientToolsProp = null,
   pageTools: pageToolsProp = null,
+  openQuestion = null,
+  activePlan = null,
+  onQuestionAnswered,
   onError,
   displayName: displayNameProp,
   avatarUrl: avatarUrlProp,
@@ -315,6 +342,8 @@ export function NexusChatApp({
   // rebuild the controller; the effects below swap them in place.
   const toolsPropRef = useRef(toolsProp);
   toolsPropRef.current = toolsProp;
+  const clientToolsPropRef = useRef(clientToolsProp);
+  clientToolsPropRef.current = clientToolsProp;
   const pageToolsPropRef = useRef(pageToolsProp);
   pageToolsPropRef.current = pageToolsProp;
   const lockedAgent = useMemo(() => {
@@ -379,6 +408,14 @@ export function NexusChatApp({
         await createOptions?.hooks?.onClientToolRequest?.(req);
         await uiHooksRef.current.onClientToolRequest?.(req);
       },
+      onPendingPause: (card) => {
+        createOptions?.hooks?.onPendingPause?.(card);
+        uiHooksRef.current.onPendingPause?.(card);
+      },
+      onModeChanged: (event) => {
+        createOptions?.hooks?.onModeChanged?.(event);
+        uiHooksRef.current.onModeChanged?.(event);
+      },
       onError: (err) => {
         createOptions?.hooks?.onError?.(err);
         const info = chatFailureInfo(err);
@@ -405,6 +442,9 @@ export function NexusChatApp({
       // Register standing tools + page tools when this host builds the
       // controller, so a `client`-only mount can still inject in-page tools.
       tools: toolsPropRef.current?.length ? toolsPropRef.current : createOptions?.tools,
+      clientTools: clientToolsPropRef.current?.length
+        ? clientToolsPropRef.current
+        : createOptions?.clientTools,
       pageTools: pageToolsPropRef.current ?? createOptions?.pageTools ?? null,
     });
   }, [chatProp, clientProp, createOptions, features, lockedAgent, fallbackTransport]);
@@ -423,6 +463,11 @@ export function NexusChatApp({
   useEffect(() => {
     applyToolsProps(chat, toolsPropRef.current);
   }, [chat, toolsProp]);
+
+  // Same for shape-declared client tools (pinned + discoverable).
+  useEffect(() => {
+    applyClientToolsProps(chat, clientToolsPropRef.current);
+  }, [chat, clientToolsProp]);
 
   const client = clientProp || createOptions?.client;
   const [fundingGate, setFundingGate] = useState<FundingGateState>(initialFundingGate());
@@ -448,6 +493,9 @@ export function NexusChatApp({
   }, [client, agentTarget]);
 
   const { state, panel } = useChatPanel(chat);
+  // Server-paused one-click card (Plan-write approval / mode switch / gated
+  // client tool). `getPendingPause` mirrors `state.pendingPause`.
+  const pendingPause = state.pendingPause ?? null;
   const [sidebarTab, setSidebarTab] = useState<'contacts' | 'rooms'>('contacts');
   const [sheetContactId, setSheetContactId] = useState<string | null>(null);
   const [route, setRoute] = useState<'chat' | 'scene' | 'admin'>('chat');
@@ -1163,8 +1211,24 @@ export function NexusChatApp({
                   onSca={handleSca}
                 />
               ) : null}
+              {pendingPause ? (
+                <PendingPauseCardView
+                  card={pendingPause}
+                  chat={chat}
+                  onResolved={() => undefined}
+                />
+              ) : null}
+              {openQuestion ? (
+                <AskUserChoiceWidget
+                  question={openQuestion}
+                  chat={chat}
+                  conversationId={conversationId}
+                  onAnswered={onQuestionAnswered}
+                />
+              ) : null}
             </div>
           ) : null}
+          {activePlan ? <PlanCardView plan={planFromPointer(activePlan)} /> : null}
           {presentation.mountApprovals ? <ApprovalsStrip chat={chat} turns={columnTurns} /> : null}
           {presentation.mountSubagents ? (
             <SubAgentsStrip chat={chat} client={client} turns={columnTurns} />
@@ -1481,8 +1545,24 @@ export function NexusChatApp({
                   onSca={handleSca}
                 />
               ) : null}
+              {pendingPause ? (
+                <PendingPauseCardView
+                  card={pendingPause}
+                  chat={chat}
+                  onResolved={() => undefined}
+                />
+              ) : null}
+              {openQuestion ? (
+                <AskUserChoiceWidget
+                  question={openQuestion}
+                  chat={chat}
+                  conversationId={conversationId}
+                  onAnswered={onQuestionAnswered}
+                />
+              ) : null}
             </div>
             ) : null}
+            {activePlan ? <PlanCardView plan={planFromPointer(activePlan)} /> : null}
             {presentation.mountApprovals ? (
               <ApprovalsStrip chat={chat} turns={panel?.turns || state.turns} />
             ) : null}

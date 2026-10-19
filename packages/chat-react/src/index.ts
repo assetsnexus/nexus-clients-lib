@@ -98,6 +98,18 @@ export {
   PermissionElevationDock,
   ScaRequiredBanner,
 } from './components/grants/GrantCards.js';
+export { PendingPauseCardView } from './components/grants/PendingPauseCards.js';
+export {
+  AskUserChoiceWidget,
+  PlanCardView,
+  planFromPointer,
+} from './components/AskUserChoiceWidget.js';
+export type { ClientToolProp } from './page-tools/apply-page-tools-props.js';
+export {
+  applyToolsProps,
+  applyClientToolsProps,
+  applyPageToolsProp,
+} from './page-tools/apply-page-tools-props.js';
 export { CheckBackCard } from './components/grants/CheckBackCard.js';
 export {
   pendingElevationPrompt,
@@ -202,6 +214,14 @@ export {
   DEFAULT_FEATURES,
   findChatContact,
   createVoiceModeState,
+  modeLabel,
+  parsePendingPauseCard,
+  parseModeChangedEvent,
+  parseUserChoiceQuestion,
+  parsePlanCard,
+  parsePlanPointer,
+  planProgressLabel,
+  useModeTransition,
 } from '@nexus/chat-core';
 export type {
   NexusChat,
@@ -216,4 +236,18 @@ export type {
   PageToolSource,
   PageToolSchema,
   PageToolPointer,
+  PendingPauseCard,
+  PendingApprovalCard,
+  PendingModeSwitchCard,
+  PendingClientToolCard,
+  PendingPauseKind,
+  ChatClientToolAccess,
+  ChatModeChangedEvent,
+  ChatExecutionMode,
+  UserChoiceQuestion,
+  UserChoiceQuestionOption,
+  QuestionAnswer,
+  PlanPointer,
+  PlanCard,
+  PlanTodoItem,
 } from '@nexus/chat-core';

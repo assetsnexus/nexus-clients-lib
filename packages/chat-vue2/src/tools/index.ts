@@ -1,5 +1,6 @@
 export { MediaToolWidget } from './MediaToolWidget';
 export { AskUserChoiceToolWidget } from './AskUserChoiceToolWidget';
+export { PendingPauseCardWidget } from './PendingPauseCardWidget';
 export { ScheduleCheckBackToolWidget } from './ScheduleCheckBackToolWidget';
 export { StorageFileToolWidget } from './StorageFileToolWidget';
 export { DefaultToolRunWidget } from './DefaultToolRunWidget';
