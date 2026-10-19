@@ -19,6 +19,7 @@ export type ChatFeatures = {
 
 /** Intentionally NOT part of ChatFeatures — AI disclosure cannot be disabled. */
 export const AI_DISCLOSURE_REQUIRED = true as const;
+export const CONTACT_BANNED_CODE = 'CONTACT_BANNED' as const;
 
 export const DEFAULT_FEATURES: ChatFeatures = {
   contacts: true,
@@ -283,6 +284,16 @@ export type ChatSendOutcomeCode =
   | 'stream_init'
   | 'exception';
 
+export type ChatWakeSurfaceStateSnapshot = {
+  state: 'off' | 'wake_listening' | 'opening' | 'active' | 'unavailable' | 'suspended';
+  listening: boolean;
+  micActive: boolean;
+  optedIn: boolean;
+  phrase: string | null;
+  message: string | null;
+  surface: string;
+};
+
 export type ChatHooks = {
   onScaRequired?: (info: { authRequestId: string | null; command: string }) => void;
   onDataAccessApproval?: (info: unknown) => void;
@@ -344,6 +355,11 @@ export type ChatHooks = {
     callSid: string | null;
     mode: 'browser' | 'inbound' | 'outbound' | null;
   }) => void;
+  /**
+   * Plan Part W2 — idle wake-word surface state (`off | wake_listening |
+   * opening | active | unavailable | suspended`). Drives the mic indicator.
+   */
+  onWakeStateChange?: (snapshot: ChatWakeSurfaceStateSnapshot) => void;
 };
 
 export type ChatContact = {

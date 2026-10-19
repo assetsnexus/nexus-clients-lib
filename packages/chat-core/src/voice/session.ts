@@ -18,6 +18,7 @@ import {
   extractUserTranscript,
   parseRealtimeDataChannelMessage,
 } from './transcript.js';
+import { buildRealtimeTurnDetection } from './realtime-vad.js';
 import type {
   BrowserCallRuntimeOptions,
   BrowserRealtimeCallRuntime,
@@ -384,14 +385,8 @@ export class BrowserCallSession {
         type: 'realtime',
         audio: {
           input: {
-            turn_detection: {
-              type: 'server_vad',
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 700,
-              create_response: true,
-              interrupt_response: true,
-            },
+            // Plan Part C14 — shared, test-enforced barge-in defaults.
+            turn_detection: buildRealtimeTurnDetection(),
           },
         },
       },

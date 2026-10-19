@@ -1,14 +1,42 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ParticipantPresenceV1 } from '../presence/participant-presence.js';
+import {
+  readEmbodimentProfile,
+  resolveEmbodimentFace,
+  embodimentLipSyncEnabled,
+} from './embodiment-playback.js';
 
 /** Same CDN sample as @nexus/character-kit DEFAULT_SAMPLE_VRM (avoid importing three into this chunk). */
 export const FALLBACK_VOICE_VRM =
   'https://cdn.jsdelivr.net/gh/pixiv/three-vrm@dev/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm';
 
-type CompanionHostLike = {
+export type CompanionHostLike = {
   speakWithLipSync: (stream: MediaStream, ctx?: AudioContext) => Promise<void>;
   stopLipSync: () => void;
   ensureLipSync?: (ctx?: AudioContext) => Promise<unknown>;
+  /** Plan Part C1 — play inline embodiment tags from assistant text. */
+  playInlineTags?: (
+    text: string,
+    opts?: { enabled?: boolean; source?: string; locomotionOnly?: boolean },
+  ) => Promise<unknown>;
+  /** Plan Part C1 — embodiment-aware variant (applies face caps + zen mode). */
+  playEmbodimentInlineTags?: (
+    text: string,
+    opts?: { enabled?: boolean; source?: string; locomotionOnly?: boolean; face?: 'public' | 'owner' },
+  ) => Promise<unknown>;
+  /** Plan Part C1 — greeting / farewell / onListen / onThink routine. */
+  playEmbodimentRoutine?: (
+    name: string,
+    opts?: { source?: string; face?: 'public' | 'owner' },
+  ) => Promise<boolean>;
+  setEmbodiment?: (
+    profile: Record<string, unknown> | null,
+    opts?: { face?: 'public' | 'owner' },
+  ) => { moods: string[]; mood: string | null };
+  setEmbodimentFace?: (face: 'public' | 'owner') => void;
+  getEmbodimentFace?: () => 'public' | 'owner';
+  pausePresence?: (reason?: string) => void;
+  resumePresence?: () => void;
 };
 
 type CharacterReactModule = {
@@ -18,6 +46,8 @@ type CharacterReactModule = {
     mood?: string;
     clothes?: unknown;
     lipSyncEnabled?: boolean;
+    embodiment?: Record<string, unknown> | null;
+    embodimentFace?: 'public' | 'owner';
     className?: string;
     style?: React.CSSProperties;
     onHostReady?: (host: CompanionHostLike | null) => void;
@@ -28,8 +58,11 @@ type CharacterReactModule = {
     mood?: string;
     clothes?: unknown;
     lipSyncEnabled?: boolean;
+    embodiment?: Record<string, unknown> | null;
   };
 };
+
+export type VoiceAvatarHost = CompanionHostLike;
 
 export type VoiceAvatarCanvasProps = {
   presence?: ParticipantPresenceV1 | null;
@@ -86,7 +119,10 @@ export function VoiceAvatarCanvas({
 
   useEffect(() => {
     if (!host) return;
-    const lipEnabled = presence?.settings?.lip_sync_enabled !== false;
+    // Embodiment profile can force lip-sync off; presence setting wins otherwise.
+    const profileLip = embodimentLipSyncEnabled(readEmbodimentProfile(presence));
+    const lipEnabled =
+      profileLip === false ? false : presence?.settings?.lip_sync_enabled !== false;
     if (!lipEnabled || !playbackStream) {
       host.stopLipSync();
       return;
@@ -131,6 +167,8 @@ export function VoiceAvatarCanvas({
 
   const vrmUrl = fromPresence?.vrmUrl || FALLBACK_VOICE_VRM;
   const CompanionCanvas = mod.CompanionCanvas;
+  const embodimentProfile = readEmbodimentProfile(presence);
+  const face = resolveEmbodimentFace(presence);
 
   return (
     <CompanionCanvas
@@ -139,6 +177,8 @@ export function VoiceAvatarCanvas({
       mood={fromPresence?.mood || 'neutral'}
       clothes={fromPresence?.clothes}
       lipSyncEnabled={fromPresence?.lipSyncEnabled !== false}
+      embodiment={embodimentProfile ?? fromPresence?.embodiment ?? null}
+      embodimentFace={face}
       className={className}
       style={{ width: '100%', height: '100%', minHeight: 220, ...style }}
       onHostReady={handleHostReady}

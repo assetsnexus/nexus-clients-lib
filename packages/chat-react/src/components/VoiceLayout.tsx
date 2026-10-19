@@ -11,6 +11,14 @@ import { ThreadView } from './ThreadView.js';
 import { VoiceAvatarCanvas } from './VoiceAvatarCanvas.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import {
+  playAssistantEmbodiment,
+  playSessionRoutine,
+  resolveEmbodimentFace,
+  unplayedAssistantTurns,
+} from './embodiment-playback.js';
+import { WakeMicIndicator } from './WakeMicIndicator.js';
+import { readWakeWordConfig, type WakeSurfaceStateSnapshot } from './wake-word-chrome.js';
+import {
   createPresenceStore,
   readPresenceFromProfile,
   type ParticipantPresenceV1,
@@ -76,9 +84,78 @@ export function VoiceLayout({
     [chat],
   );
 
+  // Plan Part W2/W3 — idle wake listening ahead of the call. A wake only opens
+  // the voice session; it never authenticates or approves anything. The config
+  // is opt-in and tolerant of an absent `presence.wakeWord`.
+  const [wakeSnapshot, setWakeSnapshot] = useState<WakeSurfaceStateSnapshot | null>(null);
+  useEffect(() => {
+    if (typeof chat.subscribeWakeState !== 'function') return;
+    const unsubscribe = chat.subscribeWakeState(setWakeSnapshot);
+    setWakeSnapshot(chat.getWakeState());
+    return unsubscribe;
+  }, [chat]);
+
+  useEffect(() => {
+    if (typeof chat.setWakeSurfaceOpen !== 'function') return;
+    chat.setWakeSurfaceOpen(true);
+    return () => chat.setWakeSurfaceOpen(false);
+  }, [chat]);
+
+  useEffect(() => {
+    const agentId = contact?.agentId || contact?.id || null;
+    if (typeof chat.setWakeAgentId === 'function') chat.setWakeAgentId(agentId);
+  }, [chat, contact?.agentId, contact?.id]);
+
   const presence =
     presenceProp ||
     (contact ? presenceStore.get(contact.id) || readPresenceFromProfile(contact) : null);
+
+  useEffect(() => {
+    if (typeof chat.configureWake !== 'function') return;
+    const config = readWakeWordConfig(presence);
+    // Install the agent-level config only. The on-device engine is injected by
+    // the host (`webview-host.tsx` → `loadWakeEngine` → `createNexusChat`), so we
+    // never replace it here (a bare engine here could downgrade a real one to a
+    // stub). Absent engine => wake stays `off`/`unavailable`, which is safe.
+    chat.configureWake(config ?? null);
+  }, [chat, presence?.wakeWord]);
+
+  // Plan Part C1 — embodiment playback state.
+  const embodimentHostRef = useRef<import('./VoiceAvatarCanvas.js').VoiceAvatarHost | null>(null);
+  const playedAssistantTurns = useRef<Set<string>>(new Set());
+  const [voiceHostTick, setVoiceHostTick] = useState(0);
+  const embodimentFace = resolveEmbodimentFace(presence);
+  const handleVoiceHostReady = useCallback(
+    (next: import('./VoiceAvatarCanvas.js').VoiceAvatarHost | null) => {
+      embodimentHostRef.current = next;
+      setVoiceHostTick((n) => n + 1);
+    },
+    [],
+  );
+
+  // Play inline tags for each new assistant turn (greeting fires on live).
+  useEffect(() => {
+    const host = embodimentHostRef.current;
+    if (!host) return;
+    const pending = unplayedAssistantTurns(turns, playedAssistantTurns.current);
+    for (const turn of pending) {
+      playAssistantEmbodiment(host, turn.text, { face: embodimentFace, profile: presence?.embodiment });
+    }
+  }, [turns, voiceHostTick, embodimentFace, presence?.embodiment]);
+
+  // Greeting on session open, farewell on session close.
+  const prevLiveRef = useRef(false);
+  useEffect(() => {
+    const host = embodimentHostRef.current;
+    if (!host) return;
+    const live = surface.status === 'live' || surface.status === 'connecting';
+    if (live && !prevLiveRef.current) {
+      playSessionRoutine(host, 'greeting', { face: embodimentFace });
+    } else if (!live && prevLiveRef.current) {
+      playSessionRoutine(host, 'farewell', { face: embodimentFace });
+    }
+    prevLiveRef.current = live;
+  }, [surface.status, voiceHostTick, embodimentFace]);
 
   const emitPlayback = useCallback(
     (
@@ -244,6 +321,7 @@ export function VoiceLayout({
             presence={presence}
             playbackStream={playbackStream}
             audioContext={audioContext}
+            onHostReady={handleVoiceHostReady}
           />
         ) : contact?.avatarUrl ? (
           <CachedAvatarImage
@@ -259,7 +337,16 @@ export function VoiceLayout({
   );
 
   const controls = (
-    <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+      {wakeSnapshot ? (
+        <WakeMicIndicator
+          snapshot={wakeSnapshot}
+          onOptIn={() => {
+            void chat.optInWake?.();
+          }}
+          onOptOut={() => chat.optOutWake?.()}
+        />
+      ) : null}
       {(
         [
           ['background', 'Background'],

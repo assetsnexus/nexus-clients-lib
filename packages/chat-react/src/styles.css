@@ -2154,3 +2154,55 @@
 .nexus-chat__model-facts strong {
   font-weight: 600;
 }
+
+/* Plan Part W3 — wake-word mic indicator. The dot only animates when a real
+   on-device detector is armed (never for the stub engine). */
+.nexus-chat__wake-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nexus-chat__wake-dot--pulse {
+  animation: nexus-chat-wake-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes nexus-chat-wake-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--nx-chat-accent, #5b8def) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--nx-chat-accent, #5b8def) 0%, transparent);
+  }
+}
+
+.nexus-chat__wake-popover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nexus-chat__wake-dot--pulse {
+    animation: none;
+  }
+}
+
+/* Plan Part C5 / C9 — permission summary + "working on" chrome. */
+.nexus-chat__permission-card > summary {
+  list-style: none;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.nexus-chat__permission-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nexus-chat__permission-card > div[data-nexus-surface='permission-summary'] {
+  margin-top: 6px;
+}
+
+.nexus-chat__chip--warn {
+  border-color: color-mix(in srgb, #d29922 55%, var(--nx-chat-border, #2a2f3d));
+  color: #e3b341;
+}

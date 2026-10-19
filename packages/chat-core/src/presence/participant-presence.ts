@@ -13,6 +13,13 @@ export type ParticipantPresenceV1 = {
   clothes?: unknown;
   fishVoiceId?: string | null;
   voiceId?: string | null;
+  /**
+   * Plan Part C1 — agent embodiment profile (vrmUrl, gestureManifestUrl,
+   * routines, faces, zen…). Tolerant: absent means "keep current behaviour".
+   */
+  embodiment?: Record<string, unknown> | null;
+  /** Part W — agent-level wake-word config, tolerant / opt-in. */
+  wakeWord?: Record<string, unknown> | null;
   settings?: {
     lip_sync_enabled?: boolean;
     status_motions?: unknown;
@@ -59,6 +66,10 @@ export function parseParticipantPresenceV1(raw: unknown): ParticipantPresenceV1 
     doc.fishVoiceId = raw.fishVoiceId;
   }
   if (typeof raw.voiceId === 'string' || raw.voiceId === null) doc.voiceId = raw.voiceId;
+  if (isRecord(raw.embodiment)) doc.embodiment = raw.embodiment;
+  else if (raw.embodiment === null) doc.embodiment = null;
+  if (isRecord(raw.wakeWord)) doc.wakeWord = raw.wakeWord;
+  else if (raw.wakeWord === null) doc.wakeWord = null;
   if (isRecord(raw.settings)) {
     doc.settings = {
       lip_sync_enabled:
@@ -101,6 +112,8 @@ export function mergeParticipantPresenceV1(
     clothes: b.clothes !== undefined ? b.clothes : a.clothes,
     fishVoiceId: b.fishVoiceId !== undefined ? b.fishVoiceId : a.fishVoiceId,
     voiceId: b.voiceId !== undefined ? b.voiceId : a.voiceId,
+    embodiment: b.embodiment !== undefined ? b.embodiment : a.embodiment,
+    wakeWord: b.wakeWord !== undefined ? b.wakeWord : a.wakeWord,
     settings: {
       ...(a.settings || {}),
       ...(b.settings || {}),

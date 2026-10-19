@@ -14,6 +14,69 @@ export type { VoiceAvatarCanvasProps } from './components/VoiceAvatarCanvas.js';
 export { RoomsPanel } from './components/RoomsPanel.js';
 export { ApprovalsStrip } from './components/ApprovalsStrip.js';
 export { SubAgentsStrip } from './components/SubAgentsStrip.js';
+// Plan Part C quick wins (C5 / C8 / C9).
+export { PermissionSummaryCard } from './components/PermissionSummaryCard.js';
+export type { PermissionSummaryCardProps } from './components/PermissionSummaryCard.js';
+export { ExplainActionChip } from './components/ExplainActionChip.js';
+export type { ExplainActionChipProps } from './components/ExplainActionChip.js';
+export { WorkingOnStrip } from './components/WorkingOnStrip.js';
+export type { WorkingOnStripProps } from './components/WorkingOnStrip.js';
+// Plan Part W3 — wake-word mic indicator + opt-in toggle.
+export { WakeMicIndicator } from './components/WakeMicIndicator.js';
+export type { WakeMicIndicatorProps } from './components/WakeMicIndicator.js';
+export { loadWakeEngine, wakeEngineAvailable } from './components/wake-engine-bootstrap.js';
+export type { WakeEngineChoice } from './components/wake-engine-bootstrap.js';
+export {
+  WAKE_NOT_AUTH_COPY,
+  readWakeWordConfig,
+  wakeIndicatorFacts,
+  wakeIndicatorView,
+  wakeToggleVisible,
+} from './components/wake-word-chrome.js';
+export type {
+  WakeIndicatorView,
+  WakePresenceConfig,
+  WakeSurfaceState,
+  WakeSurfaceStateSnapshot,
+} from './components/wake-word-chrome.js';
+export {
+  buildPermissionSummary,
+  permissionSummaryIsEmpty,
+  maskAudience,
+  summarizeArgs,
+  explainLastAction,
+  explainInputFromRun,
+  explainHasReason,
+  buildWorkingOnSummary,
+  workingOnRunsFromTurns,
+} from './chrome/chat-chrome-cards.js';
+export type {
+  PermissionSummaryInput,
+  PermissionSummary,
+  PermissionSummarySection,
+  ExplainActionInput,
+  ExplainAction,
+  ExplainableToolRun,
+  WorkingOnItem,
+  WorkingOnSummary,
+  WorkingOnRunInput,
+  WorkingOnLedgerInput,
+} from './chrome/chat-chrome-cards.js';
+// Plan Part C1 — embodiment playback helpers.
+export {
+  readEmbodimentProfile,
+  resolveEmbodimentFace,
+  embodimentLipSyncEnabled,
+  playAssistantEmbodiment,
+  playSessionRoutine,
+  unplayedAssistantTurns,
+} from './components/embodiment-playback.js';
+export type {
+  EmbodimentFace,
+  EmbodimentProfileLike,
+  EmbodimentPlaybackHost,
+} from './components/embodiment-playback.js';
+export type { VoiceAvatarHost } from './components/VoiceAvatarCanvas.js';
 export { SpendChip } from './components/SpendChip.js';
 export type { ContextSpendChipProps } from './components/SpendChip.js';
 export { AdminRoutes } from './components/admin/AdminRoutes.js';
@@ -80,11 +143,20 @@ export {
 export type {
   HostToSdkMessage,
   HostPrefillComposerMessage,
+  HostPageSitemapMessage,
+  HostPageScreenMessage,
+  HostClientToolResultMessage,
+  HostPageSitemapEntry,
+  HostPageScreen,
+  HostPageToolSchema,
   SdkToHostMessage,
+  SdkClientToolCallMessage,
   HostBridge,
   ChatIdentitySession,
 } from './bridge/host-bridge.js';
 export { HOST_PREFILL_TEXT_MAX } from './bridge/host-bridge.js';
+export { createHostPageTools, HOST_GENERIC_PAGE_TOOLS } from './page-tools/host-page-tools.js';
+export type { CreateHostPageToolsInput } from './page-tools/host-page-tools.js';
 
 export {
   parseParticipantPresenceV1,
@@ -141,4 +213,7 @@ export type {
   VoiceLayoutMode,
   VoiceModeState,
   CommandClient,
+  PageToolSource,
+  PageToolSchema,
+  PageToolPointer,
 } from '@nexus/chat-core';

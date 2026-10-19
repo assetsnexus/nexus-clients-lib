@@ -36,9 +36,81 @@ export type HostRouteMessage = {
   params?: Record<string, unknown>;
 };
 
+/**
+ * Plan Part C11 — opt-in app route/screen context. Structure-only; never
+ * carries field values, credentials, or message bodies.
+ */
+export type HostAppRouteMessage = {
+  type: 'appRoute';
+  /** null clears the context (user opted out or left a screen). */
+  context: Record<string, unknown> | null;
+};
+
+/**
+ * Plan Part W3 — native app-lock gate for wake listening (`requireUnlocked`).
+ * A gate, not authentication: a wake never authorizes anything.
+ */
+export type HostWakeUnlockMessage = {
+  type: 'wakeUnlock';
+  unlocked: boolean;
+};
+
 export type HostOpenContactMessage = {
   type: 'openContact';
   contactId: string;
+};
+
+/**
+ * Page tools for a native (non-DOM) host screen.
+ *
+ * The app ships a sitemap of screens and, for the active route, a screen pack:
+ * instructions plus tool schemas. The WebView turns this into the same
+ * `pageTools` rail the portal uses; `app.*` tools round-trip through
+ * `clientToolCall` / `clientToolResult` to native handlers.
+ */
+export type HostPageSitemapEntry = {
+  path: string;
+  title: string;
+  summary?: string;
+};
+
+export type HostPageToolSchema = {
+  name: string;
+  description?: string;
+  parameters?: {
+    type?: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+};
+
+export type HostPageScreen = {
+  path: string;
+  title: string;
+  summary?: string;
+  /** Instructions for this screen (shown to the model via anx.page.understand). */
+  instructions?: string;
+  /** Client tool schemas the model may call on this screen. */
+  tools?: HostPageToolSchema[];
+};
+
+export type HostPageSitemapMessage = {
+  type: 'pageSitemap';
+  pages: HostPageSitemapEntry[];
+};
+
+export type HostPageScreenMessage = {
+  type: 'pageScreen';
+  /** null clears the screen (left a screen that had tools). */
+  screen: HostPageScreen | null;
+};
+
+/** Native shell ran an `app.*` page tool; the WebView resumes the paused turn. */
+export type HostClientToolResultMessage = {
+  type: 'clientToolResult';
+  requestId: string;
+  result?: unknown;
+  error?: string;
 };
 
 /** Host asks the WebView to fill the composer. Never a send. */
@@ -60,8 +132,13 @@ export type HostToSdkMessage =
   | HostThemeMessage
   | HostLocaleMessage
   | HostRouteMessage
+  | HostAppRouteMessage
+  | HostWakeUnlockMessage
   | HostOpenContactMessage
   | HostPrefillComposerMessage
+  | HostPageSitemapMessage
+  | HostPageScreenMessage
+  | HostClientToolResultMessage
   | HostVoiceCommandMessage;
 
 export type SdkMinimizeMessage = { type: 'minimize' };
@@ -93,6 +170,20 @@ export type SdkScaRequiredMessage = {
   command: string;
 };
 
+/** WebView asks the native shell to run one `app.*` page tool. */
+export type SdkClientToolCallMessage = {
+  type: 'clientToolCall';
+  requestId: string;
+  name: string;
+  args: Record<string, unknown>;
+};
+
+/** WebView asks the native shell to route to an app screen (anx.page.navigate). */
+export type SdkNavigateMessage = {
+  type: 'navigate';
+  path: string;
+};
+
 export type SdkToHostMessage =
   | SdkMinimizeMessage
   | SdkUnreadMessage
@@ -102,7 +193,9 @@ export type SdkToHostMessage =
   | SdkVoiceStateMessage
   | SdkReadyMessage
   | SdkVrShellMessage
-  | SdkScaRequiredMessage;
+  | SdkScaRequiredMessage
+  | SdkClientToolCallMessage
+  | SdkNavigateMessage;
 
 export type HostBridge = {
   postToHost: (msg: SdkToHostMessage) => void;
@@ -170,8 +263,29 @@ export function parseHostMessage(raw: unknown): HostToSdkMessage | null {
         route: value.route === 'scene' ? 'scene' : 'chat',
         params: isRecord(value.params) ? value.params : undefined,
       };
+    case 'appRoute':
+      return {
+        type: 'appRoute',
+        context: isRecord(value.context) ? value.context : null,
+      };
+    case 'wakeUnlock':
+      return { type: 'wakeUnlock', unlocked: value.unlocked !== false };
     case 'openContact':
       return { type: 'openContact', contactId: String(value.contactId || '') };
+    case 'pageSitemap':
+      return { type: 'pageSitemap', pages: parseSitemapEntries(value.pages) };
+    case 'pageScreen':
+      return { type: 'pageScreen', screen: parsePageScreen(value.screen) };
+    case 'clientToolResult': {
+      const requestId = typeof value.requestId === 'string' ? value.requestId : '';
+      if (!requestId) return null;
+      return {
+        type: 'clientToolResult',
+        requestId,
+        result: value.result,
+        error: typeof value.error === 'string' ? value.error : undefined,
+      };
+    }
     case 'prefillComposer':
       return parsePrefillComposer(value);
     default:
@@ -179,8 +293,59 @@ export function parseHostMessage(raw: unknown): HostToSdkMessage | null {
   }
 }
 
-function parsePrefillComposer(value: Record<string, unknown>): HostPrefillComposerMessage | null {
-  if (typeof value.text !== 'string') return null;
+function parseSitemapEntries(raw: unknown): HostPageSitemapEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: HostPageSitemapEntry[] = [];
+  for (const row of raw) {
+    if (!isRecord(row)) continue;
+    const path = typeof row.path === 'string' ? row.path.trim() : '';
+    if (!path) continue;
+    out.push({
+      path,
+      title: typeof row.title === 'string' ? row.title : path,
+      ...(typeof row.summary === 'string' ? { summary: row.summary } : {}),
+    });
+  }
+  return out;
+}
+
+function parseToolSchema(raw: unknown): HostPageToolSchema | null {
+  if (!isRecord(raw)) return null;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (!name) return null;
+  const params = isRecord(raw.parameters) ? raw.parameters : null;
+  return {
+    name,
+    description: typeof raw.description === 'string' ? raw.description : undefined,
+    ...(params
+      ? {
+          parameters: {
+            type: typeof params.type === 'string' ? params.type : 'object',
+            properties: isRecord(params.properties) ? params.properties : {},
+            ...(Array.isArray(params.required) ? { required: params.required.map(String) } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function parsePageScreen(raw: unknown): HostPageScreen | null {
+  if (!isRecord(raw)) return null;
+  const path = typeof raw.path === 'string' ? raw.path.trim() : '';
+  if (!path) return null;
+  const tools = Array.isArray(raw.tools)
+    ? raw.tools.map(parseToolSchema).filter((t): t is HostPageToolSchema => !!t)
+    : [];
+  return {
+    path,
+    title: typeof raw.title === 'string' ? raw.title : path,
+    ...(typeof raw.summary === 'string' ? { summary: raw.summary } : {}),
+    ...(typeof raw.instructions === 'string' ? { instructions: raw.instructions } : {}),
+    ...(tools.length ? { tools } : {}),
+  };
+}
+
+function parsePrefillComposer(value: Record<string, unknown>): HostPrefillComposerMessage | null {  if (typeof value.text !== 'string') return null;
   const text = value.text.slice(0, HOST_PREFILL_TEXT_MAX);
   if (!text.trim()) return null;
   const contactId =
@@ -208,6 +373,9 @@ function writePending(next: HostToSdkMessage[]): void {
 }
 
 export function stashHostMessage(msg: HostToSdkMessage): void {
+  // Results and prefills must not be coalesced by type: concurrent client-tool
+  // results and multiple drafts would otherwise drop entries.
+  if (msg.type === 'clientToolResult') return;
   const pending = readPending();
   // One slot per type. The inject script and each bridge listener both stash,
   // so appending prefills would replay the same draft more than once.

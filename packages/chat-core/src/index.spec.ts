@@ -5,6 +5,7 @@ import {
   createNexusChat,
   DEFAULT_I18N,
   DEFAULT_FEATURES,
+  selectClientToolHandler,
 } from './index.js';
 
 describe('chat-core', () => {
@@ -54,6 +55,86 @@ describe('chat-core', () => {
       description: 'Reserve stock',
       parameters: { type: 'object', required: ['sku'] },
     });
+  });
+
+  it('registers `tools` at create time and merges `pageTools.schemas()` on send', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sent.push({ command, payload });
+          if (command === 'anx.communicate.message.send') {
+            return { ok: true, data: { text: 'ok', conversationId: 'c1' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+      tools: [
+        {
+          descriptor: { name: 'app.inventory.reserve', description: 'Reserve stock' },
+          handler: () => ({ reserved: true }),
+        },
+      ],
+      pageTools: {
+        schemas: () => [
+          { name: 'anx.page.outline', description: 'Landmarks' },
+          { name: 'page.cluster.focus_asset', description: 'Focus an asset' },
+        ],
+        canExecute: (name) => name === 'anx.page.outline',
+        execute: () => ({ ok: true }),
+        pointer: () => ({ path: '/clusters/editor', prompt: 'Cluster editor' }),
+      },
+    });
+
+    await chat.sendMessage('what is on this page', { conversationId: 'c1' });
+    const payload = sent.find((e) => e.command === 'anx.communicate.message.send')?.payload;
+    const names = (payload?.browserFunctionCalls as Array<{ name: string }>).map((c) => c.name);
+    expect(names).toEqual(['app.inventory.reserve', 'anx.page.outline', 'page.cluster.focus_asset']);
+    // Page pointer flows into path + injected prompt when the caller did not set them.
+    expect(payload?.currentPagePath).toBe('/clusters/editor');
+    expect(payload?.injectedSystemPrompts).toEqual(['Cluster editor']);
+  });
+
+  it('resolves a page tool for a name learned mid-turn, then falls through for unknown', async () => {
+    const executed: Array<{ name: string; args: Record<string, unknown>; conversationId?: string | null }> = [];
+    const pageTools = {
+      schemas: () => [{ name: 'anx.page.navigate', description: 'Navigate' }],
+      // Extra function schemas from anx.page.understand land here.
+      canExecute: (name: string) => name === 'page.cluster.focus_asset',
+      execute: (
+        name: string,
+        args: Record<string, unknown>,
+        context: { conversationId?: string | null },
+      ) => {
+        executed.push({ name, args, conversationId: context?.conversationId });
+        return { ok: true, focused: true };
+      },
+    };
+    const handler = selectClientToolHandler('page.cluster.focus_asset', new Map(), pageTools);
+    expect(handler).toBeTypeOf('function');
+    await handler!({ assetId: 'a1' }, { conversationId: 'c1' });
+    expect(executed).toEqual([
+      { name: 'page.cluster.focus_asset', args: { assetId: 'a1' }, conversationId: 'c1' },
+    ]);
+    // A registered tool wins on name; anything else has no handler.
+    const registered = new Map([
+      ['app.cart.get', { descriptor: { name: 'app.cart.get' }, handler: () => ({ items: [] }) }],
+    ]);
+    expect(selectClientToolHandler('app.cart.get', registered, pageTools)).toBeTypeOf('function');
+    expect(selectClientToolHandler('nope', registered, pageTools)).toBeUndefined();
+  });
+
+  it('exposes setPageTools so a host can swap the open screen', () => {
+    const chat = createNexusChat({
+      client: { send: async () => ({ ok: true, data: {} }) },
+    });
+    expect(typeof chat.setPageTools).toBe('function');
+    chat.setPageTools({
+      schemas: () => [{ name: 'anx.page.search', description: 'Search pages' }],
+      canExecute: () => true,
+      execute: () => ({ ok: true }),
+    });
+    chat.setPageTools(null);
   });
 
   it('defaults spendLimits to true', () => {

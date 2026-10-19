@@ -26,10 +26,19 @@ import type {
 import { DEFAULT_FEATURES } from './types.js';
 import {
   normalizeHostPageContext,
+  normalizeAppRouteContext,
+  appRouteToBrowserContext,
   type HostPageContext,
+  type AppRouteContext,
 } from './host-page-context.js';
 
-export { normalizeHostPageContext, type HostPageContext } from './host-page-context.js';
+export {
+  normalizeHostPageContext,
+  normalizeAppRouteContext,
+  appRouteToBrowserContext,
+  type HostPageContext,
+  type AppRouteContext,
+} from './host-page-context.js';
 import { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 import {
   LiveAttachSession,
@@ -66,9 +75,14 @@ import { pollWorkload, type WorkloadPollOptions } from './workloads.js';
 import {
   BrowserCallRuntime,
   createVoiceApi,
+  createWakeController,
   type BrowserCallRuntimeOptions,
   type VoiceCallSurface,
   type VoiceBridgeEventPayload,
+  type WakeWordEngineLike,
+  type WakeWordSurfaceConfig,
+  type WakeSurfaceStateSnapshot,
+  type WakeArtifactFetcherLike,
 } from './voice.js';
 import {
   uploadAttachment as uploadAttachmentViaRegion,
@@ -168,7 +182,7 @@ export type {
   ChatVoiceCallSession,
   IoDescriptor,
 };
-export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED } from './types.js';
+export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED, CONTACT_BANNED_CODE } from './types.js';
 export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus, SubAgentPendingApproval } from './state.js';
 export {
   inferSupportsReasoning,
@@ -412,6 +426,18 @@ export type {
   TranscriptMessage,
   StartCallFromRoomCheck,
 } from './voice/chat-call-surface.js';
+export {
+  createWakeController,
+  type WakeController,
+  type WakeControllerDeps,
+  type WakeDetectionLike,
+  type WakeSurfaceState,
+  type WakeSurfaceStateSnapshot,
+  type WakeVoiceOpenRequest,
+  type WakeWordEngineLike,
+  type WakeWordSurfaceConfig,
+  type WakeArtifactFetcherLike,
+} from './voice/index.js';
 export { formatTurnSenderLine, formatTurnTime } from './turn-meta.js';
 export {
   findChatContact,
@@ -565,6 +591,34 @@ export type {
   ActivityBarState,
   ComputeTier,
 } from './chat-chrome.js';
+
+/**
+ * Plan Part C5 / C8 / C9 — pure chat-chrome card helpers, shared by every chat
+ * adapter (React and Vue2) so the portal and app derive identical shapes.
+ */
+export {
+  buildPermissionSummary,
+  permissionSummaryIsEmpty,
+  maskAudience,
+  summarizeArgs,
+  explainLastAction,
+  explainInputFromRun,
+  explainHasReason,
+  buildWorkingOnSummary,
+  workingOnRunsFromTurns,
+} from './chat-chrome-cards.js';
+export type {
+  PermissionSummaryInput,
+  PermissionSummary,
+  PermissionSummarySection,
+  ExplainActionInput,
+  ExplainAction,
+  ExplainableToolRun,
+  WorkingOnItem,
+  WorkingOnSummary,
+  WorkingOnRunInput,
+  WorkingOnLedgerInput,
+} from './chat-chrome-cards.js';
 
 export const DEFAULT_I18N = {
   messageAccepted: '(message accepted)',
@@ -1071,6 +1125,87 @@ export type ConversationSummaryResult = {
   } | null;
 };
 
+/**
+ * Host-supplied page tools for the open screen.
+ *
+ * This is the SDK rail the portal page-agent, the ANX app webview, and partner
+ * embeds share. `schemas()` is injected on every chat send as
+ * `browserFunctionCalls`; when the model calls one the turn pauses and
+ * `execute` runs on the host, then the turn resumes via `resumeClientTool`.
+ *
+ * `canExecute` must return true for any name `execute` can handle — including
+ * tools the model learned mid-turn from `anx.page.understand`
+ * (`extraFunctionSchemas`), so those are caught instead of falling through to
+ * `hooks.onClientToolRequest`.
+ *
+ * `pointer` is optional page identity (path, tiny prompt, entity ref) attached
+ * to a send only when the caller did not set those fields.
+ */
+export type PageToolSchema = {
+  name: string;
+  description?: string;
+  parameters?: {
+    type?: string;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+};
+
+export type PageToolPointer = {
+  path?: string;
+  prompt?: string;
+  entityRef?: {
+    type: string;
+    id?: string | null;
+    name?: string | null;
+    saved?: boolean;
+  };
+};
+
+export type PageToolExecuteContext = {
+  /** Conversation the paused turn belongs to, when known. */
+  conversationId?: string | null;
+};
+
+export type PageToolSource = {
+  /** Schemas injected on every send (merged with `registerTool`). */
+  schemas: () => PageToolSchema[];
+  /** True when `execute` can handle `name` (generic, pack, or understood tool). */
+  canExecute: (name: string) => boolean;
+  /** Run one page tool on the host; the result is sent as the client-tool result. */
+  execute: (
+    name: string,
+    args: Record<string, unknown>,
+    context: PageToolExecuteContext,
+  ) => Promise<unknown> | unknown;
+  /**
+   * Optional: runs after the result reached region and the turn resumed. Use it
+   * for follow-ups that must not race the resume (e.g. a navigate-arrival ping).
+   */
+  afterResult?: (
+    result: unknown,
+    context: PageToolExecuteContext,
+  ) => void | Promise<void>;
+  /** Optional current-page pointer for path / tiny prompt / entity ref. */
+  pointer?: () => PageToolPointer | null | undefined;
+};
+
+/**
+ * Resolution order for a paused client tool: registered tool (via `registerTool`
+ * or `tools`) wins on name, then a page tool the host can execute, then
+ * undefined so the caller falls through to `hooks.onClientToolRequest`.
+ */
+export function selectClientToolHandler(
+  name: string,
+  registered: Map<string, { descriptor: ChatToolDescriptor; handler: (args: unknown) => unknown }>,
+  pageTools: PageToolSource | null | undefined,
+): ((args: Record<string, unknown>, context: PageToolExecuteContext) => unknown) | undefined {
+  const entry = registered.get(name);
+  if (entry) return (args) => entry.handler(args);
+  if (pageTools?.canExecute?.(name)) return (args, context) => pageTools.execute(name, args, context);
+  return undefined;
+}
+
 export type NexusChat = {
   getState: () => ChatState;
   subscribe: (listener: Listener) => () => void;
@@ -1081,6 +1216,12 @@ export type NexusChat = {
    * A context brain may call this with the same fields.
    */
   setHostPageContext: (next: HostPageContext | null) => void;
+  /**
+   * Plan Part C11 — opt-in app route/screen context, mirroring the portal
+   * `browserContext` pattern. Structure-only; never carries field values,
+   * credentials, or message bodies. Pass null to opt out / clear.
+   */
+  setAppRouteContext: (next: AppRouteContext | null) => void;
   sendMessage: (
     text: string,
     opts?: {
@@ -1349,6 +1490,24 @@ export type NexusChat = {
   endVoiceCall: (input: { agentId: string; callSid: string }) => Promise<boolean>;
   endCall: (input: { agentId: string; callSid: string }) => Promise<boolean>;
   getVoiceSurface: () => VoiceCallSurface;
+  /**
+   * Plan Part W2 — idle wake-word surface. `configureWake` installs the agent
+   * config + on-device engine; `optInWake` arms listening only while the surface
+   * is open and unlocked. A wake can ONLY open the voice session.
+   */
+  configureWake: (
+    config: WakeWordSurfaceConfig | null | undefined,
+    engine?: WakeWordEngineLike | null,
+  ) => void;
+  getWakeState: () => WakeSurfaceStateSnapshot;
+  subscribeWakeState: (listener: (snapshot: WakeSurfaceStateSnapshot) => void) => () => void;
+  setWakeAgentId: (agentId: string | null) => void;
+  optInWake: () => Promise<boolean>;
+  optOutWake: () => void;
+  setWakeSurfaceOpen: (open: boolean) => void;
+  /** Plan Part W3 — mobile app-lock gate for `requireUnlocked`. */
+  setWakeUnlocked: (unlocked: boolean) => void;
+  refreshWake: () => Promise<boolean>;
   /** WebRTC remote audio for lip-sync (analysis). */
   subscribeRemotePlaybackStream: (
     handler: import('./voice/types.js').PlaybackStreamHandler,
@@ -1426,6 +1585,11 @@ export type NexusChat = {
   ) => Promise<UploadAttachmentResult>;
   registerTool: (descriptor: ChatToolDescriptor, handler: (args: unknown) => Promise<unknown> | unknown) => void;
   /**
+   * Swap the page-tool source for the open screen without rebuilding chat.
+   * Pass null to clear it (e.g. when leaving a page that had tools).
+   */
+  setPageTools: (source: PageToolSource | null) => void;
+  /**
    * Resume after `onClientToolRequest`. Sends `anx.communicate.client-tool.result`
    * and streams the continued turn over the conversation WebSocket.
    */
@@ -1474,6 +1638,31 @@ export type CreateNexusChatOptions = {
    * The library does not call Nexus commands on that path.
    */
   fallbackTransport?: FallbackChatTransport | null;
+  /**
+   * Plan Part W2 — on-device wake engine injected by the host (`@nexus/wake-word`
+   * or an equivalent). When absent, wake listening stays `off`. A wake can only
+   * open the voice session; it never authenticates or approves anything.
+   */
+  wakeEngine?: WakeWordEngineLike | null;
+  /**
+   * Plan Part W — fetch a private wake artifact (enrolment wav) by opaque ref.
+   * MUST read only device-visible private storage; bytes are never logged.
+   */
+  wakeArtifactFetcher?: WakeArtifactFetcherLike | null;
+  /**
+   * Standing client tools registered at create time — same map `registerTool`
+   * writes to. Use this when a host cannot call `registerTool` because it does
+   * not build the controller (e.g. `NexusChatApp` with a `client` prop).
+   */
+  tools?: Array<{
+    descriptor: ChatToolDescriptor;
+    handler: (args: unknown) => Promise<unknown> | unknown;
+  }>;
+  /**
+   * Page tools for the open screen (sitemap search, navigation, per-screen
+   * instructions). Swappable later with `setPageTools` on a route change.
+   */
+  pageTools?: PageToolSource | null;
 };
 
 /**
@@ -1484,6 +1673,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   const features: ChatFeatures = { ...DEFAULT_FEATURES, ...(opts.features || {}) };
   const lockedAgent = parseLockedAgent(opts.lockedAgent);
   let hostPageContext: HostPageContext | undefined;
+  /** Plan Part C11 — opt-in app route/screen context (structure-only). */
+  let appRouteContext: AppRouteContext | undefined;
   const streamResolver = new StreamEndpointResolver();
   const translate = (key: keyof typeof DEFAULT_I18N) => opts.i18n?.[key] || DEFAULT_I18N[key];
   const store = createStore({
@@ -1654,9 +1845,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     mergePanelPatch(panelId, { throttle });
   };
   const tools = new Map<string, { descriptor: ChatToolDescriptor; handler: (args: unknown) => unknown }>();
+  /** Page tools for the open screen; swappable with `setPageTools`. */
+  let pageTools: PageToolSource | null = opts.pageTools ?? null;
   let activeSocket: WebSocket | null = null;
 
-  /** Tools from `registerTool`, in the `browserFunctionCalls` shape communicate expects. */
+  // Standing tools passed at create time, so a host that does not build the
+  // controller (NexusChatApp with `client`) can still register in-page tools.
+  for (const tool of opts.tools || []) {
+    if (tool?.descriptor?.name) tools.set(tool.descriptor.name, tool);
+  }
+
+  /** Tools from `registerTool` + `tools`, in the `browserFunctionCalls` shape communicate expects. */
   const registeredToolSchemas = () =>
     [...tools.values()].map(({ descriptor }) => ({
       name: descriptor.name,
@@ -1668,24 +1867,45 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       } as { type: string; properties?: Record<string, unknown>; required?: string[] },
     }));
 
+  /** Page-tool schemas for the open screen, in the `browserFunctionCalls` shape. */
+  const pageToolSchemas = () => {
+    const list = pageTools?.schemas?.() || [];
+    return list
+      .filter((schema) => schema && typeof schema.name === 'string' && schema.name.trim())
+      .map((schema) => ({
+        name: schema.name,
+        description: schema.description || `Page tool ${schema.name}`,
+        parameters: {
+          type: schema.parameters?.type || 'object',
+          properties: schema.parameters?.properties || {},
+          ...(schema.parameters?.required ? { required: schema.parameters.required } : {}),
+        },
+      }));
+  };
+
   /**
    * Registered tools run here and resume the turn automatically; anything else
    * goes to `hooks.onClientToolRequest`, which must call `resumeClientTool`.
    */
+  const resolveClientTool = (name: string) =>
+    selectClientToolHandler(name, tools, pageTools);
+
   const dispatchClientToolRequest = async (req: {
     callId: string;
     name: string;
     arguments: Record<string, unknown>;
     conversationId: string | null;
   }) => {
-    const registered = tools.get(req.name);
-    if (!registered) {
+    // Resolution order: registered tool, then page tool, then the host hook.
+    const usedPageTool = !tools.has(req.name) && !!pageTools?.canExecute?.(req.name);
+    const handler = resolveClientTool(req.name);
+    if (!handler) {
       await opts.hooks?.onClientToolRequest?.(req);
       return;
     }
     let result: unknown;
     try {
-      result = await registered.handler(req.arguments);
+      result = await handler(req.arguments, { conversationId: req.conversationId });
     } catch (err) {
       result = { error: err instanceof Error ? err.message : String(err) };
     }
@@ -1694,6 +1914,16 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       result,
       conversationId: req.conversationId ?? undefined,
     });
+    // Page tools may need a follow-up after the resumed turn is on the wire
+    // (e.g. a navigate-arrival ping). Only runs for a page tool, never a
+    // registered tool that happens to share the name.
+    if (usedPageTool) {
+      try {
+        await pageTools?.afterResult?.(result, { conversationId: req.conversationId });
+      } catch (err) {
+        log('client_tool_after_result_failed', { message: String(err), name: req.name });
+      }
+    }
   };
 
   const voice = createVoiceApi({
@@ -1705,6 +1935,35 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     patchCurrentPanel,
     syncMessagesFromTurns,
     unwrapData,
+  });
+
+  /**
+   * Plan Part W2 — idle `wake_listening` state ahead of `startBrowserCall`.
+   * The host injects an on-device engine; `onWake` can only open the voice
+   * session (never authenticate / approve / dispatch commands).
+   */
+  let wakeAgentId: string | null = null;
+  /** Mobile app-lock gate for `requireUnlocked`. Default true (unlocked). */
+  let wakeUnlocked = true;
+  const wake = createWakeController({
+    surface: 'app',
+    config: null,
+    engine: opts.wakeEngine ?? null,
+    fetchArtifact: opts.wakeArtifactFetcher ?? null,
+    isUnlocked: () => wakeUnlocked,
+    openVoiceSession: async () => {
+      const agentId = wakeAgentId;
+      if (!agentId) {
+        wake.suspend();
+        return;
+      }
+      await voice.startBrowserCall({
+        agentId,
+        conversationId: store.getState().conversationId,
+      });
+    },
+    logger: opts.logger,
+    onStateChange: (snapshot) => opts.hooks?.onWakeStateChange?.(snapshot),
   });
 
   const agentIndex = new ConversationAgentIndex();
@@ -2286,6 +2545,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     getConversationSummary,
     registerTool(descriptor, handler) {
       tools.set(descriptor.name, { descriptor, handler });
+    },
+    setPageTools(source) {
+      pageTools = source ?? null;
     },
     async listAvailableModels(input) {
       if (!features.modelPicker) return { models: [], priceScaleReference: null };
@@ -2956,7 +3218,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       return pollWorkload(opts.client, workloadId, pollOpts);
     },
     createBrowserCall: voice.createBrowserCall,
-    startBrowserCall: voice.startBrowserCall,
+    startBrowserCall: async (input) => {
+      // Wake listening is an idle state; pause it while a call is live.
+      wake.suspendForSession();
+      try {
+        return await voice.startBrowserCall(input);
+      } finally {
+        void wake.resumeAfterSession();
+      }
+    },
     createOutboundCall: voice.createOutboundCall,
     prepareInboundCall: voice.prepareInboundCall,
     getVoiceChannel: voice.getVoiceChannel,
@@ -2969,6 +3239,32 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     endVoiceCall: voice.endVoiceCall,
     endCall: voice.endCall,
     getVoiceSurface: voice.getVoiceSurface,
+    configureWake(config, engine) {
+      wake.configure(config, engine);
+    },
+    getWakeState: () => wake.getState(),
+    subscribeWakeState: (listener) => wake.subscribe(listener),
+    setWakeAgentId(agentId) {
+      wakeAgentId = agentId;
+      if (agentId) void wake.refresh();
+      else wake.suspend();
+    },
+    optInWake: () => wake.optIn(),
+    optOutWake: () => wake.optOut(),
+    setWakeSurfaceOpen(open) {
+      if (open) void wake.refresh();
+      else wake.suspend();
+    },
+    /**
+     * Plan Part W3 — mobile `requireUnlocked` gate. When dropped to false the
+     * controller disarms immediately; re-raising re-arms only if opted in.
+     */
+    setWakeUnlocked(next: boolean) {
+      wakeUnlocked = next;
+      if (next) void wake.refresh();
+      else wake.suspend();
+    },
+    refreshWake: () => wake.refresh(),
     subscribeRemotePlaybackStream: voice.subscribeRemotePlaybackStream,
     getRemotePlaybackStream: voice.getRemotePlaybackStream,
     createSpeakTurn: voice.createSpeakTurn,
@@ -3233,6 +3529,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     setHostPageContext(next) {
       hostPageContext = normalizeHostPageContext(next);
     },
+    setAppRouteContext(next) {
+      appRouteContext = normalizeAppRouteContext(next);
+    },
     async sendMessage(
       text: string,
       sendOpts: {
@@ -3486,16 +3785,35 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             ? 'anx.inference.chat.completions'
             : 'anx.communicate.message.send';
         const explicitTools = sendOpts.browserFunctionCalls ?? [];
+        // Explicit per-send schemas win on name; registered and page tools fill
+        // the rest. Page tools come from the open screen (setPageTools / `pageTools`).
+        const autoTools = [...registeredToolSchemas(), ...pageToolSchemas()];
         const browserFunctionCalls =
           command === 'anx.communicate.message.send'
             ? [
                 ...explicitTools,
-                ...registeredToolSchemas().filter(
-                  (t) => !explicitTools.some((e) => e.name === t.name),
-                ),
+                ...autoTools.filter((t) => !explicitTools.some((e) => e.name === t.name)),
               ]
             : explicitTools;
         const pageContext = normalizeHostPageContext(sendOpts.pageContext) ?? hostPageContext;
+        // Page pointer (path / tiny prompt / entity ref) from the page-tool source,
+        // only when the caller did not set that field for this send.
+        const pointer = pageTools?.pointer?.() || null;
+        const currentPagePath = sendOpts.currentPagePath ?? pointer?.path;
+        const pageEntityRef = sendOpts.pageEntityRef ?? (pointer?.entityRef?.type ? pointer.entityRef : undefined);
+        const explicitPrompts = sendOpts.injectedSystemPrompts || [];
+        // The tiny pointer prompt rides along with any explicit prompts so a host
+        // that also injects its own context keeps both.
+        const injectedSystemPrompts =
+          pointer?.prompt && !explicitPrompts.includes(pointer.prompt)
+            ? [...explicitPrompts, pointer.prompt]
+            : explicitPrompts.length
+              ? explicitPrompts
+              : undefined;
+        // Plan Part C11 — app route context merges with (and never overrides) an
+        // explicit per-send browserContext, so the portal path is untouched.
+        const appRouteAsBrowser = appRouteToBrowserContext(appRouteContext);
+        const browserContextOut = sendOpts.browserContext ?? appRouteAsBrowser;
         const result = (await opts.client.send(command, {
           text: sendOpts.conversationOpen ? '' : text,
           ...(sendOpts.conversationOpen ? { conversationOpen: true } : {}),
@@ -3507,17 +3825,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.modelOverride ? { modelOverride: sendOpts.modelOverride } : {}),
           ...(sendOpts.reasoningEffort ? { reasoningEffort: sendOpts.reasoningEffort } : {}),
           ...(sendOpts.uiLocale ? { uiLocale: sendOpts.uiLocale } : {}),
-          ...(sendOpts.currentPagePath ? { currentPagePath: sendOpts.currentPagePath } : {}),
+          ...(currentPagePath ? { currentPagePath } : {}),
           ...(pageContext ? { pageContext } : {}),
-          ...(sendOpts.injectedSystemPrompts?.length
-            ? { injectedSystemPrompts: sendOpts.injectedSystemPrompts }
+          ...(injectedSystemPrompts?.length
+            ? { injectedSystemPrompts }
             : {}),
-          ...(sendOpts.pageEntityRef?.type
-            ? { pageEntityRef: sendOpts.pageEntityRef }
+          ...(pageEntityRef?.type
+            ? { pageEntityRef }
             : {}),
           ...(sendOpts.pageInstructions ? { pageInstructions: sendOpts.pageInstructions } : {}),
           ...(sendOpts.pageData ? { pageData: sendOpts.pageData } : {}),
-          ...(sendOpts.browserContext ? { browserContext: sendOpts.browserContext } : {}),
+          ...(browserContextOut ? { browserContext: browserContextOut } : {}),
           ...(browserFunctionCalls.length ? { browserFunctionCalls } : {}),
           ...(sendOpts.pageFunctionCalls?.length
             ? { pageFunctionCalls: sendOpts.pageFunctionCalls }

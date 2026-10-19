@@ -7,6 +7,12 @@ import {
   type NexusChat,
 } from '@nexus/chat-core';
 import { CheckBackCard } from './grants/CheckBackCard.js';
+import { ExplainActionChip } from './ExplainActionChip.js';
+import {
+  explainHasReason,
+  explainInputFromRun,
+  type ExplainActionInput,
+} from '../chrome/chat-chrome-cards.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 
 export type ToolTimelineRowProps = {
@@ -15,6 +21,11 @@ export type ToolTimelineRowProps = {
   conversationId?: string | null;
   onOpenFile?: (file: ViewerFileRef) => void;
 };
+
+// Plan Part C8 — `explainInputFromRun` / `explainHasReason` now live in
+// `@nexus/chat-core` so the portal (chat-vue2) shares the exact same derivation.
+export { explainInputFromRun, explainHasReason };
+export type { ExplainActionInput };
 
 function startsOpen(status: string): boolean {
   return status === 'error' || status === 'reverted' || status === 'needs_approval' || status === 'mode_blocked';
@@ -62,6 +73,13 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
         <span className="nexus-chat__tool-status">{row.status}</span>
         <span className="nexus-chat__tool-chev" aria-hidden="true">{open ? '▾' : '▸'}</span>
       </button>
+      {/* Plan Part C8 — explain the last action ("why") when the backend supplies
+          a reason. No reason => no chip (rather than an "unknown" affordance). */}
+      {explainHasReason(run) ? (
+        <div style={{ margin: '2px 0 6px' }}>
+          <ExplainActionChip {...explainInputFromRun(run)} />
+        </div>
+      ) : null}
       {images.length ? (
         <div className="nexus-chat__media-strip" role="list">
           {images.map((img) => (

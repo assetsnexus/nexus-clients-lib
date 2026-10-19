@@ -11,6 +11,7 @@ export type {
   ChatTurn,
   ChatFeatures,
   CommandClient,
+  PageToolSource,
 } from '@nexus/chat-core';
 
 export declare function createNexusChat(...args: unknown[]): import('@nexus/chat-core').NexusChat;
@@ -18,7 +19,15 @@ export declare const DEFAULT_FEATURES: import('@nexus/chat-core').ChatFeatures;
 export declare function findChatContact(...args: unknown[]): import('@nexus/chat-core').ChatContact | null;
 
 export declare const NexusChatApp: ComponentType<NexusChatAppProps>;
-export type NexusChatAppProps = Record<string, unknown>;
+export type NexusChatAppProps = Record<string, unknown> & {
+  /** Standing client tools, registered on the internal controller. */
+  tools?: Array<{
+    descriptor: { name: string; description?: string; parameters?: Record<string, unknown> };
+    handler: (args: unknown) => Promise<unknown> | unknown;
+  }>;
+  /** Page tools for the open screen; swapped with the setPageTools controller method. */
+  pageTools?: import('@nexus/chat-core').PageToolSource | null;
+};
 export declare const ContactList: ComponentType<Record<string, unknown>>;
 export declare const ThreadView: ComponentType<Record<string, unknown>>;
 export declare const Composer: ComponentType<Record<string, unknown>>;
@@ -74,6 +83,44 @@ export declare function coreFeaturesFromReact(features: NexusChatReactFeatures):
 export declare function createHostBridge(input: Record<string, unknown>): { postToHost: Function; dispose: Function };
 export declare function listenWindowMessages(onFromHost: Function, targetOrigin?: string): () => void;
 export declare function parseHostMessage(raw: unknown): unknown;
+
+export type PageToolSource = import('@nexus/chat-core').PageToolSource;
+export type PageToolSchema = import('@nexus/chat-core').PageToolSchema;
+export type HostPageSitemapEntry = { path: string; title: string; summary?: string };
+export type HostPageToolSchema = {
+  name: string;
+  description?: string;
+  parameters?: { type?: string; properties?: Record<string, unknown>; required?: string[] };
+};
+export type HostPageScreen = {
+  path: string;
+  title: string;
+  summary?: string;
+  instructions?: string;
+  tools?: HostPageToolSchema[];
+};
+export type HostPageSitemapMessage = { type: 'pageSitemap'; pages: HostPageSitemapEntry[] };
+export type HostPageScreenMessage = { type: 'pageScreen'; screen: HostPageScreen | null };
+export type HostClientToolResultMessage = {
+  type: 'clientToolResult';
+  requestId: string;
+  result?: unknown;
+  error?: string;
+};
+export type SdkClientToolCallMessage = {
+  type: 'clientToolCall';
+  requestId: string;
+  name: string;
+  args: Record<string, unknown>;
+};
+export type SdkNavigateMessage = { type: 'navigate'; path: string };
+export declare const HOST_GENERIC_PAGE_TOOLS: PageToolSchema[];
+export declare function createHostPageTools(input: {
+  getSitemap: () => HostPageSitemapEntry[];
+  getScreen: () => HostPageScreen | null;
+  navigate?: (path: string) => void | Promise<void>;
+  runHostTool?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
+}): PageToolSource;
 
 export type ParticipantPresenceV1 = Record<string, unknown>;
 export declare function parseParticipantPresenceV1(raw: unknown): ParticipantPresenceV1 | null;

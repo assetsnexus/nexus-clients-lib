@@ -58,6 +58,45 @@ describe('parseHostMessage prefillComposer', () => {
   });
 });
 
+describe('parseHostMessage appRoute / wakeUnlock (plan Part C11 / W3)', () => {
+  it('keeps a structure-only appRoute context and clears on null', () => {
+    expect(
+      parseHostMessage({
+        type: 'appRoute',
+        context: { route: '/wallet/1', screen: 'Wallet', capturedAt: 'now' },
+      }),
+    ).toEqual({
+      type: 'appRoute',
+      context: { route: '/wallet/1', screen: 'Wallet', capturedAt: 'now' },
+    });
+    expect(parseHostMessage({ type: 'appRoute', context: null })).toEqual({
+      type: 'appRoute',
+      context: null,
+    });
+    expect(parseHostMessage({ type: 'appRoute', context: 'nope' })).toEqual({
+      type: 'appRoute',
+      context: null,
+    });
+  });
+
+  it('treats wakeUnlock as a boolean gate, defaulting to unlocked', () => {
+    expect(parseHostMessage({ type: 'wakeUnlock', unlocked: false })).toEqual({
+      type: 'wakeUnlock',
+      unlocked: false,
+    });
+    expect(parseHostMessage({ type: 'wakeUnlock', unlocked: true })).toEqual({
+      type: 'wakeUnlock',
+      unlocked: true,
+    });
+    // Missing/other values must default to "unlocked" (fail-open gate only for
+    // the lock signal; wake itself still never authorizes anything).
+    expect(parseHostMessage({ type: 'wakeUnlock' })).toEqual({
+      type: 'wakeUnlock',
+      unlocked: true,
+    });
+  });
+});
+
 describe('host message stash', () => {
   it('replays the latest auth after a late listener mounts', () => {
     stashHostMessage({ type: 'auth', token: 'old', identity: {} });
@@ -78,5 +117,77 @@ describe('host message stash', () => {
     ]);
     dropStashedHostMessage('prefillComposer');
     expect(drainStashedHostMessages()).toEqual([]);
+  });
+});
+
+describe('parseHostMessage page tools', () => {
+  it('parses a sitemap, dropping entries without a path', () => {
+    expect(
+      parseHostMessage({
+        type: 'pageSitemap',
+        pages: [
+          { path: '/wallet', title: 'Wallet', summary: 'Balances' },
+          { path: '  ' },
+        ],
+      }),
+    ).toEqual({
+      type: 'pageSitemap',
+      pages: [{ path: '/wallet', title: 'Wallet', summary: 'Balances' }],
+    });
+    expect(parseHostMessage({ type: 'pageSitemap' })).toEqual({ type: 'pageSitemap', pages: [] });
+  });
+
+  it('parses a screen pack with tools and clears on null', () => {
+    expect(
+      parseHostMessage({
+        type: 'pageScreen',
+        screen: {
+          path: '/wallet',
+          title: 'Wallet',
+          instructions: 'Show balance',
+          tools: [{ name: 'app.wallet.scroll_to', description: 'Scroll', parameters: { type: 'object' } }],
+        },
+      }),
+    ).toEqual({
+      type: 'pageScreen',
+      screen: {
+        path: '/wallet',
+        title: 'Wallet',
+        instructions: 'Show balance',
+        tools: [{ name: 'app.wallet.scroll_to', description: 'Scroll', parameters: { type: 'object', properties: {}, required: undefined } }],
+      },
+    });
+    expect(parseHostMessage({ type: 'pageScreen', screen: null })).toEqual({
+      type: 'pageScreen',
+      screen: null,
+    });
+  });
+
+  it('clears the screen when the pack has no usable path', () => {
+    expect(parseHostMessage({ type: 'pageScreen', screen: { title: 'No path' } })).toEqual({
+      type: 'pageScreen',
+      screen: null,
+    });
+  });
+
+  it('parses a client-tool result and requires a requestId', () => {
+    expect(
+      parseHostMessage({ type: 'clientToolResult', requestId: 'r1', result: { ok: true } }),
+    ).toEqual({ type: 'clientToolResult', requestId: 'r1', result: { ok: true } });
+    expect(
+      parseHostMessage({ type: 'clientToolResult', requestId: 'r2', error: 'boom' }),
+    ).toEqual({ type: 'clientToolResult', requestId: 'r2', error: 'boom', result: undefined });
+    expect(parseHostMessage({ type: 'clientToolResult' })).toBeNull();
+  });
+
+  it('does not coalesce client-tool results or prefills in the stash', () => {
+    stashHostMessage({ type: 'clientToolResult', requestId: 'a', result: 1 });
+    stashHostMessage({ type: 'clientToolResult', requestId: 'b', result: 2 });
+    stashHostMessage({ type: 'pageScreen', screen: { path: '/a', title: 'A' } });
+    stashHostMessage({ type: 'pageScreen', screen: { path: '/b', title: 'B' } });
+    const drained = drainStashedHostMessages();
+    expect(drained.filter((m) => m.type === 'pageScreen')).toEqual([
+      { type: 'pageScreen', screen: { path: '/b', title: 'B' } },
+    ]);
   });
 });

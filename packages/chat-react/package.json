@@ -43,6 +43,7 @@
     "@nexus/character-kit": "*",
     "@nexus/character-react": "*",
     "@nexus/chat-core": "*",
+    "@nexus/wake-word": "*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "three": ">=0.160.0"
@@ -52,6 +53,9 @@
       "optional": true
     },
     "@nexus/character-react": {
+      "optional": true
+    },
+    "@nexus/wake-word": {
       "optional": true
     },
     "three": {

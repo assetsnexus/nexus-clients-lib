@@ -19,6 +19,7 @@ const clusterSceneReact = resolve(
   '../../../anx-libs/nexus-collaboration-vr/packages/cluster-scene-react/src/index.ts',
 );
 const sceneClient = resolve(__dirname, '../scene-client/src/index.ts');
+const wakeWord = resolve(__dirname, '../wake-word/src/index.ts');
 
 /**
  * App WebView SPA build → `dist-webview/`.
@@ -37,6 +38,7 @@ export default defineConfig({
       '@nexus/character-kit': characterKit,
       '@nexus/cluster-scene-react': clusterSceneReact,
       '@nexus/scene-client': sceneClient,
+      '@nexus/wake-word': wakeWord,
     },
     dedupe: ['three', 'react', 'react-dom'],
   },

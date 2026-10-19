@@ -17,6 +17,9 @@ import {
   type CreateNexusChatOptions,
   type FallbackChatTransport,
   type HostPageContext,
+  type AppRouteContext,
+  type PageToolSource,
+  type ChatToolDescriptor,
   type LockedAgent,
   type NexusChat,
   type ReasoningEffortLevel,
@@ -36,6 +39,7 @@ import { useChatPanel } from '../hooks/useChatState.js';
 import { useOutgoingQueue } from '../hooks/useOutgoingQueue.js';
 import { applyPrefillComposer } from '../bridge/applyPrefillComposer.js';
 import { createHostBridge, type HostBridge, type SdkToHostMessage } from '../bridge/host-bridge.js';
+import { applyPageToolsProp, applyToolsProps } from '../page-tools/apply-page-tools-props.js';
 import { ContactList } from './ContactList.js';
 import { PastConversationList } from './PastConversationList.js';
 import { ThreadView } from './ThreadView.js';
@@ -98,6 +102,9 @@ import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { ConversationInbox } from './ConversationInbox.js';
 import { filterInboxRowsForLockedAgent } from '../inbox/inboxRows.js';
 import { resolveChatChrome } from '../chrome/chat-chrome.js';
+import { WorkingOnStrip } from './WorkingOnStrip.js';
+import { PermissionSummaryCard } from './PermissionSummaryCard.js';
+import { permissionSummaryIsEmpty, buildPermissionSummary, workingOnRunsFromTurns } from '../chrome/chat-chrome-cards.js';
 import { chatFailureInfo, lockedEmbedPresentation } from '../chrome/locked-embed.js';
 import { ContextCostMeters } from '../chrome/ContextCostMeters.js';
 import { coerceReasoningEffort } from '../chrome/reasoning-slider.js';
@@ -158,6 +165,21 @@ export type NexusChatAppProps = {
    * fields. Omit it when the page has no project.
    */
   pageContext?: HostPageContext | null;
+  /**
+   * Standing client tools registered on the controller. The React host builds
+   * the controller internally, so this is the entry point for `registerTool`
+   * when a `client` is passed. They survive a `lockedAgent` / `features` rebuild.
+   */
+  tools?: Array<{
+    descriptor: ChatToolDescriptor;
+    handler: (args: unknown) => Promise<unknown> | unknown;
+  }>;
+  /**
+   * Page tools for the open screen (sitemap search, navigation, per-screen
+   * instructions with tool calls). Swapped with `setPageTools` when the route
+   * changes, without rebuilding the controller.
+   */
+  pageTools?: PageToolSource | null;
   /** Transport and open failures. Hosts use `code` for sign-in; the message is safe to show. */
   onError?: (info: { message: string; code?: string }) => void;
   /**
@@ -176,6 +198,16 @@ export type NexusChatAppProps = {
   nexusUnavailable?: boolean;
   /** Login control for features the host marks as requiring Nexus. Shown while unavailable. */
   nexusLogin?: ReactNode;
+  /**
+   * Plan Part C5 — read-only "what can my agent do" data (capabilities, tool
+   * packs, channels, masked audiences). Omitted => no card. Never grants anything.
+   */
+  permissionSummary?: import('../chrome/chat-chrome-cards.js').PermissionSummaryInput | null;
+  /**
+   * Plan Part C9 — open ledger items to show beside live agent runs. Active runs
+   * are derived from the thread; omitted ledger => runs only.
+   */
+  workingOnLedger?: import('../chrome/chat-chrome-cards.js').WorkingOnLedgerInput[];
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -242,12 +274,16 @@ export function NexusChatApp({
   highlightAgentId = null,
   conversationList,
   pageContext = null,
+  tools: toolsProp,
+  pageTools: pageToolsProp = null,
   onError,
   displayName: displayNameProp,
   avatarUrl: avatarUrlProp,
   fallbackTransport = null,
   nexusUnavailable = false,
   nexusLogin = null,
+  permissionSummary = null,
+  workingOnLedger,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const onErrorRef = useRef(onError);
@@ -275,6 +311,12 @@ export function NexusChatApp({
   );
   const fallbackTransportRef = useRef(fallbackTransport);
   fallbackTransportRef.current = fallbackTransport;
+  // Read through refs so a route change (new pageTools identity) does not
+  // rebuild the controller; the effects below swap them in place.
+  const toolsPropRef = useRef(toolsProp);
+  toolsPropRef.current = toolsProp;
+  const pageToolsPropRef = useRef(pageToolsProp);
+  pageToolsPropRef.current = pageToolsProp;
   const lockedAgent = useMemo(() => {
     const requested = lockedAgentProp ?? createOptions?.lockedAgent ?? chatProp?.lockedAgent ?? null;
     if (!requested) return null;
@@ -360,12 +402,27 @@ export function NexusChatApp({
       features: { ...createOptions?.features, ...coreFeaturesFromReact(features) },
       lockedAgent: lockedAgent ?? createOptions?.lockedAgent ?? null,
       fallbackTransport,
+      // Register standing tools + page tools when this host builds the
+      // controller, so a `client`-only mount can still inject in-page tools.
+      tools: toolsPropRef.current?.length ? toolsPropRef.current : createOptions?.tools,
+      pageTools: pageToolsPropRef.current ?? createOptions?.pageTools ?? null,
     });
   }, [chatProp, clientProp, createOptions, features, lockedAgent, fallbackTransport]);
 
   useEffect(() => {
     chat.setHostPageContext(pageContext ?? null);
   }, [chat, pageContext]);
+
+  // Swap page tools on a route change without rebuilding the controller.
+  useEffect(() => {
+    applyPageToolsProp(chat, pageToolsPropRef.current ?? null);
+  }, [chat, pageToolsProp]);
+
+  // Re-register standing tools when the prop changes (a rebuilt controller
+  // already received them through `tools` above).
+  useEffect(() => {
+    applyToolsProps(chat, toolsPropRef.current);
+  }, [chat, toolsProp]);
 
   const client = clientProp || createOptions?.client;
   const [fundingGate, setFundingGate] = useState<FundingGateState>(initialFundingGate());
@@ -491,6 +548,16 @@ export function NexusChatApp({
       ) ?? []
     );
   }, [catalog, selectedModelId]);
+  // Plan Part C9 — active runs + open ledger items for the "working on" strip.
+  const workingOnRuns = useMemo(
+    () => workingOnRunsFromTurns(panel?.turns || state.turns),
+    [panel?.turns, state.turns],
+  );
+  // Plan Part C5 — read-only permission summary. Omitted => no card.
+  const permissionCard = useMemo(
+    () => (permissionSummary ? buildPermissionSummary(permissionSummary) : null),
+    [permissionSummary],
+  );
   const reasoningForSend = useMemo(
     () => (reasoningLevels && !reasoningLevels.length ? null : coerceReasoningEffort(reasoningEffort, reasoningLevels)),
     [reasoningEffort, reasoningLevels],
@@ -892,6 +959,14 @@ export function NexusChatApp({
           setRoute(msg.route === 'scene' ? 'scene' : 'chat');
           if (msg.route === 'scene') setVoiceOpen(true);
         }
+        // Plan Part C11 — opt-in app route/screen context (structure only).
+        if (msg.type === 'appRoute') {
+          chat.setAppRouteContext(msg.context as AppRouteContext | null);
+        }
+        // Plan Part W3 — native app-lock gate for wake listening.
+        if (msg.type === 'wakeUnlock') {
+          chat.setWakeUnlocked?.(msg.unlocked);
+        }
         if (msg.type === 'openContact' && msg.contactId) {
           if (lockedAgent && msg.contactId !== lockedAgent.virtualEmployeeId) return;
           void openContactThread(chat, msg.contactId);
@@ -1056,6 +1131,15 @@ export function NexusChatApp({
         </div>
         {pastDrawer}
         <div className="nexus-chat__column-thread">
+          {workingOnRuns.length || (workingOnLedger && workingOnLedger.length) ? (
+            <WorkingOnStrip runs={workingOnRuns} ledger={workingOnLedger} />
+          ) : null}
+          {permissionCard && !permissionSummaryIsEmpty(permissionCard) ? (
+            <details className="nexus-chat__permission-card">
+              <summary className="nexus-chat__chip">What this agent can do</summary>
+              <PermissionSummaryCard {...(permissionSummary || {})} />
+            </details>
+          ) : null}
           {sessionError ? (
             <div className="nexus-chat__banner" role="alert">
               <span>{sessionError}</span>
@@ -1216,6 +1300,9 @@ export function NexusChatApp({
                 />
               ) : null}
               <span>{presentation.title}</span>
+              {permissionCard && !permissionSummaryIsEmpty(permissionCard) ? (
+                <PermissionSummaryCard {...(permissionSummary || {})} compact />
+              ) : null}
             </strong>
             {contact ? (
               <button
@@ -1398,6 +1485,10 @@ export function NexusChatApp({
             ) : null}
             {presentation.mountApprovals ? (
               <ApprovalsStrip chat={chat} turns={panel?.turns || state.turns} />
+            ) : null}
+            {/* Plan Part C9 — active runs + open ledger items. */}
+            {workingOnRuns.length || (workingOnLedger && workingOnLedger.length) ? (
+              <WorkingOnStrip runs={workingOnRuns} ledger={workingOnLedger} />
             ) : null}
             {presentation.mountSubagents ? (
               <SubAgentsStrip

@@ -4,6 +4,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -13,12 +14,16 @@ import {
   NexusChatApp,
   createNexusChat,
   createHostBridge,
+  createHostPageTools,
   createRegionCommandClient,
+  loadWakeEngine,
   openContactThread,
   type HostToSdkMessage,
   type SdkToHostMessage,
   type NexusChat,
   type ChatIdentitySession,
+  type HostPageScreen,
+  type HostPageSitemapEntry,
 } from '@nexus/chat-react';
 
 type AuthState = {
@@ -117,6 +122,17 @@ function WebViewHost() {
   const [chat, setChat] = useState<NexusChat | null>(null);
   const [client, setClient] = useState<ReturnType<typeof createRegionCommandClient> | null>(null);
   const [scene, setScene] = useState<SceneRouteState>({ open: false, clusterId: null });
+  // Native host screen tools: sitemap + the active screen pack.
+  const [pageSitemap, setPageSitemap] = useState<HostPageSitemapEntry[]>([]);
+  const [pageScreen, setPageScreen] = useState<HostPageScreen | null>(null);
+  const pageSitemapRef = useRef(pageSitemap);
+  pageSitemapRef.current = pageSitemap;
+  const pageScreenRef = useRef(pageScreen);
+  pageScreenRef.current = pageScreen;
+  const clientToolResultsRef = useRef(
+    new Map<string, { resolve: (result: unknown) => void; reject: (err: Error) => void }>(),
+  );
+  const clientToolSeqRef = useRef(0);
   const clientRef = useRef(client);
   clientRef.current = client;
 
@@ -136,6 +152,23 @@ function WebViewHost() {
             identities: msg.identities || [],
           });
         }
+        if (msg.type === 'pageSitemap') {
+          setPageSitemap(msg.pages);
+        }
+        if (msg.type === 'pageScreen') {
+          setPageScreen(msg.screen);
+        }
+        if (msg.type === 'clientToolResult') {
+          const pending = clientToolResultsRef.current.get(msg.requestId);
+          if (pending) {
+            clientToolResultsRef.current.delete(msg.requestId);
+            if (typeof msg.error === 'string' && msg.error) {
+              pending.reject(new Error(msg.error));
+            } else {
+              pending.resolve(msg.result);
+            }
+          }
+        }
         if (msg.type === 'openContact' && msg.contactId) {
           setPendingContactId(msg.contactId);
         }
@@ -150,6 +183,39 @@ function WebViewHost() {
     });
     return () => bridge.dispose();
   }, []);
+
+  const navigateHost = useCallback((path: string) => {
+    postToNative({ type: 'navigate', path });
+  }, []);
+
+  const runHostTool = useCallback(
+    (name: string, args: Record<string, unknown>) => {
+      const requestId = `host-tool-${++clientToolSeqRef.current}`;
+      return new Promise<unknown>((resolve, reject) => {
+        clientToolResultsRef.current.set(requestId, { resolve, reject });
+        postToNative({ type: 'clientToolCall', requestId, name, args });
+        // Do not hang the turn if the shell never answers.
+        setTimeout(() => {
+          if (clientToolResultsRef.current.has(requestId)) {
+            clientToolResultsRef.current.delete(requestId);
+            reject(new Error(`Host tool timed out: ${name}`));
+          }
+        }, 15000);
+      });
+    },
+    [],
+  );
+
+  const pageTools = useMemo(
+    () =>
+      createHostPageTools({
+        getSitemap: () => pageSitemapRef.current,
+        getScreen: () => pageScreenRef.current,
+        navigate: navigateHost,
+        runHostTool,
+      }),
+    [navigateHost, runHostTool],
+  );
 
   useEffect(() => {
     if (!auth) {
@@ -173,13 +239,23 @@ function WebViewHost() {
       apiBaseUrl: auth.apiBaseUrl,
       identity,
     });
-    const next = createNexusChat({
-      client: nextClient,
-      features: { adminPanels: false },
-      publicFilesBaseUrl: auth.apiBaseUrl,
+    let cancelled = false;
+    // Plan Part W2/W3 — load the on-device wake engine (optional peer). When the
+    // package/artifact is missing this resolves null and wake stays off.
+    void loadWakeEngine({}).then((wakeEngine) => {
+      if (cancelled) return;
+      const next = createNexusChat({
+        client: nextClient,
+        features: { adminPanels: false },
+        publicFilesBaseUrl: auth.apiBaseUrl,
+        wakeEngine,
+      });
+      setClient(nextClient);
+      setChat(next);
     });
-    setClient(nextClient);
-    setChat(next);
+    return () => {
+      cancelled = true;
+    };
   }, [auth]);
 
   useEffect(() => {
@@ -289,7 +365,9 @@ function WebViewHost() {
           identities={auth.identities}
           collapsed={scene.open}
           onPostToHost={postToNative}
+          pageTools={pageTools}
         />
+
       </div>
     </div>
   );

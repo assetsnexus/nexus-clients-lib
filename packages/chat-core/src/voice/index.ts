@@ -37,6 +37,10 @@ export {
   parseRealtimeDataChannelMessage,
 } from './transcript.js';
 export {
+  buildRealtimeTurnDetection,
+  type RealtimeTurnDetection,
+} from './realtime-vad.js';
+export {
   BrowserCallRuntime,
   BrowserCallSession,
   type BrowserCallSessionHooks,
@@ -79,6 +83,18 @@ export {
   type VoiceLayoutMode,
   type VoiceModeState,
 } from './voice-mode.js';
+export {
+  createWakeController,
+  type WakeController,
+  type WakeControllerDeps,
+  type WakeDetectionLike,
+  type WakeSurfaceState,
+  type WakeSurfaceStateSnapshot,
+  type WakeVoiceOpenRequest,
+  type WakeWordEngineLike,
+  type WakeWordSurfaceConfig,
+  type WakeArtifactFetcherLike,
+} from './wake.js';
 export {
   createSpeakTurnController,
   getContactTts,
