@@ -61,6 +61,20 @@
         </button>
         <span v-if="resolvedPanel.unreadCount" class="nexus-badge">{{ resolvedPanel.unreadCount }}</span>
       </div>
+      <!--
+        Explicit drag band. The identity control and the action cluster cover
+        nearly the whole header, so relying on leftover whitespace left the
+        window practically immovable. This band claims the slack space and is
+        always grabbable; buttons keep their own clicks.
+      -->
+      <div
+        v-if="headerDraggable"
+        class="nexus-chat-panel__drag-band"
+        title="Drag to move"
+        @pointerdown.stop.prevent="onDragBandPointerDown"
+      >
+        <span class="nexus-chat-panel__drag-grip" />
+      </div>
       <div class="nexus-chat-panel__header-actions" @pointerdown.stop>
         <slot
           name="header-actions"
@@ -1419,15 +1433,24 @@ export default {
     onHeaderPointerDown(ev) {
       if (!this.headerDraggable) return;
       const target = ev && ev.target;
+      // Only real controls opt out of dragging. The `.header-actions` cluster
+      // used to be excluded wholesale, leaving the header with no grabbable
+      // surface at all. Gaps inside the cluster stay draggable now, and
+      // `onDragBandPointerDown` covers the case where controls fill the header.
       if (
         target &&
         typeof target.closest === 'function' &&
         target.closest(
-          'button, a, input, select, textarea, label, [role="button"], .nexus-chat-panel__header-actions',
+          'button, a, input, select, textarea, label, [role="button"], .dropdown-menu',
         )
       ) {
         return;
       }
+      this.$emit('header-drag-start', ev);
+    },
+    /** Drag band: always draggable, never a control. */
+    onDragBandPointerDown(ev) {
+      if (!this.headerDraggable) return;
       this.$emit('header-drag-start', ev);
     },
     setDraft(value) {
@@ -1905,6 +1928,35 @@ export default {
 }
 .nexus-chat-panel__header--draggable:active {
   cursor: grabbing;
+}
+/*
+ * Grabbable slack between the identity block and the action cluster.
+ * min-width keeps a real target even when the header is crowded;
+ * flex:1 lets it absorb the leftover space when there is more room.
+ */
+.nexus-chat-panel__drag-band {
+  flex: 1 1 24px;
+  min-width: 24px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+.nexus-chat-panel__drag-band:active {
+  cursor: grabbing;
+}
+.nexus-chat-panel__drag-band:hover .nexus-chat-panel__drag-grip,
+.nexus-chat-panel__drag-band:active .nexus-chat-panel__drag-grip {
+  opacity: 0.75;
+}
+.nexus-chat-panel__drag-grip {
+  width: 22px;
+  height: 3px;
+  border-radius: 2px;
+  background: #ced4da;
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
 }
 .nexus-chat-panel__header-left,
 .nexus-chat-panel__header-actions {
