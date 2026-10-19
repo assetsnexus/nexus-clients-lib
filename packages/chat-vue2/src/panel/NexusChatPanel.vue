@@ -394,6 +394,14 @@
           @update:delivery="subchatDelivery = $event"
         />
 
+        <!-- Plan Part C5 — read-only permission summary (opt-in; never grants). -->
+        <permission-summary-card
+          v-if="permissionSummaryResolved"
+          class="nexus-chat-panel__permissions"
+          v-bind="permissionSummary"
+          compact
+        />
+
         <sub-agents-strip
           v-if="showSubAgentsStrip"
           :runs="subAgentStripRuns"
@@ -402,6 +410,15 @@
           @pause-run="$emit('subagent-pause', $event)"
           @cancel-run="$emit('subagent-cancel', $event)"
           @dismiss-run="onDismissSubAgentRun"
+        />
+
+        <!-- Plan Part C9 — "working on" strip: live AgentRuns + open ledger items. -->
+        <working-on-strip
+          v-if="workingOnRuns.length || workingOnLedgerItems.length"
+          class="nexus-chat-panel__working-on"
+          :runs="workingOnRuns"
+          :ledger="workingOnLedgerItems"
+          @select="$emit('working-on-select', $event)"
         />
 
         <div
@@ -479,7 +496,7 @@
                 v-if="timelineEvents(turn).length"
                 :events="timelineEvents(turn)"
                 :tool-events="turn.rawToolStream || []"
-                :streaming="resolvedPanel.streaming"
+                :streaming="isLiveTurn(turn)"
                 :conversation-id="resolvedPanel.conversationId"
                 :choice-active="isChoiceActive(turn)"
                 :poll-workload="pollWorkload"
@@ -680,9 +697,12 @@ import {
   formatTurnSenderLine,
   conversationHighlightsAgent,
   resolveConversationListMode,
+  workingOnRunsFromTurns,
+  permissionSummaryIsEmpty,
+  buildPermissionSummary,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
-import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip } from '../tools';
+import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, WorkingOnStrip, PermissionSummaryCard } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
 import ComposerAttachmentRail from './ComposerAttachmentRail.vue';
 import RealtimeCallPanel from '../voice/RealtimeCallPanel.vue';
@@ -749,6 +769,8 @@ export default {
     SessionSummaryChips,
     ComposerAttachmentRail,
     SubAgentsStrip,
+    WorkingOnStrip,
+    PermissionSummaryCard,
     LinkedSubChatBanner,
     SpeakTurnWidget,
     ConversationBillingPopover,
@@ -785,6 +807,17 @@ export default {
     /** Allow parent floating shell to drag via the header. */
     headerDraggable: { type: Boolean, default: false },
     pendingApprovalsCount: { type: Number, default: 0 },
+    /**
+     * Plan Part C9 — open ledger items shown in the "working on" strip.
+     * Host-supplied (backend data); optional and tolerant.
+     */
+    workingOnLedger: { type: Array, default: () => [] },
+    /**
+     * Plan Part C5 — permission summary inputs (capabilities, toolPacks,
+     * outboundAudiences, outboundChannels, toolApprovalMode). Host-supplied;
+     * the card renders nothing when absent. Read-only — it grants nothing.
+     */
+    permissionSummary: { type: Object, default: null },
     getRoom: { type: Function, default: null },
     leaveRoom: { type: Function, default: null },
     pollWorkload: { type: Function, default: null },
@@ -905,6 +938,27 @@ export default {
     },
     showSubAgentsStrip() {
       return !this.isSubagentConversation && this.subAgentStripRuns.length > 0;
+    },
+    /**
+     * Plan Part C9 — "working on" strip inputs. Active sub-agent runs come from
+     * the thread; open ledger items are supplied by the host via the
+     * `working-on-ledger` prop (optional, tolerant default: none).
+     */
+    workingOnRuns() {
+      return workingOnRunsFromTurns(this.resolvedPanel?.turns || []);
+    },
+    workingOnLedgerItems() {
+      return Array.isArray(this.workingOnLedger) ? this.workingOnLedger : [];
+    },
+    /**
+     * Plan Part C5 — build the read-only permission summary from the host inputs.
+     * Returns null when the host supplies nothing (or when the summary is empty)
+     * so the card stays hidden. Read-only.
+     */
+    permissionSummaryResolved() {
+      if (!this.permissionSummary || typeof this.permissionSummary !== 'object') return null;
+      const summary = buildPermissionSummary(this.permissionSummary);
+      return permissionSummaryIsEmpty(summary) ? null : summary;
     },
     parentConversationTitle() {
       const parentId = this.resolvedPanel?.parentConversationId;
@@ -1467,6 +1521,18 @@ export default {
     },
     timelineEvents(turn) {
       return toolTimelineProps((turn && turn.toolEvents) || []);
+    },
+    /**
+     * Liveness is per-turn: only the turn currently receiving stream deltas is
+     * "live". Feeding every turn the panel-wide `streaming` flag flipped historical
+     * timelines into live-strip mode while any agent was working, so their tool rows
+     * rendered expanded instead of the compact finished summary.
+     */
+    isLiveTurn(turn) {
+      if (!this.resolvedPanel.streaming || !turn) return false;
+      const turns = this.resolvedPanel.turns || [];
+      const last = turns[turns.length - 1];
+      return !!last && last.id === turn.id;
     },
     isChoiceActive(turn) {
       if (!turn || this.resolvedPanel.streaming) return false;
@@ -2304,7 +2370,6 @@ export default {
 }
 .nexus-call-banner__control {
   flex: 0 0 auto;
-}
 }
 .nexus-message-bubble.user {
   background: #51cbce;

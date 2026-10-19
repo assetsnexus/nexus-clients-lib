@@ -246,7 +246,7 @@
                 v-if="timelineEvents(turn).length"
                 :events="timelineEvents(turn)"
                 :tool-events="turn.rawToolStream || []"
-                :streaming="resolvedPanel.streaming"
+                :streaming="isLiveTurn(turn)"
                 :conversation-id="resolvedPanel.conversationId"
                 :choice-active="isChoiceActive(turn)"
                 :poll-workload="pollWorkload"
@@ -699,6 +699,18 @@ export default {
     },
     timelineEvents(turn) {
       return toolTimelineProps((turn && turn.toolEvents) || []);
+    },
+    /**
+     * Liveness is per-turn: only the turn currently receiving stream deltas is
+     * "live". The panel-wide `streaming` flag flipped historical timelines into
+     * live-strip mode while any agent worked, expanding their tool rows instead of
+     * showing the compact finished summary.
+     */
+    isLiveTurn(turn) {
+      if (!this.resolvedPanel.streaming || !turn) return false;
+      const turns = this.resolvedPanel.turns || [];
+      const last = turns[turns.length - 1];
+      return !!last && last.id === turn.id;
     },
     isChoiceActive(turn) {
       if (!turn || this.resolvedPanel.streaming) return false;

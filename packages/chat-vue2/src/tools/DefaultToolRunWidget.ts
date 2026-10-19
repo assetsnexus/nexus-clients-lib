@@ -1,7 +1,8 @@
 import { defineComponent } from 'vue';
-import { formatToolResultText, type ChatToolRun } from '@nexus/chat-core';
+import { formatToolResultText, explainInputFromRun, explainHasReason, type ChatToolRun } from '@nexus/chat-core';
 import { formatToolRunDisplay } from './tool-run-display';
 import { resolveToolAccessKind, toolStatusClass, toolStatusLabel } from './shared';
+import ExplainActionChip from './ExplainActionChip';
 
 /**
  * Compact expandable tool run row with approve/revert actions.
@@ -33,6 +34,11 @@ export const DefaultToolRunWidget = defineComponent({
     },
     accessKind(): ReturnType<typeof resolveToolAccessKind> {
       return resolveToolAccessKind(this.run as ChatToolRun);
+    },
+    /** Plan Part C8 — only render the chip when the backend supplied a reason. */
+    explain(): ReturnType<typeof explainInputFromRun> | null {
+      const run = this.run as ChatToolRun;
+      return explainHasReason(run) ? explainInputFromRun(run) : null;
     },
     resultText(): string | null {
       return formatToolResultText((this.run as ChatToolRun).result);
@@ -100,6 +106,9 @@ export const DefaultToolRunWidget = defineComponent({
               : null,
           ],
         ),
+        this.explain
+          ? h(ExplainActionChip, { props: this.explain, class: 'nexus-tool-run__explain' })
+          : null,
         this.resultText
           ? h('div', { class: 'nexus-tool-run__result' }, [
               h('div', { class: 'nexus-tool-run__block' }, [
