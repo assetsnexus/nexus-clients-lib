@@ -23,11 +23,18 @@ export const AskUserChoiceToolWidget = defineComponent({
     active: { type: Boolean, default: false },
   },
   data() {
-    return { customText: '', selectedIds: [] as string[] };
+    return { customText: '', selectedIds: [] as string[], remember: true, scope: 'user' as string, why: '' };
   },
   computed: {
     typed(): UserChoiceQuestion | null {
       return (this.question as UserChoiceQuestion | null) || null;
+    },
+    rememberDecision(): boolean {
+      return this.typed?.rememberDecision === true;
+    },
+    persistArg(): { enabled: boolean; scope: string; why: string | null } | null {
+      if (!this.rememberDecision) return null;
+      return { enabled: this.remember, scope: this.scope, why: String(this.why || '').trim() || null };
     },
     resolvedOptions(): UserChoiceOption[] {
       const q = this.typed;
@@ -75,6 +82,7 @@ export const AskUserChoiceToolWidget = defineComponent({
           questionId: this.typed.questionId,
           selectedIds: this.selectedIds,
           customText: text || null,
+          ...(this.persistArg ? { persist: this.persistArg } : {}),
         });
         this.customText = '';
         return;
@@ -118,6 +126,41 @@ export const AskUserChoiceToolWidget = defineComponent({
                 ),
               ),
             )
+          : null,
+        this.rememberDecision
+          ? h('div', { class: 'nexus-ask-choice__persist mt-1' }, [
+              h('div', { class: 'form-check' }, [
+                h('input', {
+                  class: 'form-check-input',
+                  attrs: { type: 'checkbox', id: `remember-${this.typed?.questionId ?? ''}`, disabled: this.disabled },
+                  domProps: { checked: this.remember },
+                  on: { change: (e: Event) => { this.remember = (e.target as HTMLInputElement).checked; } },
+                }),
+                h('label', { class: 'form-check-label small', attrs: { for: `remember-${this.typed?.questionId ?? ''}` } }, [
+                  'Remember this decision',
+                ]),
+              ]),
+              this.remember
+                ? h('div', { class: 'nexus-ask-choice__persist-details mt-1' }, [
+                    h('select', {
+                      class: 'form-control form-control-sm mt-1',
+                      attrs: { disabled: this.disabled, 'aria-label': 'Store it for' },
+                      domProps: { value: this.scope },
+                      on: { change: (e: Event) => { this.scope = (e.target as HTMLSelectElement).value; } },
+                    }, [
+                      h('option', { attrs: { value: 'user' } }, ['Just me']),
+                      h('option', { attrs: { value: 'org' } }, ['My organization']),
+                      h('option', { attrs: { value: 'agent' } }, ['This agent']),
+                    ]),
+                    h('input', {
+                      class: 'form-control form-control-sm mt-1',
+                      attrs: { type: 'text', placeholder: 'Why? (optional)', disabled: this.disabled, 'aria-label': 'Why remember' },
+                      domProps: { value: this.why },
+                      on: { input: (e: Event) => { this.why = (e.target as HTMLInputElement).value; } },
+                    }),
+                  ])
+                : null,
+            ])
           : null,
         h(
           'form',

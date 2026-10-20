@@ -7,4 +7,5 @@ export * from './attachment-ingest.js';
 export * from './pending-pause.js';
 export * from './ask-user-choice.js';
 export * from './plan-card.js';
+export * from './precedent.js';
 export * from './client-tool-registry.js';

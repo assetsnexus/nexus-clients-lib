@@ -164,6 +164,7 @@ import {
   type ClientToolIndexEntry,
   type PendingPauseCard,
   type PendingPauseKind,
+  type PersistChoice,
   type QuestionAnswer,
 } from './tools/index.js';
 import { parseModeChangedEvent } from './mode-transition.js';
@@ -591,6 +592,9 @@ export {
   parsePlanPointer,
   planProgressLabel,
   normalizePlanTodoStatus,
+  // Precedent-used chip.
+  parsePrecedentUse,
+  PRECEDENT_NOT_APPLICABLE_DEFAULT_REASON,
   // Client-tool registry (pinned vs discoverable).
   ClientToolRegistry,
   clientToolAccessOf,
@@ -615,11 +619,14 @@ export type {
   UserChoiceQuestionTarget,
   UserChoiceQuestionStatus,
   QuestionAnswer,
+  PersistChoice,
+  PersistScope,
   PlanTodoItem,
   PlanTodoStatus,
   PlanCard,
   PlanCardStatus,
   PlanPointer,
+  PrecedentUse,
   ClientToolIndexEntry,
   ClientToolRegistration,
   ClientToolFunctionSchema,
@@ -1612,6 +1619,18 @@ export type NexusChat = {
     triggered: true;
     status: 'scheduled' | 'processing' | 'completed' | string;
   }>;
+  /**
+   * Mark the last use of a precedent in this conversation as not applicable
+   * ("Not applicable" on the precedent chip). Sends
+   * `anx.inference.decisions.false-positive.mark` with the reason; the server
+   * resolves the most recent use in this conversation when no usage id is given.
+   */
+  markPrecedentNotApplicable: (opts: {
+    decisionId: string;
+    reason: string;
+    usageRefId?: string;
+    conversationId?: string;
+  }) => Promise<{ ok: boolean; message?: string }>;
   rehydrateTurns: (
     rows: Array<{
       id?: string;
@@ -1716,6 +1735,7 @@ export type NexusChat = {
     selectedIds?: string[];
     customText?: string | null;
     explanation?: string | null;
+    persist?: PersistChoice | null;
     conversationId?: string;
   }) => Promise<SendMessageResult>;
   /** Typed card the paused turn is showing, or null. */
@@ -3758,6 +3778,27 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         status: String(data.status || 'scheduled'),
       };
     },
+    async markPrecedentNotApplicable(markOpts) {
+      const conversationId =
+        markOpts.conversationId || store.getState().conversationId || undefined;
+      const result = (await opts.client.send('anx.inference.decisions.false-positive.mark', {
+        decisionId: markOpts.decisionId,
+        reason: markOpts.reason,
+        ...(markOpts.usageRefId ? { usageRefId: markOpts.usageRefId } : {}),
+        ...(conversationId ? { conversationId } : {}),
+      })) as SendResult | unknown;
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        const fail = result as Extract<SendResult, { ok: false }>;
+        if (fail.kind === 'sca_required') {
+          opts.hooks?.onScaRequired?.({
+            authRequestId: fail.authRequestId ?? null,
+            command: 'anx.inference.decisions.false-positive.mark',
+          });
+        }
+        return { ok: false, message: fail.message || 'Could not mark the precedent as not applicable' };
+      }
+      return { ok: true };
+    },
     setHostPageContext(next) {
       hostPageContext = normalizeHostPageContext(next);
     },
@@ -4826,6 +4867,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         selectedIds: questionOpts.selectedIds,
         customText: questionOpts.customText,
         explanation: questionOpts.explanation,
+        persist: questionOpts.persist ?? null,
       });
       return controller.sendMessage(
         answer.selectedIds.join(', ') || answer.customText || '',

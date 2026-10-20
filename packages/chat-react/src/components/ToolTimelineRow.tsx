@@ -8,6 +8,7 @@ import {
 } from '@nexus/chat-core';
 import { CheckBackCard } from './grants/CheckBackCard.js';
 import { ExplainActionChip } from './ExplainActionChip.js';
+import { PrecedentUsedChip } from './PrecedentUsedChip.js';
 import {
   explainHasReason,
   explainInputFromRun,
@@ -78,6 +79,12 @@ export function ToolTimelineRow({ run, chat, conversationId, onOpenFile }: ToolT
       {explainHasReason(run) ? (
         <div style={{ margin: '2px 0 6px' }}>
           <ExplainActionChip {...explainInputFromRun(run)} />
+        </div>
+      ) : null}
+      {/* M2 — precedent-used chip with a "Not applicable" false-positive action. */}
+      {chat ? (
+        <div style={{ margin: '2px 0 6px' }}>
+          <PrecedentUsedChip run={run} chat={chat} conversationId={conversationId} />
         </div>
       ) : null}
       {images.length ? (

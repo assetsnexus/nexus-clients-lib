@@ -1,6 +1,13 @@
 import { useState } from 'react';
-import type { NexusChat, PlanPointer, UserChoiceQuestion } from '@nexus/chat-core';
+import type { NexusChat, PersistScope, PlanPointer, UserChoiceQuestion } from '@nexus/chat-core';
 import { planProgressLabel, type PlanTodoItem } from '@nexus/chat-core';
+
+/** Scopes the card offers for a remembered decision. */
+const PERSIST_SCOPES: ReadonlyArray<{ id: PersistScope; label: string }> = [
+  { id: 'user', label: 'Just me' },
+  { id: 'org', label: 'My organization' },
+  { id: 'agent', label: 'This agent' },
+];
 
 /** The conversation's compact plan pointer → the card's render model. */
 export function planFromPointer(pointer: PlanPointer): {
@@ -36,6 +43,10 @@ export function AskUserChoiceWidget({
   const [customText, setCustomText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Persist-mode controls only exist for a `remember_decision` question.
+  const [remember, setRemember] = useState(question.rememberDecision === true);
+  const [scope, setScope] = useState<PersistScope>('user');
+  const [why, setWhy] = useState('');
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -58,6 +69,9 @@ export function AskUserChoiceWidget({
         selectedIds: selected,
         customText: customText.trim() || null,
         conversationId: conversationId ?? undefined,
+        ...(question.rememberDecision
+          ? { persist: { enabled: remember, scope, why: why.trim() || null } }
+          : {}),
       });
       if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
         setError(result.message || 'Failed to send answer');
@@ -100,6 +114,46 @@ export function AskUserChoiceWidget({
         disabled={busy}
         onChange={(e) => setCustomText(e.target.value)}
       />
+      {question.rememberDecision ? (
+        <div className="nexus-ask-choice__persist" role="group" aria-label="Remember this decision">
+          <label className="nexus-ask-choice__persist-toggle">
+            <input
+              type="checkbox"
+              checked={remember}
+              disabled={busy}
+              onChange={(e) => setRemember(e.target.checked)}
+            />{' '}
+            Remember this decision
+          </label>
+          {remember ? (
+            <div className="nexus-ask-choice__persist-details">
+              <label className="nexus-ask-choice__persist-scope">
+                Store it for:{' '}
+                <select
+                  value={scope}
+                  disabled={busy}
+                  onChange={(e) => setScope(e.target.value as PersistScope)}
+                >
+                  {PERSIST_SCOPES.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <input
+                className="nexus-ask-choice__persist-why"
+                type="text"
+                placeholder="Why? (optional context for the decision)"
+                aria-label="Why remember this decision"
+                value={why}
+                disabled={busy}
+                onChange={(e) => setWhy(e.target.value)}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <div className="nexus-chat__grant-actions">
         <button
           type="button"

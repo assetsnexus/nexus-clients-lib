@@ -49,7 +49,11 @@ export default defineConfig({
     target: 'esnext',
     outDir: resolve(__dirname, 'dist-webview'),
     emptyOutDir: true,
-    sourcemap: true,
+    // The tracked bundle is committed into anx-app's native asset folders; a
+    // sourcemap there only leaks TypeScript sources with zero runtime value on
+    // device (see anx-app/scripts/copy-chat-webview.sh). Dev serves from source
+    // via `vite.dev.config.ts`, so turning maps off here costs nothing.
+    sourcemap: false,
     rollupOptions: {
       input: {
         webview: resolve(__dirname, 'dev/webview.html'),

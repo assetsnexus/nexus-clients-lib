@@ -49,12 +49,23 @@ export type UserChoiceQuestion = {
   answeredAt?: string | null;
 };
 
+/** Scopes a remembered decision may be persisted to. */
+export type PersistScope = 'user' | 'org' | 'agent';
+
+/** Persist-mode controls for a `remember_decision` question. */
+export type PersistChoice = {
+  enabled?: boolean;
+  scope?: PersistScope;
+  why?: string | null;
+};
+
 /** The answer a host submits; validated server-side against the stored question. */
 export type QuestionAnswer = {
   questionId: string;
   selectedIds: string[];
   customText?: string | null;
   explanation?: string | null;
+  persist?: PersistChoice | null;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
@@ -142,6 +153,7 @@ export function buildQuestionAnswer(input: {
   selectedIds?: string[];
   customText?: string | null;
   explanation?: string | null;
+  persist?: PersistChoice | null;
 }): QuestionAnswer {
   const seen = new Set<string>();
   const selectedIds: string[] = [];
@@ -151,11 +163,20 @@ export function buildQuestionAnswer(input: {
     seen.add(id);
     selectedIds.push(id);
   }
+  const scope = input.persist?.scope;
+  const persist: PersistChoice | null = input.persist
+    ? {
+        ...(input.persist.enabled === undefined ? {} : { enabled: input.persist.enabled }),
+        ...(scope === 'user' || scope === 'org' || scope === 'agent' ? { scope } : {}),
+        why: str(input.persist.why),
+      }
+    : null;
   return {
     questionId: input.questionId,
     selectedIds,
     customText: str(input.customText),
     explanation: str(input.explanation),
+    ...(persist ? { persist } : {}),
   };
 }
 

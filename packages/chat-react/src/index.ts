@@ -19,6 +19,7 @@ export { PermissionSummaryCard } from './components/PermissionSummaryCard.js';
 export type { PermissionSummaryCardProps } from './components/PermissionSummaryCard.js';
 export { ExplainActionChip } from './components/ExplainActionChip.js';
 export type { ExplainActionChipProps } from './components/ExplainActionChip.js';
+export { PrecedentUsedChip } from './components/PrecedentUsedChip.js';
 export { WorkingOnStrip } from './components/WorkingOnStrip.js';
 export type { WorkingOnStripProps } from './components/WorkingOnStrip.js';
 // Plan Part W3 — wake-word mic indicator + opt-in toggle.
