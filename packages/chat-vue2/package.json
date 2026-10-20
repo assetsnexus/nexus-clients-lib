@@ -1,6 +1,6 @@
 {
   "name": "@nexus/chat-vue2",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Vue 2.7 adapter for @nexus/chat-core (portal)",
   "license": "UNLICENSED",
   "publishConfig": {
