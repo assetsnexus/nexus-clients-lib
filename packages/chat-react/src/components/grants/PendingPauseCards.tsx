@@ -76,20 +76,12 @@ export function PendingPauseCardView({
       busy={busy}
       error={error}
       onApprove={() =>
-        void run(() =>
-          chat.resumeClientTool({
-            callId: card.callId,
-            result: { ok: true, granted: true, name: card.name, arguments: card.arguments },
-          }),
-        )
+        // Run the registered handler and resume with its REAL result. The old
+        // synthetic `{ granted: true }` stub never executed the tool.
+        void run(() => chat.approveClientTool({ callId: card.callId }))
       }
       onDeny={() =>
-        void run(() =>
-          chat.resumeClientTool({
-            callId: card.callId,
-            result: { ok: false, granted: false, error: 'User denied client tool' },
-          }),
-        )
+        void run(() => chat.approveClientTool({ callId: card.callId, approved: false }))
       }
     />
   );

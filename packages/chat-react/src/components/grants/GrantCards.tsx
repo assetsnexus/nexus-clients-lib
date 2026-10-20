@@ -24,6 +24,27 @@ export function ClientToolGrantCard({
     setBusy(true);
     setError(null);
     try {
+      if (granted) {
+        // Prefer running the registered handler and resuming with its REAL
+        // result. Only when no handler exists does this fall back to the legacy
+        // host-hook contract, where the host already executed the tool itself
+        // (the `onClientToolRequest` hook owns execution).
+        const approved = await chat.approveClientTool({
+          callId: request.callId,
+          conversationId: request.conversationId || undefined,
+        });
+        if (approved.ok) {
+          onResolved();
+          return;
+        }
+        if (
+          approved.code !== 'NO_CLIENT_TOOL_HANDLER' &&
+          approved.code !== 'NO_PAUSED_CLIENT_TOOL'
+        ) {
+          setError(approved.message || 'Failed to run client tool');
+          return;
+        }
+      }
       const result = await chat.resumeClientTool({
         callId: request.callId,
         conversationId: request.conversationId || undefined,
@@ -76,14 +97,84 @@ export type DataAccessPromptModel = {
   callId?: string | null;
 };
 
+/**
+ * `anx.security.*` is a hard-forbidden prefix for OAuth **app** identities
+ * (blocked before the grant allowlist), so an app host cannot call
+ * `anx.security.data-access.respond` directly. The portal only works because it
+ * uses a shadow USER session. Detect the region's refusal so the card can fall
+ * back to the `anx.communicate.client-tool.result` rail.
+ */
+export function isDataAccessAppForbidden(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  const r = result as {
+    code?: string;
+    kind?: string;
+    message?: string;
+    error?: { code?: string; message?: string };
+    errorObjects?: Array<{ code?: string; message?: string }>;
+  };
+  const codes = [r.code, r.kind, r.error?.code, ...(r.errorObjects || []).map((e) => e?.code)];
+  if (codes.some((c) => c === 'APP_ACCESS_FORBIDDEN' || c === 'APP_COMMAND_FORBIDDEN')) return true;
+  const message = [r.message, r.error?.message, ...(r.errorObjects || []).map((e) => e?.message)]
+    .filter(Boolean)
+    .join(' ');
+  return /APP_ACCESS_FORBIDDEN|not available to app identities|OAuth2 app grant/i.test(message);
+}
+
+export type DataAccessTransport = 'command' | 'client-tool-result';
+
+/**
+ * Pure routing + payload builder for a data-access decision, shared by the card
+ * and its specs.
+ *
+ * - `command` → `anx.security.data-access.respond` with `{ grantId, decision, scope? }`
+ *   (the portal shadow-USER path).
+ * - `client-tool-result` → `anx.communicate.client-tool.result` with
+ *   `{ approved, decision, grantId, scope? }` (the app-identity-safe rail).
+ */
+export function planDataAccessResponse(input: {
+  grantId: string;
+  decision: string;
+  selectedScope?: { kind: string; id: string } | null;
+  transport?: DataAccessTransport;
+}): {
+  command: 'anx.security.data-access.respond' | 'anx.communicate.client-tool.result';
+  payload: Record<string, unknown>;
+} {
+  const { grantId, decision, selectedScope = null, transport = 'command' } = input;
+  const scoped = decision !== 'deny_once' && selectedScope ? { scope: selectedScope } : {};
+  if (transport === 'client-tool-result') {
+    const approved = decision === 'allow_once' || decision === 'allow_always';
+    return {
+      command: 'anx.communicate.client-tool.result',
+      payload: { result: { approved, decision, grantId, ...scoped } },
+    };
+  }
+  return {
+    command: 'anx.security.data-access.respond',
+    payload: { grantId, decision, ...scoped },
+  };
+}
+
 export function DataAccessPromptCard({
   prompt,
   client,
+  chat,
+  conversationId,
+  dataAccessTransport = 'command',
   onResponded,
   onSca,
 }: {
   prompt: DataAccessPromptModel;
   client?: CommandClient;
+  /**
+   * When present and routed over `client-tool-result`, the decision resumes the
+   * conversation through the SDK (the rail inference already accepts).
+   */
+  chat?: Pick<NexusChat, 'resumeClientTool'>;
+  conversationId?: string | null;
+  /** See `NexusChatAppProps.dataAccessTransport`. */
+  dataAccessTransport?: DataAccessTransport;
   onResponded: () => void;
   onSca?: (info: { authRequestId: string | null; command: string }) => void;
 }) {
@@ -93,6 +184,50 @@ export function DataAccessPromptCard({
     prompt.scopeChoices?.[0] ? `${prompt.scopeChoices[0].kind}:${prompt.scopeChoices[0].id}` : '',
   );
 
+  /**
+   * Route the decision over `anx.communicate.client-tool.result`. This is the
+   * app-identity-safe rail (the region allowlists `anx.communicate.*`), and
+   * inference applies the decision to the gated tool call
+   * (`{ approved, decision, grantId }`).
+   */
+  const respondViaClientToolResult = async (
+    decision: string,
+    selectedScope: { kind: string; id: string } | null,
+  ) => {
+    const planned = planDataAccessResponse({
+      grantId: prompt.grantId!,
+      decision,
+      selectedScope,
+      transport: 'client-tool-result',
+    });
+    const resultPayload = planned.payload.result;
+    if (chat?.resumeClientTool && prompt.callId) {
+      const resumed = await chat.resumeClientTool({
+        callId: prompt.callId,
+        conversationId: conversationId || undefined,
+        result: resultPayload,
+      });
+      if (resumed.ok) {
+        onResponded();
+        return;
+      }
+      setError(resumed.message || 'Failed to record decision');
+      return;
+    }
+    // No conversation handle: send the raw command. It is allowlisted for app
+    // identities and inference treats it as the data-access retry.
+    const result = (await client?.send('anx.communicate.client-tool.result', {
+      conversationId: conversationId || undefined,
+      callId: prompt.callId,
+      result: resultPayload,
+    })) as { ok?: boolean; message?: string; error?: { message?: string } } | undefined;
+    if (result && result.ok === false) {
+      setError(result.error?.message || result.message || 'Failed to record decision');
+      return;
+    }
+    onResponded();
+  };
+
   const respond = async (decision: string) => {
     if (!prompt.grantId) {
       setError('Missing grantId');
@@ -101,16 +236,26 @@ export function DataAccessPromptCard({
     setBusy(true);
     setError(null);
     const selected = (prompt.scopeChoices || []).find((c) => `${c.kind}:${c.id}` === scopeKey);
-    const payload: Record<string, unknown> = { grantId: prompt.grantId, decision };
-    if (decision !== 'deny_once' && selected && !selected.isLeaf) {
-      payload.scope = { kind: selected.kind, id: selected.id };
-    }
+    const selectedScope =
+      selected && !selected.isLeaf ? { kind: selected.kind, id: selected.id } : null;
     try {
+      // An app host cannot call `anx.security.*` at all — skip straight to the
+      // client-tool-result rail.
+      if (dataAccessTransport === 'client-tool-result') {
+        await respondViaClientToolResult(decision, selectedScope);
+        return;
+      }
       if (!client?.send) {
         onResponded();
         return;
       }
-      const result = (await client.send('anx.security.data-access.respond', payload)) as {
+      const planned = planDataAccessResponse({
+        grantId: prompt.grantId,
+        decision,
+        selectedScope,
+        transport: 'command',
+      });
+      const result = (await client.send(planned.command, planned.payload)) as {
         ok?: boolean;
         kind?: string;
         authRequestId?: string | null;
@@ -126,11 +271,29 @@ export function DataAccessPromptCard({
         return;
       }
       if (result?.ok === false) {
+        // Hard-forbidden for this identity → the same decision still reaches
+        // inference over the allowlisted rail.
+        if (isDataAccessAppForbidden(result)) {
+          await respondViaClientToolResult(decision, selectedScope);
+          return;
+        }
         setError(result.error?.message || result.message || 'Failed to record decision');
         return;
       }
       onResponded();
     } catch (e) {
+      if (isDataAccessAppForbidden(e)) {
+        try {
+          await respondViaClientToolResult(
+            decision,
+            selected && !selected.isLeaf ? { kind: selected.kind, id: selected.id } : null,
+          );
+          return;
+        } catch (fallbackErr) {
+          setError(fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
+          return;
+        }
+      }
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);

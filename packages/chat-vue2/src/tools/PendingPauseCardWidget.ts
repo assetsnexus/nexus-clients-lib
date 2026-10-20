@@ -4,7 +4,9 @@ import { modeLabel, type PendingPauseCard } from '@nexus/chat-core';
 /**
  * One-click cards for the three pending-pause rails (Plan-write approval, mode
  * switch, gated client tool). Emits `resolve` with the rail + decision; the host
- * calls `chat.resolveApproval` / `chat.resolveModeSwitch` / `chat.resumeClientTool`.
+ * calls `chat.resolveApproval` / `chat.resolveModeSwitch` / and for a
+ * `client_tool` card `chat.approveClientTool` (runs the handler and resumes with
+ * its real result) / `chat.answerClientToolPause`.
  */
 export const PendingPauseCardWidget = defineComponent({
   name: 'NexusPendingPauseCardWidget',

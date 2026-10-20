@@ -159,3 +159,78 @@ describe('client-tool index send-once', () => {
     expect(second?.clientToolIndexHash).toBeUndefined();
   });
 });
+
+describe('client-tool index conceptSlugs', () => {
+  it('emits conceptSlugs from getClientToolIndex and the sent index payload', async () => {
+    const sent: Sent[] = [];
+    const chat = createNexusChat({ client: makeClient(sent) });
+    chat.registerClientTool({
+      name: 'anx.page.highlight',
+      description: 'Highlight a region',
+      availability: 'discoverable',
+      access: 'read',
+      conceptSlugs: ['ui.annotation', 'ui.annotation', '  ui.page-outline  '],
+      handler: () => ({ ok: true }),
+    });
+    // Normalised (trimmed + de-duped) in the local index.
+    expect(chat.getClientToolIndex()).toEqual([
+      {
+        name: 'anx.page.highlight',
+        description: 'Highlight a region',
+        access: 'read',
+        conceptSlugs: ['ui.annotation', 'ui.page-outline'],
+      },
+    ]);
+
+    await chat.sendMessage('one', { conversationId: 'c1' });
+    expect(sends(sent)[0]?.clientToolIndex).toEqual([
+      {
+        name: 'anx.page.highlight',
+        description: 'Highlight a region',
+        access: 'read',
+        conceptSlugs: ['ui.annotation', 'ui.page-outline'],
+      },
+    ]);
+  });
+
+  it('omits conceptSlugs when none are registered', async () => {
+    const sent: Sent[] = [];
+    const chat = createNexusChat({ client: makeClient(sent) });
+    registerDiscoverable(chat, 'anx.page.highlight');
+    await chat.sendMessage('one', { conversationId: 'c1' });
+    const index = sends(sent)[0]?.clientToolIndex as Record<string, unknown>[] | undefined;
+    const entry = index?.[0] as Record<string, unknown>;
+    expect(entry).not.toHaveProperty('conceptSlugs');
+  });
+
+  it('re-sends the full index when a registered conceptSlugs set changes', async () => {
+    const sent: Sent[] = [];
+    const chat = createNexusChat({ client: makeClient(sent) });
+    const register = (slugs: string[]) =>
+      chat.registerClientTool({
+        name: 'anx.page.highlight',
+        description: 'Highlight a region',
+        availability: 'discoverable',
+        access: 'read',
+        conceptSlugs: slugs,
+        handler: () => ({ ok: true }),
+      });
+    register(['ui.annotation']);
+    await chat.sendMessage('one', { conversationId: 'c1' });
+    await chat.sendMessage('two', { conversationId: 'c1' });
+    expect(sends(sent)[1]?.clientToolIndexHash).toBe(SERVER_HASH);
+
+    // Same name/description, new concepts → the fingerprint must move.
+    register(['ui.annotation', 'ui.page-outline']);
+    await chat.sendMessage('three', { conversationId: 'c1' });
+    expect(sends(sent)[2]?.clientToolIndex).toEqual([
+      {
+        name: 'anx.page.highlight',
+        description: 'Highlight a region',
+        access: 'read',
+        conceptSlugs: ['ui.annotation', 'ui.page-outline'],
+      },
+    ]);
+    expect(sends(sent)[2]?.clientToolIndexHash).toBeUndefined();
+  });
+});

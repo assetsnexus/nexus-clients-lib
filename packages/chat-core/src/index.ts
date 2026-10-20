@@ -1698,6 +1698,7 @@ export type NexusChat = {
     parameters?: Record<string, unknown>;
     access?: 'read' | 'write';
     availability?: 'pinned' | 'discoverable';
+    conceptSlugs?: string[];
     handler: (args: unknown) => Promise<unknown> | unknown;
   }) => void;
   /** Current discoverable client tools as the compact index sent with a message. */
@@ -1716,6 +1717,37 @@ export type NexusChat = {
     result: unknown;
     conversationId?: string;
   }) => Promise<{ ok: boolean; message?: string; code?: string }>;
+  /**
+   * Approve and RUN a `client_tool` pause that required explicit approval (a
+   * Plan-mode `write` tool). Unlike the approval card's synthetic
+   * `{ ok: true, granted: true }` stub, this resolves the registered/page
+   * handler for the paused call and resumes the turn with the handler's REAL
+   * result — exactly once. Denial resumes with a `{ approved: false, … }`
+   * decision over the same rail.
+   *
+   * `callId` is optional when only one pause is open (the controller remembers
+   * the paused request). Returns `ok: false` with `code: 'NO_CLIENT_TOOL_HANDLER'`
+   * when nothing can execute the tool, or `'NO_PAUSED_CLIENT_TOOL'` when no
+   * matching pause is remembered.
+   */
+  approveClientTool: (opts?: {
+    callId?: string;
+    conversationId?: string;
+    approved?: boolean;
+    /** Reason surfaced to the model when `approved === false`. */
+    reason?: string;
+  }) => Promise<{ ok: boolean; ran?: boolean; message?: string; code?: string }>;
+  /**
+   * Public alias of the internal pause resolver: run the handler for the paused
+   * `client_tool` request and resume with its result. When `result` is supplied
+   * the host already ran the handler and only wants the resume (legacy
+   * behaviour); otherwise the controller runs it.
+   */
+  answerClientToolPause: (opts: {
+    callId: string;
+    result?: unknown;
+    conversationId?: string;
+  }) => Promise<{ ok: boolean; ran?: boolean; message?: string; code?: string }>;
   /**
    * Resume an `approval` pause: one click on the preview card. `approved` mints
    * the server-side execution marker and re-runs the gated command; passing
@@ -1827,6 +1859,8 @@ export type CreateNexusChatOptions = {
     parameters?: Record<string, unknown>;
     access?: import('./types.js').ChatClientToolAccess;
     availability?: 'pinned' | 'discoverable';
+    /** Concept slugs linked to this tool; discoverable index entries only. */
+    conceptSlugs?: string[];
     handler: (args: unknown) => Promise<unknown> | unknown;
   }>;
   /**
@@ -2025,6 +2059,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   let pageTools: PageToolSource | null = opts.pageTools ?? null;
   let activeSocket: WebSocket | null = null;
   /**
+   * The paused `client_tool` request currently awaiting a host decision. Set on
+   * every pause and cleared on resume, so `approveClientTool` / `answerClientToolPause`
+   * can resolve the registered handler and resume with its REAL result (an
+   * approval card only posts a synthetic `{ granted: true }` stub otherwise).
+   */
+  let pausedClientToolReq: {
+    callId: string;
+    name: string;
+    arguments: Record<string, unknown>;
+    conversationId: string | null;
+    action: 'request' | 'bind';
+  } | null = null;
+  /**
    * Server-issued hash of the last discoverable index this conversation sent,
    * plus a local fingerprint of the registry that produced it. When the
    * registry is unchanged, later turns send only the hash and skip the index
@@ -2073,8 +2120,12 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
    * Resume a `client_tool` pause with the raw handler result. A `bind` pause
    * instead answers with `{ extraFunctionSchemas }` so the model can call the
    * discoverable tool on the next assemble loop.
+   *
+   * `fallbackToHook` (default true) is the auto-run rail's behaviour: when no
+   * handler resolves, the host hook answers the pause. The approval path passes
+   * `false` so it can report "no handler" instead of re-surfacing the same card.
    */
-  const answerClientToolPause = async (
+  const resumeClientToolPause = async (
     req: {
       callId: string;
       name: string;
@@ -2083,7 +2134,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       action: 'request' | 'bind';
     },
     registry: ClientToolRegistry,
-  ) => {
+    opts2: { fallbackToHook: boolean } = { fallbackToHook: true },
+  ): Promise<{ ok: boolean; ran: boolean; code?: string; message?: string }> => {
     if (req.action === 'bind') {
       const indexed = isIndexedClientTool(req.name, registry.indexEntries());
       const bind = indexed ? registry.bindResult(req.name) : null;
@@ -2092,19 +2144,27 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         result: bind ?? { error: `Unknown client tool "${req.name}"` },
         conversationId: req.conversationId ?? undefined,
       });
-      return;
+      return { ok: true, ran: false, code: 'BIND', message: undefined };
     }
     // Resolution order: registered tool, then page tool, then the host hook.
     const usedPageTool = !registry.has(req.name) && !!pageTools?.canExecute?.(req.name);
     const handler = selectClientToolHandler(req.name, registry.map(), pageTools);
     if (!handler) {
+      if (!opts2.fallbackToHook) {
+        return {
+          ok: false,
+          ran: false,
+          code: 'NO_CLIENT_TOOL_HANDLER',
+          message: `No handler registered for client tool "${req.name}"`,
+        };
+      }
       await opts.hooks?.onClientToolRequest?.({
         callId: req.callId,
         name: req.name,
         arguments: req.arguments,
         conversationId: req.conversationId,
       });
-      return;
+      return { ok: true, ran: false, code: 'HOST_HOOK' };
     }
     let result: unknown;
     try {
@@ -2127,6 +2187,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         log('client_tool_after_result_failed', { message: String(err), name: req.name });
       }
     }
+    return { ok: true, ran: true };
   };
 
   /**
@@ -2162,6 +2223,19 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           : {}),
       },
     );
+    // Remember the exact paused client-tool request so a later
+    // `approveClientTool({ callId })` can resolve the handler and resume with
+    // the real result (the approval card itself carries only a synthetic stub).
+    pausedClientToolReq =
+      req.kind === 'client_tool'
+        ? {
+            callId: req.callId,
+            name: req.name,
+            arguments: req.arguments,
+            conversationId: req.conversationId,
+            action: req.action,
+          }
+        : null;
     store.setState({
       streaming: false,
       pausedCallId: req.callId,
@@ -2173,7 +2247,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     if (card) opts.hooks?.onPendingPause?.(card);
 
     if (req.kind === 'client_tool' && !req.requiresApproval) {
-      void answerClientToolPause(
+      void resumeClientToolPause(
         {
           callId: req.callId,
           name: req.name,
@@ -4662,6 +4736,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         logLockedAgentRefusal(gated);
         return { ok: false, code: gated.code, message: gated.message };
       }
+      // Any resume settles the remembered pause; a stale request must never let
+      // `approveClientTool` re-run a call that already finished.
+      if (pausedClientToolReq?.callId === callId) pausedClientToolReq = null;
 
       const panel = currentPanel(store.getState());
       const panelId = panel?.id;
@@ -4904,6 +4981,84 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         return { ok: false, message };
       }
     },
+    approveClientTool(approveOpts) {
+      const paused =
+        pausedClientToolReq &&
+        (!approveOpts?.callId || pausedClientToolReq.callId === approveOpts.callId)
+          ? pausedClientToolReq
+          : null;
+      if (!paused) {
+        return Promise.resolve({
+          ok: false,
+          code: 'NO_PAUSED_CLIENT_TOOL',
+          message: approveOpts?.callId
+            ? `No paused client tool for callId ${approveOpts.callId}`
+            : 'No client tool is paused for approval',
+        });
+      }
+      // Claim the pause synchronously so a second concurrent approval cannot run
+      // the handler again (the resume would clear it only after it already ran).
+      pausedClientToolReq = null;
+      if (approveOpts?.approved === false) {
+        // Denial resumes with an explicit decision over the same rail — no
+        // handler runs, and the model is told the user declined.
+        return controller.resumeClientTool({
+          callId: paused.callId,
+          result: {
+            ok: false,
+            granted: false,
+            approved: false,
+            error: approveOpts.reason || 'User denied client tool',
+          },
+          conversationId: approveOpts?.conversationId || paused.conversationId || undefined,
+        });
+      }
+      return resumeClientToolPause(
+        {
+          callId: paused.callId,
+          name: paused.name,
+          arguments: paused.arguments,
+          conversationId: approveOpts?.conversationId || paused.conversationId || null,
+          action: paused.action,
+        },
+        toolRegistry,
+        // A one-click approval card that resolves to nothing runnable must fail
+        // loudly (`NO_CLIENT_TOOL_HANDLER`) rather than re-surface to the hook.
+        { fallbackToHook: false },
+      );
+    },
+    answerClientToolPause(answerOpts) {
+      // `result` supplied → the host already ran the handler; just resume.
+      if (answerOpts && 'result' in answerOpts) {
+        return controller.resumeClientTool({
+          callId: answerOpts.callId,
+          result: answerOpts.result,
+          conversationId: answerOpts.conversationId,
+        });
+      }
+      const paused = pausedClientToolReq;
+      if (!paused || (answerOpts?.callId && paused.callId !== answerOpts.callId)) {
+        return Promise.resolve({
+          ok: false,
+          code: 'NO_PAUSED_CLIENT_TOOL',
+          message: 'No client tool is paused for the given callId',
+        });
+      }
+      pausedClientToolReq = null;
+      return resumeClientToolPause(
+        {
+          callId: paused.callId,
+          name: paused.name,
+          arguments: paused.arguments,
+          conversationId: answerOpts?.conversationId || paused.conversationId || null,
+          action: paused.action,
+        },
+        toolRegistry,
+        // Public resolver: keep the legacy host-hook fallback for callers that
+        // hand an unknown tool back to `onClientToolRequest`.
+        { fallbackToHook: true },
+      );
+    },
     resolveApproval(approvalOpts) {
       return controller.resumeClientTool({
         callId: approvalOpts.callId,
@@ -4945,6 +5100,18 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     },
     seedPendingPause(card) {
       const next = card ?? null;
+      // Restore the runnable request behind a reloaded client_tool approval card
+      // so `approveClientTool` can still run the handler after a refresh.
+      pausedClientToolReq =
+        next && next.kind === 'client_tool' && next.action === 'request'
+          ? {
+              callId: next.callId,
+              name: next.name,
+              arguments: next.arguments,
+              conversationId: store.getState().conversationId ?? null,
+              action: next.action,
+            }
+          : null;
       store.setState({
         pendingPause: next,
         pendingPauseKind: next?.kind ?? null,

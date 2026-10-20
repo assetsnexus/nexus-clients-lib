@@ -193,6 +193,21 @@ export type NexusChatAppProps = {
    * changes, without rebuilding the controller.
    */
   pageTools?: PageToolSource | null;
+  /**
+   * How the data-access card submits a decision.
+   * - `command` (default): `anx.security.data-access.respond` directly. This is
+   *   hard-forbidden for OAuth **app** identities (the `anx.security.` prefix is
+   *   blocked before the grant allowlist), so an app host must pass
+   *   `client-tool-result`.
+   * - `client-tool-result`: route the decision through
+   *   `anx.communicate.client-tool.result` (`{ approved, decision, grantId }`),
+   *   which the SDK already uses to resume a paused turn.
+   *
+   * Independent of this option, a `command` send that comes back
+   * `APP_ACCESS_FORBIDDEN` falls back to the client-tool-result rail
+   * automatically, so a user-session host keeps working unchanged.
+   */
+  dataAccessTransport?: 'command' | 'client-tool-result';
   /** Transport and open failures. Hosts use `code` for sign-in; the message is safe to show. */
   onError?: (info: { message: string; code?: string }) => void;
   /**
@@ -300,6 +315,7 @@ export function NexusChatApp({
   tools: toolsProp,
   clientTools: clientToolsProp = null,
   pageTools: pageToolsProp = null,
+  dataAccessTransport = 'command',
   openQuestion = null,
   activePlan = null,
   onQuestionAnswered,
@@ -1207,6 +1223,9 @@ export function NexusChatApp({
                 <DataAccessPromptCard
                   prompt={dataAccessPrompt}
                   client={client}
+                  dataAccessTransport={dataAccessTransport}
+                  conversationId={conversationId}
+                  chat={chat}
                   onResponded={() => setDataAccessPrompt(null)}
                   onSca={handleSca}
                 />
@@ -1541,6 +1560,9 @@ export function NexusChatApp({
                 <DataAccessPromptCard
                   prompt={dataAccessPrompt}
                   client={client}
+                  dataAccessTransport={dataAccessTransport}
+                  conversationId={conversationId}
+                  chat={chat}
                   onResponded={() => setDataAccessPrompt(null)}
                   onSca={handleSca}
                 />

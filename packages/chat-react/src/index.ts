@@ -95,10 +95,13 @@ export type { ConfigSheetProps } from './components/config/ConfigSheet.js';
 export {
   ClientToolGrantCard,
   DataAccessPromptCard,
+  isDataAccessAppForbidden,
+  planDataAccessResponse,
   PermissionElevationCard,
   PermissionElevationDock,
   ScaRequiredBanner,
 } from './components/grants/GrantCards.js';
+export type { DataAccessTransport } from './components/grants/GrantCards.js';
 export { PendingPauseCardView } from './components/grants/PendingPauseCards.js';
 export {
   AskUserChoiceWidget,

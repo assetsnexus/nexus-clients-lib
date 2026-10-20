@@ -59,6 +59,12 @@ export type ChatToolDescriptor = {
    *   schema on demand.
    */
   availability?: 'pinned' | 'discoverable';
+  /**
+   * Concept slugs a host linked to this tool (optional). Discoverable-only:
+   * they ride in the compact `clientToolIndex` entry so discovery can match the
+   * conversation's pinned concepts; the server normalises and caches them.
+   */
+  conceptSlugs?: string[];
 };
 
 export type IoDescriptor =

@@ -27,6 +27,12 @@ export type ClientToolIndexEntry = {
   access: ChatClientToolAccess;
   /** Optional pack hint (portal page, storage, …) so discovery can group rows. */
   pack?: string;
+  /**
+   * Concept slugs the host linked to this tool (optional). Matched against the
+   * conversation's pinned concepts during discovery; normalised + de-duped
+   * server-side. Discoverable-only.
+   */
+  conceptSlugs?: string[];
 };
 
 /** A tool the host can execute when the model calls it. */
@@ -65,6 +71,27 @@ export function clientToolAvailabilityOf(descriptor: {
   return descriptor?.availability === 'discoverable' ? 'discoverable' : 'pinned';
 }
 
+/**
+ * Trim + de-dupe concept slugs, dropping anything that is not a non-empty
+ * string. Returns undefined when nothing valid remains, so an empty list never
+ * rides the index payload (mirrors the server-side normalisation).
+ */
+export function normalizeConceptSlugs(
+  raw: unknown,
+): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    if (typeof value !== 'string') continue;
+    const slug = value.trim();
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(slug);
+  }
+  return out.length ? out : undefined;
+}
+
 export class ClientToolRegistry {
   private readonly tools = new Map<string, ClientToolRegistration>();
 
@@ -75,16 +102,19 @@ export class ClientToolRegistry {
     parameters?: Record<string, unknown>;
     access?: ChatClientToolAccess;
     availability?: 'pinned' | 'discoverable';
+    conceptSlugs?: string[];
     handler: (args: unknown) => Promise<unknown> | unknown;
   }): void {
     const name = normalizeName(input?.name);
     if (!name || typeof input.handler !== 'function') return;
+    const conceptSlugs = normalizeConceptSlugs(input.conceptSlugs);
     const descriptor: ChatToolDescriptor = {
       name,
       ...(input.description ? { description: input.description } : {}),
       ...(input.parameters ? { parameters: input.parameters } : {}),
       ...(input.access ? { access: input.access } : {}),
       ...(input.availability ? { availability: input.availability } : {}),
+      ...(conceptSlugs ? { conceptSlugs } : {}),
     };
     this.tools.set(name, { descriptor, handler: input.handler });
   }
@@ -96,7 +126,15 @@ export class ClientToolRegistry {
   ): void {
     const name = normalizeName(descriptor?.name);
     if (!name || typeof handler !== 'function') return;
-    this.tools.set(name, { descriptor: { ...descriptor, name }, handler });
+    const conceptSlugs = normalizeConceptSlugs(descriptor?.conceptSlugs);
+    this.tools.set(name, {
+      descriptor: {
+        ...descriptor,
+        name,
+        ...(conceptSlugs ? { conceptSlugs } : { conceptSlugs: undefined }),
+      },
+      handler,
+    });
   }
 
   has(name: string): boolean {
@@ -143,10 +181,12 @@ export class ClientToolRegistry {
     const out: ClientToolIndexEntry[] = [];
     for (const { descriptor } of this.tools.values()) {
       if (clientToolAvailabilityOf(descriptor) !== 'discoverable') continue;
+      const conceptSlugs = normalizeConceptSlugs(descriptor.conceptSlugs);
       out.push({
         name: descriptor.name,
         description: descriptor.description || `Client tool ${descriptor.name}`,
         access: clientToolAccessOf(descriptor),
+        ...(conceptSlugs ? { conceptSlugs } : {}),
       });
     }
     return out;
@@ -207,7 +247,12 @@ export function localClientToolIndexFingerprint(
   if (!index?.length) return null;
   const canonical = [...index]
     .filter((e) => e?.name)
-    .map((e) => `${e.name}\u0001${e.description ?? ''}\u0001${e.access ?? 'write'}\u0001${e.pack ?? ''}`)
+    .map((e) => {
+      const slugs = normalizeConceptSlugs(e.conceptSlugs);
+      return `${e.name}\u0001${e.description ?? ''}\u0001${e.access ?? 'write'}\u0001${e.pack ?? ''}\u0001${
+        slugs ? [...slugs].sort().join(',') : ''
+      }`;
+    })
     .sort();
   if (!canonical.length) return null;
   // djb2 — cheap, deterministic, and only needs to be collision-free enough to

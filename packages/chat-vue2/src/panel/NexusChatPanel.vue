@@ -850,7 +850,9 @@ export default {
      * Active pending-pause card (client tool approval, plan-mode write approval,
      * or mode-switch approval). `PendingPauseCardWidget` renders it and emits
      * `resolve`; the host forwards it to `chat.resolveApproval` /
-     * `chat.resolveModeSwitch` / `chat.answerClientToolPause`.
+     * `chat.resolveModeSwitch` / for a `client_tool` card
+     * `chat.approveClientTool` (runs the handler, resumes with its real result)
+     * and `chat.answerClientToolPause`.
      */
     pendingPause: { type: Object, default: null },
     /** Session rows used to resolve parent conversation title in subagent chats. */
