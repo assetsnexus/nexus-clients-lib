@@ -54,9 +54,48 @@ export const TOOL_WIDGET_CSS = `
 .nexus-media-figure { margin: 0; border: 1px solid #e3e3e3; border-radius: 4px; overflow: hidden; background: #f8f9fa; }
 .nexus-media-img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 .nexus-media-audio { width: 100%; max-width: 320px; height: 32px; }
-.nexus-ask-choice { border: 1px solid #51cbce; border-radius: 6px; padding: 10px; background: rgba(81,203,206,.06); }
+/* ---- ask_user_choice card ---------------------------------------------- */
+/* The card owns its foreground so a host theme (e.g. the portal's global
+   .btn-outline-primary / label / .form-control rules) can no longer paint
+   bright option text on the bright card surface ("bright on bright").
+   Colors follow the chat theme tokens when a host defines them, and fall
+   back to the light Paper-Dashboard surface otherwise. */
+.nexus-ask-choice { border: 1px solid #51cbce; border-radius: 6px; padding: 10px; background: rgba(81,203,206,.06); color: var(--nx-chat-text, #2c3e50); }
 .nexus-ask-choice--active { border-width: 2px; box-shadow: 0 0 0 2px rgba(81,203,206,.25); }
+.nexus-ask-choice__title { color: var(--nx-chat-text, #2c3e50); }
+.nexus-ask-choice__options { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .nexus-ask-choice__options .btn { white-space: normal; }
+/* Option buttons must not inherit the host's bright outline color. */
+.nexus-ask-choice__options .btn-outline-primary { color: #2c8a8d; border-color: #51cbce; background: transparent; }
+.nexus-ask-choice__options .btn-outline-primary:hover,
+.nexus-ask-choice__options .btn-outline-primary:focus,
+.nexus-ask-choice__options .btn-outline-primary:active { color: #fff; background: #51cbce; border-color: #51cbce; }
+.nexus-ask-choice__options .btn-outline-primary:disabled,
+.nexus-ask-choice__options .btn-outline-primary.disabled { color: var(--nx-chat-muted, #9a9a9a) !important; border-color: #51cbce !important; background: transparent !important; }
+.nexus-ask-choice__options .btn-primary { color: #fff; background: #51cbce; border-color: #51cbce; }
+/* React-parity option row (radio/checkbox + label). */
+.nexus-ask-choice__option { display: flex; align-items: flex-start; gap: 8px; color: var(--nx-chat-text, #2c3e50); font-size: 13px; line-height: 1.4; cursor: pointer; }
+.nexus-ask-choice__option input { flex-shrink: 0; margin-top: 2px; accent-color: var(--nx-chat-accent, #2c8a8d); }
+.nexus-ask-choice__persist,
+.nexus-ask-choice__persist-details { color: var(--nx-chat-text, #2c3e50); font-size: 12px; }
+.nexus-ask-choice__persist .form-check-label,
+.nexus-ask-choice__persist-toggle { color: var(--nx-chat-text, #2c3e50); }
+.nexus-ask-choice__persist .form-check-input { accent-color: var(--nx-chat-accent, #2c8a8d); }
+/* Free-text answer + persist inputs (Vue host wraps them in __custom). */
+.nexus-ask-choice__custom.form-control,
+.nexus-ask-choice__custom .form-control,
+.nexus-ask-choice__persist-why,
+.nexus-ask-choice__persist-details select,
+.nexus-ask-choice__persist-details .form-control {
+  color: var(--nx-chat-text, #2c3e50);
+  background: var(--nx-chat-surface, #fff);
+  border: 1px solid var(--nx-chat-border, #ced4da);
+  border-radius: 6px;
+}
+.nexus-ask-choice__custom.form-control::placeholder,
+.nexus-ask-choice__custom .form-control::placeholder,
+.nexus-ask-choice__persist-why::placeholder,
+.nexus-ask-choice__persist-details .form-control::placeholder { color: var(--nx-chat-muted, #9a9a9a); }
 .nexus-checkback { border: 1px solid #51cbce; border-radius: 6px; padding: 10px; }
 .nexus-checkback--done { border-color: #6bd098; background: rgba(107,208,152,.08); }
 .nexus-checkback--overdue { border-color: #fbc658; background: rgba(251,198,88,.08); }
@@ -690,7 +729,7 @@ export const TOOL_WIDGET_CSS = `
 `;
 
 let injectedVersion: string | null = null;
-const STYLE_VERSION = 'search-preset-v1';
+const STYLE_VERSION = 'ask-choice-readable-v1';
 
 export function ensureToolWidgetStyles(): void {
   if (typeof document === 'undefined') return;
