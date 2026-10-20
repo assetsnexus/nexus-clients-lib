@@ -190,7 +190,7 @@ export type PermissionElevationPromptModel = {
   onboardingSatisfied?: boolean;
 };
 
-type ElevationDecision = 'deny' | 'allow_once' | 'allow_session';
+type ElevationDecision = 'deny' | 'allow_once' | 'allow_session' | 'allow_always';
 
 function elevationCommandNames(prompt: PermissionElevationPromptModel): string[] {
   return [...(prompt.commandNames || []), ...(prompt.command ? [prompt.command] : [])]
@@ -417,8 +417,22 @@ export function PermissionElevationDock({
                   >
                     Allow for conversation
                   </button>
+                  <button
+                    type="button"
+                    className="nexus-chat__btn"
+                    disabled={rowBusy}
+                    onClick={() => void respondOne(prompt, 'allow_always')}
+                  >
+                    Allow always (this agent)
+                  </button>
                 </div>
               )}
+              {!needsOnboarding ? (
+                <p className="nexus-chat__elevation-hint">
+                  <strong>Allow always</strong> applies to your future conversations with this
+                  agent only — it never grants anything to other people who chat with this agent.
+                </p>
+              ) : null}
             </li>
           );
         })}

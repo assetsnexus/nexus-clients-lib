@@ -1555,6 +1555,13 @@
   font-size: 11px;
 }
 
+.nexus-chat__elevation-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(26, 29, 39, 0.62);
+}
+
 .nexus-chat__elevation-dock .nexus-chat__btn {
   border: 1px solid rgba(26, 29, 39, 0.16);
   background: #fff;
@@ -1579,6 +1586,68 @@
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
+}
+
+/* ---- ask_user_choice card ---------------------------------------------- */
+/* The card must own its foreground color: a light host theme inherited from the
+   page (e.g. a portal <label>/<input> rule) otherwise paints bright option
+   text on the bright card surface ("bright on bright"). Force the chat theme's
+   text color and readable control chrome. */
+.nexus-ask-choice {
+  color: var(--nx-chat-text);
+}
+
+.nexus-ask-choice__options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.nexus-ask-choice__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--nx-chat-text);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.nexus-ask-choice__option input {
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--nx-chat-accent, #2563eb);
+}
+
+.nexus-ask-choice__persist,
+.nexus-ask-choice__persist-details {
+  color: var(--nx-chat-text);
+  font-size: 12px;
+}
+
+.nexus-ask-choice__persist-scope,
+.nexus-ask-choice__persist-toggle {
+  color: var(--nx-chat-text);
+}
+
+.nexus-ask-choice__custom,
+.nexus-ask-choice__persist-why,
+.nexus-ask-choice__persist-scope select {
+  color: var(--nx-chat-text);
+  background: color-mix(in srgb, var(--nx-chat-surface) 60%, #000 6%);
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.nexus-ask-choice__custom::placeholder,
+.nexus-ask-choice__persist-why::placeholder {
+  color: var(--nx-chat-muted);
+}
+
+.nexus-ask-choice .nexus-chat__muted {
+  color: var(--nx-chat-muted);
 }
 
 .nexus-chat__grant-args {
