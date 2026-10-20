@@ -192,3 +192,30 @@ export function isIndexedClientTool(
     (e) => e?.name === n || e?.name === wire || e?.name?.replace(/\./g, '_') === wire,
   );
 }
+
+/**
+ * Stable-ish content hash of an index, used purely as a client-side cache key in
+ * the same conversation. It must NOT be sent as the server's `clientToolIndexHash`
+ * — the server computes and returns its own hash from the index it stored, so the
+ * two sides can never disagree. This one only lets the SDK recognise "the host
+ * did not change the registry" and remember whether it already sent the index
+ * this conversation.
+ */
+export function localClientToolIndexFingerprint(
+  index: readonly ClientToolIndexEntry[] | undefined | null,
+): string | null {
+  if (!index?.length) return null;
+  const canonical = [...index]
+    .filter((e) => e?.name)
+    .map((e) => `${e.name}\u0001${e.description ?? ''}\u0001${e.access ?? 'write'}\u0001${e.pack ?? ''}`)
+    .sort();
+  if (!canonical.length) return null;
+  // djb2 — cheap, deterministic, and only needs to be collision-free enough to
+  // detect an unchanged registry within one conversation.
+  let h = 5381;
+  const joined = canonical.join('\u0002');
+  for (let i = 0; i < joined.length; i += 1) {
+    h = ((h << 5) + h + joined.charCodeAt(i)) | 0;
+  }
+  return `f${(h >>> 0).toString(16)}`;
+}

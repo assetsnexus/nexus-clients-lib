@@ -159,6 +159,7 @@ import {
   buildQuestionAnswer,
   clientToolAccessOf,
   isIndexedClientTool,
+  localClientToolIndexFingerprint,
   normalizePendingPauseKind,
   parsePendingPauseCard,
   type ClientToolIndexEntry,
@@ -600,6 +601,7 @@ export {
   clientToolAccessOf,
   clientToolAvailabilityOf,
   isIndexedClientTool,
+  localClientToolIndexFingerprint,
 } from './tools/index.js';
 export type {
   ScheduleCheckBackResult,
@@ -1336,6 +1338,13 @@ export type NexusChat = {
        */
       clientToolIndex?: ClientToolIndexEntry[];
       /**
+       * Hash of an index already sent this conversation. When the registry is
+       * unchanged, the SDK sends this instead of the full index; the server reads
+       * it back from its conversation cache. The SDK fills this automatically —
+       * pass it only to force a specific server-issued hash.
+       */
+      clientToolIndexHash?: string;
+      /**
        * Structured answer to the open `ask_user_choice` question. When present the
        * server validates it against the stored question and replaces `text`.
        */
@@ -2015,6 +2024,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   /** Page tools for the open screen; swappable with `setPageTools`. */
   let pageTools: PageToolSource | null = opts.pageTools ?? null;
   let activeSocket: WebSocket | null = null;
+  /**
+   * Server-issued hash of the last discoverable index this conversation sent,
+   * plus a local fingerprint of the registry that produced it. When the
+   * registry is unchanged, later turns send only the hash and skip the index
+   * payload entirely. Reset when the conversation changes or the registry moves.
+   */
+  let clientToolIndexHashState: {
+    hash: string;
+    fingerprint: string | null;
+    conversationId: string | null;
+  } | null = null;
 
   // Standing tools passed at create time, so a host that does not build the
   // controller (NexusChatApp with `client`) can still register in-page tools.
@@ -3853,6 +3873,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
          */
         clientToolIndex?: ClientToolIndexEntry[];
         /**
+         * Hash of an index already sent this conversation (server-issued). Filled
+         * automatically when the registry is unchanged; pass to override.
+         */
+        clientToolIndexHash?: string;
+        /**
          * Structured answer to the open `ask_user_choice` question. When present the
          * server validates it against the stored question and replaces `text`.
          */
@@ -4079,11 +4104,26 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               ]
             : explicitTools;
         // Discoverable client tools ride as a compact index (not tool schemas):
-        // the model finds one through search and binds it on demand.
+        // the model finds one through search and binds it on demand. On later
+        // turns of the same conversation, when the host did not change the
+        // registry, only the server-issued `clientToolIndexHash` is re-sent —
+        // the server reads the index back from its Redis cache.
         const discoverableIndex =
           command === 'anx.communicate.message.send'
             ? sendOpts.clientToolIndex ?? clientToolIndexEntries()
             : sendOpts.clientToolIndex ?? [];
+        const indexFingerprint = localClientToolIndexFingerprint(discoverableIndex);
+        const conversationKeyForCache = store.getState().conversationId || conversationId || null;
+        const priorIndexHash = clientToolIndexHashState;
+        const canReuseIndexHash =
+          command === 'anx.communicate.message.send' &&
+          !sendOpts.clientToolIndex && // explicit per-send index always wins
+          discoverableIndex.length > 0 &&
+          !!indexFingerprint &&
+          !!priorIndexHash &&
+          !!priorIndexHash.hash &&
+          priorIndexHash.fingerprint === indexFingerprint &&
+          priorIndexHash.conversationId === conversationKeyForCache;
         const pageContext = normalizeHostPageContext(sendOpts.pageContext) ?? hostPageContext;
         // Page pointer (path / tiny prompt / entity ref) from the page-tool source,
         // only when the caller did not set that field for this send.
@@ -4129,7 +4169,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.pageFunctionCalls?.length
             ? { pageFunctionCalls: sendOpts.pageFunctionCalls }
             : {}),
-          ...discoverableIndex.length ? { clientToolIndex: discoverableIndex } : {},
+          ...(canReuseIndexHash && priorIndexHash?.hash
+            ? { clientToolIndexHash: priorIndexHash.hash }
+            : discoverableIndex.length
+              ? { clientToolIndex: discoverableIndex }
+              : {}),
+          ...(sendOpts.clientToolIndexHash && !canReuseIndexHash && !discoverableIndex.length
+            ? { clientToolIndexHash: sendOpts.clientToolIndexHash }
+            : {}),
           ...(sendOpts.questionAnswer ? { questionAnswer: sendOpts.questionAnswer } : {}),
         })) as SendResult;
 
@@ -4182,6 +4229,22 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         }
 
         const data = unwrapData(result);
+        // Remember the server-issued index hash so later turns of this
+        // conversation can send it instead of the whole index. Only the server
+        // hash is stored — never sent back as a client-computed value.
+        if (
+          command === 'anx.communicate.message.send' &&
+          discoverableIndex.length &&
+          data &&
+          typeof data === 'object' &&
+          typeof (data as Record<string, unknown>).clientToolIndexHash === 'string'
+        ) {
+          clientToolIndexHashState = {
+            hash: (data as Record<string, unknown>).clientToolIndexHash as string,
+            fingerprint: indexFingerprint,
+            conversationId: store.getState().conversationId || conversationId || null,
+          };
+        }
         if (sendOpts.conversationOpen) {
           const greetingText = typeof data.greetingText === 'string' ? data.greetingText.trim() : '';
           const dispatched = data.dispatched === true;
