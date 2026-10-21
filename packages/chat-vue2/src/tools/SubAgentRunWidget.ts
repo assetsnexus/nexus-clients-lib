@@ -56,7 +56,7 @@ function shortActivityLabel(name: string, args: Record<string, unknown>): string
 }
 
 function hintFromArgs(args: Record<string, unknown>): string | null {
-  for (const key of ['query', 'q', 'url', 'mission', 'task', 'prompt', 'command']) {
+  for (const key of ['name', 'query', 'q', 'url', 'mission', 'task', 'prompt', 'command']) {
     const v = args[key];
     if (typeof v === 'string' && v.trim()) return truncateLabel(v.trim(), 48);
   }
@@ -96,6 +96,10 @@ export const SubAgentRunWidget = defineComponent({
   components: { DeliveryModePicker },
   props: {
     mission: { type: String, default: '' },
+    /** Human-readable sub-agent display title (2-6 words). Preferred over mission / any id. */
+    name: { type: String, default: '' },
+    /** One-sentence sub-agent purpose. */
+    description: { type: String, default: '' },
     events: { type: Array, default: () => [] },
     status: { type: String, default: 'running' },
     parentCallId: { type: String, default: '' },
@@ -213,8 +217,23 @@ export const SubAgentRunWidget = defineComponent({
         cls: toolStatusClass(String(this.status || this.finalStatus || '')),
       };
     },
+    /** Human-readable title: explicit prop → streamed name → mission. Never a run id. */
+    resolvedName(): string {
+      return (
+        String(this.name || '').trim() ||
+        String(this.typedRun?.subAgentName || '').trim() ||
+        ''
+      );
+    },
+    resolvedDescription(): string {
+      return (
+        String(this.description || '').trim() ||
+        String(this.typedRun?.subAgentDescription || '').trim() ||
+        ''
+      );
+    },
     missionTitle(): string {
-      return truncateLabel(this.mission || 'Subagent', 64);
+      return truncateLabel(this.resolvedName || this.mission || 'Subagent', 64);
     },
     canOpenChat(): boolean {
       return this.canOpen && Boolean(this.resolvedLinkedId || this.resolvedRunId);
@@ -539,8 +558,8 @@ export const SubAgentRunWidget = defineComponent({
           role: 'button',
           tabindex: '0',
           'aria-expanded': String(this.open),
-          'aria-label': `Subagent: ${this.mission || 'run'}`,
-          title: this.mission || undefined,
+          'aria-label': `Subagent: ${this.resolvedName || this.mission || 'run'}`,
+          title: this.resolvedName || this.mission || undefined,
         },
         on: {
           click: () => (this.open = !this.open),
@@ -704,6 +723,17 @@ export const SubAgentRunWidget = defineComponent({
           })
         : null;
 
+    const descriptionBlock = this.resolvedDescription
+      ? h(
+          'div',
+          {
+            class: 'nexus-sub-agent__muted nexus-sub-agent__description',
+            attrs: { title: this.resolvedDescription },
+          },
+          this.resolvedDescription,
+        )
+      : null;
+
     const body = this.open
       ? h(
           'div',
@@ -712,6 +742,7 @@ export const SubAgentRunWidget = defineComponent({
             attrs: { role: 'region', 'aria-label': 'Subagent details' },
           },
           [
+            descriptionBlock,
             approvalBlock,
             controls,
             liveBlock,

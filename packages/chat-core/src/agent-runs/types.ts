@@ -55,6 +55,10 @@ export type AgentRunSummary = {
   origin?: AgentRunOrigin | null;
   status: AgentRunStatus;
   mission?: string | null;
+  /** Short human-readable display title (2-6 words). Prefer over runId in UI. */
+  name?: string | null;
+  /** One-sentence purpose shown next to the name. */
+  description?: string | null;
   parentConversationId?: string | null;
   linkedConversationId?: string | null;
   costLimitMinor?: number | null;
@@ -75,6 +79,10 @@ export type SubAgentStripItem = {
   runId: string | null;
   parentCallId: string;
   mission: string;
+  /** Human-readable sub-agent name; UI chip/header should prefer this over any id. */
+  name?: string | null;
+  /** One-sentence purpose shown next to the name. */
+  description?: string | null;
   status: string;
   finalStatus?: string | null;
   linkedConversationId?: string | null;

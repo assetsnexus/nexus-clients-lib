@@ -57,6 +57,10 @@ export type ChatToolRun = {
   subAgentSummary?: unknown;
   /** WP23: sub-agent final status. */
   subAgentFinalStatus?: SubAgentFinalStatus;
+  /** Human-readable sub-agent display title (2-6 words). Prefer this over any run id in UI. */
+  subAgentName?: string | null;
+  /** One-sentence sub-agent purpose shown next to its name. */
+  subAgentDescription?: string | null;
   /** AgentRun id when origin=chat_agent (stable across refresh). */
   subAgentRunId?: string | null;
   /** Linked child conversation for open-in-chat. */
@@ -164,6 +168,8 @@ export type PanelState = {
   backgroundSubAgentCompleted?: boolean;
   conversationRole?: 'parent' | 'subagent' | 'room' | string | null;
   parentConversationId?: string | null;
+  subAgentName?: string | null;
+  subAgentDescription?: string | null;
   subAgentRunId?: string | null;
   usage?: ChatTurn['usage'];
   spendLimits?: ChatSpendLimitsState | null;

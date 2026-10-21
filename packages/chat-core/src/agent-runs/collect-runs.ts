@@ -22,10 +22,49 @@ function missionFrom(run: ChatToolRun): string {
   if (typeof run.args?.mission === 'string' && run.args.mission.trim()) {
     return run.args.mission.trim();
   }
+  if (typeof run.subAgentName === 'string' && run.subAgentName.trim()) {
+    return run.subAgentName.trim();
+  }
   if (typeof run.label === 'string' && run.label && run.label !== 'run_sub_agent') {
     return run.label;
   }
   return 'Subagent';
+}
+
+/** Human-readable sub-agent name; falls back from args → streamed meta → result payload. */
+function nameFrom(run: ChatToolRun): string | null {
+  if (typeof run.subAgentName === 'string' && run.subAgentName.trim()) {
+    return run.subAgentName.trim();
+  }
+  if (typeof run.args?.name === 'string' && run.args.name.trim()) return run.args.name.trim();
+  if (
+    run.result &&
+    typeof run.result === 'object' &&
+    typeof (run.result as { name?: unknown }).name === 'string'
+  ) {
+    const n = String((run.result as { name: string }).name).trim();
+    return n || null;
+  }
+  return null;
+}
+
+/** One-sentence sub-agent purpose. */
+function descriptionFrom(run: ChatToolRun): string | null {
+  if (typeof run.subAgentDescription === 'string' && run.subAgentDescription.trim()) {
+    return run.subAgentDescription.trim();
+  }
+  if (typeof run.args?.description === 'string' && run.args.description.trim()) {
+    return run.args.description.trim();
+  }
+  if (
+    run.result &&
+    typeof run.result === 'object' &&
+    typeof (run.result as { description?: unknown }).description === 'string'
+  ) {
+    const d = String((run.result as { description: string }).description).trim();
+    return d || null;
+  }
+  return null;
 }
 
 function statusFrom(run: ChatToolRun): string {
@@ -95,6 +134,8 @@ export function collectSubAgentRuns(turns: ChatTurn[] | null | undefined): SubAg
         runId,
         parentCallId: run.id,
         mission: missionFrom(run),
+        name: nameFrom(run),
+        description: descriptionFrom(run),
         status: statusFrom(run),
         finalStatus: run.subAgentFinalStatus || null,
         linkedConversationId,

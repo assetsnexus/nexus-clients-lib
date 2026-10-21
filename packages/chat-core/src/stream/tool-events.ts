@@ -184,6 +184,19 @@ function pickRunMeta(d: Record<string, unknown>): Partial<ChatToolRun> {
     (typeof d.linkedConversationId === 'string' && d.linkedConversationId) ||
     (typeof result?.linkedConversationId === 'string' && result.linkedConversationId) ||
     null;
+  // Human-readable identity — prefer these over the run id in every UI label.
+  // NOTE: on sub_agent_tool_call/result events `d.name` is the TOOL name, so we read the
+  // explicit `subAgentName` / `subAgentDescription` fields (plus settle result aliases) only.
+  const subAgentName =
+    (typeof d.subAgentName === 'string' && d.subAgentName) ||
+    (typeof result?.subAgentName === 'string' && result.subAgentName) ||
+    (typeof result?.name === 'string' && result.name) ||
+    null;
+  const subAgentDescription =
+    (typeof d.subAgentDescription === 'string' && d.subAgentDescription) ||
+    (typeof result?.subAgentDescription === 'string' && result.subAgentDescription) ||
+    (typeof result?.description === 'string' && result.description) ||
+    null;
   const plan =
     (d.plan && typeof d.plan === 'object' ? d.plan : null) ||
     (result?.plan && typeof result.plan === 'object' ? result.plan : null);
@@ -200,6 +213,8 @@ function pickRunMeta(d: Record<string, unknown>): Partial<ChatToolRun> {
         : undefined;
   return {
     ...(runId ? { subAgentRunId: String(runId) } : {}),
+    ...(subAgentName ? { subAgentName: String(subAgentName) } : {}),
+    ...(subAgentDescription ? { subAgentDescription: String(subAgentDescription) } : {}),
     ...(linkedConversationId ? { linkedConversationId: String(linkedConversationId) } : {}),
     ...(plan ? { plan: plan as ChatToolRun['plan'] } : {}),
     ...(tasks ? { tasks: tasks as ChatToolRun['tasks'] } : {}),
@@ -491,6 +506,8 @@ export function rehydrateToolRunsFromHistory(
     const meta = {
       runId: row.runId || row.subAgentRunId,
       subAgentRunId: row.subAgentRunId || row.runId,
+      subAgentName: row.subAgentName ?? row.runName ?? null,
+      subAgentDescription: row.subAgentDescription ?? row.runDescription ?? null,
       linkedConversationId: row.linkedConversationId,
       plan: row.plan,
       tasks: row.tasks,

@@ -204,10 +204,20 @@ export const ToolCallTimeline = defineComponent({
         );
         const mission =
           typeof run.args?.mission === 'string' ? run.args.mission : '';
+        const name =
+          (typeof run.subAgentName === 'string' && run.subAgentName) ||
+          (typeof run.args?.name === 'string' && run.args.name) ||
+          '';
+        const description =
+          (typeof run.subAgentDescription === 'string' && run.subAgentDescription) ||
+          (typeof run.args?.description === 'string' && run.args.description) ||
+          '';
         return h(SubAgentRunWidget, {
           key: run.id,
           props: {
             mission,
+            name,
+            description,
             events: subEvents,
             status: resolveSubAgentWidgetStatus(run, subEvents),
             parentCallId: run.id,

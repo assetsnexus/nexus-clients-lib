@@ -69,6 +69,13 @@ export function summarizeSubAgentChip(
 
 export function subAgentChipLabel(summary: SubAgentChipSummary): string {
   const n = summary.count;
+  // Single run: lead with its human-readable name (never an id). Fall back to a generic
+  // label only when the run has no name yet.
+  if (n === 1) {
+    const run = summary.runs[0];
+    const name = run?.name?.trim();
+    if (name) return `${name} · ${summary.worstStatus}`;
+  }
   const unit = n === 1 ? 'sub-agent' : 'sub-agents';
   return `${n} ${unit} · ${summary.worstStatus}`;
 }

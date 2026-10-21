@@ -80,6 +80,18 @@ export function mapAgentRunRow(row: Record<string, unknown> | null | undefined):
         : typeof (row.params as { mission?: unknown } | undefined)?.mission === 'string'
           ? String((row.params as { mission: string }).mission)
           : null,
+    name:
+      typeof row.name === 'string' && row.name.trim()
+        ? row.name.trim()
+        : typeof row.runName === 'string' && row.runName.trim()
+          ? row.runName.trim()
+          : null,
+    description:
+      typeof row.description === 'string' && row.description.trim()
+        ? row.description.trim()
+        : typeof row.runDescription === 'string' && row.runDescription.trim()
+          ? row.runDescription.trim()
+          : null,
     parentConversationId:
       row.parentConversationId != null ? String(row.parentConversationId) : null,
     linkedConversationId:

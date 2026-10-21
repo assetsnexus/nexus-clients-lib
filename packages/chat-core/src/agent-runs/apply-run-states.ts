@@ -14,7 +14,12 @@ export type SubAgentPhase = NonNullable<ChatToolRun['subAgentPhase']>;
 
 /** Minimal run shape — `AgentRunSummary` or an activity-event projection. */
 export type SubAgentRunState = Pick<AgentRunSummary, 'runId' | 'status'> &
-  Partial<Pick<AgentRunSummary, 'parentCallId' | 'linkedConversationId' | 'pendingApproval'>>;
+  Partial<
+    Pick<
+      AgentRunSummary,
+      'parentCallId' | 'linkedConversationId' | 'pendingApproval' | 'name' | 'description'
+    >
+  >;
 
 const LIVE_STATUSES = new Set(['queued', 'pending', 'running']);
 
@@ -48,6 +53,8 @@ function patchRow(row: ChatToolRun, run: SubAgentRunState): ChatToolRun | null {
   if (!next.linkedConversationId && run.linkedConversationId) {
     next.linkedConversationId = run.linkedConversationId;
   }
+  if (!next.subAgentName && run.name) next.subAgentName = run.name;
+  if (!next.subAgentDescription && run.description) next.subAgentDescription = run.description;
   if (phase) {
     next.subAgentPhase = phase;
     next.subAgentPendingApproval =
@@ -66,6 +73,8 @@ function patchRow(row: ChatToolRun, run: SubAgentRunState): ChatToolRun | null {
   const changed =
     !same(next.subAgentRunId, row.subAgentRunId) ||
     !same(next.linkedConversationId, row.linkedConversationId) ||
+    !same(next.subAgentName, row.subAgentName) ||
+    !same(next.subAgentDescription, row.subAgentDescription) ||
     !same(next.subAgentPhase, row.subAgentPhase) ||
     JSON.stringify(next.subAgentPendingApproval ?? null) !==
       JSON.stringify(row.subAgentPendingApproval ?? null) ||

@@ -31,7 +31,11 @@ export function SubAgentRunDetails({
   return (
     <div className="nexus-chat__subagents-row">
       <div>
-        <strong>{run.mission}</strong>
+        {/* Lead with the human-readable name; the mission is the body, never a raw id. */}
+        <strong>{run.name?.trim() || run.mission}</strong>
+        {run.name?.trim() && run.description?.trim() ? (
+          <div className="nexus-chat__muted">{run.description}</div>
+        ) : null}
         <div className="nexus-chat__muted">{run.status}</div>
         {run.error ? <div className="nexus-chat__error">{run.error}</div> : null}
       </div>
