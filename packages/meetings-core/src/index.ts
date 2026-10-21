@@ -42,3 +42,10 @@ export {
 } from './room-session.js';
 
 export { meetingViewTabs, type MeetingViewTab } from './view-tabs.js';
+
+export {
+  IMMERSIVE_VR_MODE,
+  detectImmersiveVrSupport,
+  type ImmersiveVrSupport,
+  type XrSystemLike,
+} from './xr.js';
