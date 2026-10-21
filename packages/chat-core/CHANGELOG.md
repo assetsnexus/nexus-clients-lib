@@ -14,3 +14,5 @@
 ## 0.1.5
 - Plan-mode `write` client tool now runs its handler after approval: `NexusChat.approveClientTool` / `NexusChat.answerClientToolPause` resolve the paused request, run the registered handler (or the page / `onClientToolRequest` handler) and resume with the handler's **real** result. The approval cards previously posted a synthetic `{ granted: true }` result, so an approved write tool never executed.
 - `conceptSlugs` is carried on `ClientToolIndexEntry` / `ChatToolDescriptor`, copied in `register` / `registerDescriptor`, emitted by `indexEntries()`, and folded into the local index fingerprint.
+## 0.1.6
+- Hydrate striped client-tool args from the persisted pause row: inference's client-facing sanitizer strips `client_tool_request.arguments` to `{}` for any tool name it cannot place in `page.*` or its builtin whitelist, so an approved write handler ran with `{}`. The real args are read back from the persisted `pendingPause.arguments` row before the handler or the approval card sees them.
