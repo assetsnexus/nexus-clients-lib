@@ -84,6 +84,38 @@ export declare function createHostBridge(input: Record<string, unknown>): { post
 export declare function listenWindowMessages(onFromHost: Function, targetOrigin?: string): () => void;
 export declare function parseHostMessage(raw: unknown): unknown;
 
+export type ChatIdentitySession = {
+  key: string;
+  label: string;
+  userId: string;
+  orgId: string | null;
+  role: string | null;
+  deviceId: string | null;
+  token: string;
+  avatarUrl: string | null;
+  orgLogo: string | null;
+};
+export type HostToSdkMessage = { type: string; [k: string]: unknown };
+export type SdkToHostMessage = { type: string; [k: string]: unknown };
+
+export type RegionIdentity = {
+  userId?: string | null;
+  orgId?: string | null;
+  role?: string | null;
+  deviceId?: string | null;
+  token: string;
+};
+export type RegionCommandClientOptions = {
+  apiBaseUrl: string;
+  identity: RegionIdentity;
+  fetchFn?: typeof fetch;
+};
+export declare function createRegionCommandClient(
+  opts: RegionCommandClientOptions,
+): import('@nexus/chat-core').CommandClient & {
+  updateAuth: (next: { apiBaseUrl?: string; identity?: RegionIdentity }) => void;
+};
+
 export type PageToolSource = import('@nexus/chat-core').PageToolSource;
 export type PageToolSchema = import('@nexus/chat-core').PageToolSchema;
 export type HostPageSitemapEntry = { path: string; title: string; summary?: string };

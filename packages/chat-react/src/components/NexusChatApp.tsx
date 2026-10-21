@@ -1623,6 +1623,8 @@ export function NexusChatApp({
                       title: presentation.title,
                       avatarUrl: contact?.avatarUrl || null,
                       errorMessage: state.errorMessage,
+                      contactId: contact?.id ?? null,
+                      agentId: contact?.agentId ?? contact?.virtualEmployeeId ?? null,
                     })
                   }
                 />

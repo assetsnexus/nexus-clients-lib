@@ -155,6 +155,9 @@ export type SdkVoiceStateMessage = {
   title: string;
   avatarUrl: string | null;
   errorMessage?: string | null;
+  /** Phase 7a — the open contact, so a native shell can pop out a companion. */
+  contactId?: string | null;
+  agentId?: string | null;
 };
 export type SdkReadyMessage = { type: 'ready' };
 
