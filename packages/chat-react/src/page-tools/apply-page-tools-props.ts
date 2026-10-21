@@ -16,6 +16,8 @@ export type PageToolsPropTarget = {
     parameters?: Record<string, unknown>;
     access?: ChatClientToolAccess;
     availability?: 'pinned' | 'discoverable';
+    /** Concept slugs linked to the tool; ride in the discoverable index entry. */
+    conceptSlugs?: string[];
     handler: (args: unknown) => Promise<unknown> | unknown;
   }): void;
   setPageTools?(source: PageToolSource | null): void;
@@ -33,6 +35,12 @@ export type ClientToolProp = {
   parameters?: Record<string, unknown>;
   access?: ChatClientToolAccess;
   availability?: 'pinned' | 'discoverable';
+  /**
+   * Concept slugs linked to this tool (optional). Discoverable-only: they ride
+   * in the compact `clientToolIndex` entry so discovery can match the
+   * conversation's pinned concepts. Forwarded to `registerClientTool`.
+   */
+  conceptSlugs?: string[];
   handler: (args: unknown) => Promise<unknown> | unknown;
 };
 
@@ -71,6 +79,7 @@ export function applyClientToolsProps(
         parameters: tool.parameters,
         access: tool.access,
         availability: tool.availability,
+        conceptSlugs: tool.conceptSlugs,
         handler: tool.handler,
       });
     }
