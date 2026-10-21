@@ -48,6 +48,14 @@ export type VoiceLayoutProps = {
   onView?: (view: 'background' | 'transcript' | 'avatar') => void;
   onVoiceState?: (state: { active: boolean; muted: boolean; status: string; errorMessage: string | null }) => void;
   autoStart?: boolean;
+  /**
+   * Which axis the split view uses. `vertical` (default) stacks the avatar above
+   * the transcript; `horizontal` puts the chat *beside* the 3D avatar — the
+   * desktop DM stage mode. Only affects the `split` layout.
+   */
+  splitAxis?: 'vertical' | 'horizontal';
+  /** Initial layout; `split` by default (matches the portal chat). */
+  initialLayout?: VoiceLayoutMode;
 };
 
 const presenceStore = createPresenceStore('nexus-chat-react');
@@ -67,8 +75,13 @@ export function VoiceLayout({
   onView,
   onVoiceState,
   autoStart,
+  splitAxis = 'vertical',
+  initialLayout = 'split',
 }: VoiceLayoutProps) {
-  const voiceMode = useMemo(() => createVoiceModeState({ layout: 'split', splitRatio: 0.45 }), []);
+  const voiceMode = useMemo(
+    () => createVoiceModeState({ layout: initialLayout, splitRatio: 0.45 }),
+    [initialLayout],
+  );
   const [modeState, setModeState] = useState(voiceMode.get());
   const dragging = useRef(false);
   const [surface, setSurface] = useState(() => chat.getVoiceSurface());
@@ -295,7 +308,10 @@ export function VoiceLayout({
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragging.current) return;
-      const pct = Math.min(75, Math.max(25, (e.clientY / window.innerHeight) * 100));
+      const pct =
+        splitAxis === 'horizontal'
+          ? Math.min(75, Math.max(25, (e.clientX / window.innerWidth) * 100))
+          : Math.min(75, Math.max(25, (e.clientY / window.innerHeight) * 100));
       voiceMode.set({ splitRatio: pct / 100, layout: 'split' });
     };
     const onUp = () => {
@@ -307,7 +323,7 @@ export function VoiceLayout({
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [voiceMode]);
+  }, [voiceMode, splitAxis]);
 
   const setLayout = (layout: VoiceLayoutMode) => voiceMode.set({ layout });
 
@@ -461,7 +477,10 @@ export function VoiceLayout({
   const splitPct = Math.round(modeState.splitRatio * 100);
 
   return (
-    <div className="nexus-chat__voice" style={{ ['--nx-voice-split' as string]: `${splitPct}%` }}>
+    <div
+      className={`nexus-chat__voice${splitAxis === 'horizontal' ? ' nexus-chat__voice--hsplit' : ''}`}
+      style={{ ['--nx-voice-split' as string]: `${splitPct}%` }}
+    >
       <div className="nexus-chat__voice-pane">
         {avatarPane}
         {controls}

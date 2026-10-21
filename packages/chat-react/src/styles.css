@@ -561,6 +561,20 @@
   min-height: 0;
 }
 
+/*
+ * Desktop DM "stage" mode — chat beside the 3D avatar instead of stacked above
+ * it. Same session/controls, just a different axis so the avatar can go
+ * full-height (Phase 11e).
+ */
+.nexus-chat__voice--hsplit {
+  grid-template-rows: none;
+  grid-template-columns: minmax(0, 1.1fr) 6px minmax(0, 0.9fr);
+}
+
+.nexus-chat__voice--hsplit .nexus-chat__voice-handle {
+  cursor: col-resize;
+}
+
 .nexus-chat__voice-pane {
   min-height: 0;
   overflow: auto;

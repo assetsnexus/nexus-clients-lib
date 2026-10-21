@@ -49,3 +49,56 @@ export {
   type ImmersiveVrSupport,
   type XrSystemLike,
 } from './xr.js';
+
+export {
+  PARTICIPANT_STATUS_COLORS,
+  hasSceneAgents,
+  isAgentKind,
+  meetingSceneOccupants,
+  meetingSceneOccupantsFromSession,
+  occupantAvatarPresent,
+  occupantMood,
+  primaryMeetingAgent,
+  type MeetingPresence,
+  type MeetingPresenceMap,
+  type MeetingSceneOccupant,
+} from './scene.js';
+
+export {
+  EMPTY_VOICE_CAPABILITIES,
+  availableVoiceModes,
+  preferredVoiceMode,
+  resolvePipelineEngines,
+  shouldFallbackToPipeline,
+  voiceModeUnavailableReason,
+  type MeetingVoiceCapabilities,
+  type MeetingVoiceMode,
+  type VoiceEngine,
+  type VoiceEngineKind,
+  type VoiceEngineLocation,
+  type VoiceEngineProtocol,
+} from './voice.js';
+
+export {
+  VOICE_ENGINE_PROTOCOL_DEFAULTS,
+  VOICE_ENGINE_PROTOCOL_LABELS,
+  VOICE_ENGINE_PROTOCOLS,
+  endpointTlsWarning,
+  normalizeBaseUrl,
+  resolveVoiceEngineEndpoint,
+  validateBaseUrl,
+  voiceEngineFromEndpoint,
+  type VoiceEngineEndpoint,
+  type VoiceEngineEndpointInput,
+} from './voice-engine.js';
+
+export {
+  EMPTY_MEETING_VOICE_SURFACE,
+  createMeetingVoiceSession,
+  type MeetingVoiceSession,
+  type MeetingVoiceSessionDeps,
+  type MeetingVoiceStatus,
+  type MeetingVoiceSurface,
+  type PipelineSessionHandle,
+  type RealtimeSessionHandle,
+} from './voice-session.js';
