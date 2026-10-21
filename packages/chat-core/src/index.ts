@@ -2191,6 +2191,58 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   };
 
   /**
+   * The `client_tool_request` wire payload carries args the inference client-facing
+   * sanitizer may have stripped to `{}`: it only forwards args for `page.*` tools
+   * (and a whitelist like `anx_command`), because from a bare `(name, args)` it
+   * cannot know which names are host-owned client tools. The authoritative args
+   * live on the persisted pause row, which `anx.communicate.conversations.get`
+   * already exposes as `pendingPause.arguments` — the exact source the reload
+   * `seedPendingPause` path consumes. So when a live `client_tool` pause arrives
+   * with empty wire args for a tool that declares parameters, hydrate the real
+   * args from the server before a handler (or the approval card) sees them.
+   * Without this, an approved `write` handler runs with `{}` (e.g. "title is
+   * required") even though the model sent real arguments.
+   */
+  const hydratePausedClientToolArguments = async (
+    conversationId: string | null,
+    callId: string,
+    toolName: string,
+    wireArgs: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    if (!conversationId || !callId) return wireArgs;
+    if (wireArgs && Object.keys(wireArgs).length > 0) return wireArgs;
+    // Only a registered tool that declares parameters can have meaningful args
+    // to recover; a genuinely no-arg call is left untouched (no extra round-trip).
+    const descriptor = toolRegistry.get(toolName)?.descriptor;
+    const declaredProps = descriptor?.parameters?.properties;
+    if (!declaredProps || !Object.keys(declaredProps).length) return wireArgs;
+    try {
+      const got = await opts.client.send('anx.communicate.conversations.get', { conversationId });
+      const data = unwrapData(got);
+      const pendingPause = (data.pendingPause ?? null) as
+        | { kind?: string; callId?: string; arguments?: unknown }
+        | null;
+      if (
+        pendingPause &&
+        pendingPause.kind === 'client_tool' &&
+        pendingPause.callId === callId &&
+        pendingPause.arguments &&
+        typeof pendingPause.arguments === 'object' &&
+        Object.keys(pendingPause.arguments as Record<string, unknown>).length > 0
+      ) {
+        log('client_tool_args_hydrated_from_row', { callId, tool: toolName });
+        return pendingPause.arguments as Record<string, unknown>;
+      }
+    } catch (err) {
+      log('client_tool_args_hydrate_failed', {
+        message: err instanceof Error ? err.message : String(err),
+        callId,
+      });
+    }
+    return wireArgs;
+  };
+
+  /**
    * The turn paused on a one-click card. `client_tool` (and a Plan-mode `write`
    * client tool's `requiresApproval`) may auto-resume when a handler exists;
    * `approval` / `mode_switch` always surface to the host so a human decides.
@@ -2204,6 +2256,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     requiresApproval: boolean;
     action: 'request' | 'bind';
   }) => {
+    const resolvedArguments =
+      req.kind === 'client_tool'
+        ? await hydratePausedClientToolArguments(
+            req.conversationId,
+            req.callId,
+            req.name,
+            req.arguments,
+          )
+        : req.arguments;
     const card = parsePendingPauseCard(
       req.kind === 'approval'
         ? 'approval_request'
@@ -2213,7 +2274,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       {
         callId: req.callId,
         name: req.name,
-        arguments: req.arguments,
+        arguments: resolvedArguments,
         ...(req.kind === 'client_tool'
           ? {
               access: clientToolAccessOf(toolRegistry.get(req.name)?.descriptor),
@@ -2231,7 +2292,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         ? {
             callId: req.callId,
             name: req.name,
-            arguments: req.arguments,
+            arguments: resolvedArguments,
             conversationId: req.conversationId,
             action: req.action,
           }
@@ -2251,7 +2312,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         {
           callId: req.callId,
           name: req.name,
-          arguments: req.arguments,
+          arguments: resolvedArguments,
           conversationId: req.conversationId,
           action: req.action,
         },

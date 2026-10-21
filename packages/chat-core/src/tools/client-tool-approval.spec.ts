@@ -47,7 +47,10 @@ const settle = async () => {
 
 type Sent = { command: string; payload?: Record<string, unknown> };
 
-function makeChat(hooks: { onClientToolRequest?: (req: unknown) => unknown } = {}) {
+function makeChat(
+  hooks: { onClientToolRequest?: (req: unknown) => unknown } = {},
+  opts: { pendingPause?: Record<string, unknown> | null } = {},
+) {
   const sent: Sent[] = [];
   const chat = createNexusChat({
     hooks: hooks as never,
@@ -60,6 +63,9 @@ function makeChat(hooks: { onClientToolRequest?: (req: unknown) => unknown } = {
         }
         if (command === 'anx.communicate.message.send') {
           return { ok: true, data: { text: 'ok', conversationId: 'c1' } };
+        }
+        if (command === 'anx.communicate.conversations.get') {
+          return { ok: true, data: { conversationId: payload?.conversationId || 'c1', pendingPause: opts.pendingPause ?? null } };
         }
         return { ok: true, data: {} };
       },
@@ -334,5 +340,92 @@ describe('client-tool approval runs the handler', () => {
     expect(result.ok).toBe(true);
     expect(calls).toBe(1);
     expect(resumes(sent).at(-1)?.payload?.result).toEqual({ reserved: true });
+  });
+
+  it('hydrates stripped args from the persisted pause row before running the handler', async () => {
+    // Inference's client-facing sanitizer returns `{}` for a non-`page.*` tool
+    // name on the client_tool_request wire event. The real args live on the
+    // persisted row, which conversations.get exposes as `pendingPause.arguments`.
+    const calls: unknown[] = [];
+    const { chat, sent } = makeChat(
+      {},
+      { pendingPause: { kind: 'client_tool', callId: 'call-9', name: 'app.note.create', arguments: { title: 'WS trace', body: 'trace run' } } },
+    );
+    chat.registerClientTool({
+      name: 'app.note.create',
+      description: 'Create a note',
+      access: 'write',
+      parameters: { type: 'object', properties: { title: { type: 'string' }, body: { type: 'string' } }, required: ['title'] },
+      handler: async (args) => {
+        calls.push(args);
+        return { ok: true };
+      },
+    });
+    await chat.sendMessage('create a note', { conversationId: 'c1' });
+    await settle();
+    FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!.emit({
+      type: 'client_tool_request',
+      data: {
+        callId: 'call-9',
+        name: 'app.note.create',
+        // Stripped by the inference sanitizer for a non-page tool name.
+        arguments: {},
+        access: 'write',
+        requiresApproval: true,
+        action: 'request',
+      },
+    });
+    await settle();
+
+    // The approval card shows the hydrated args, not `{}`.
+    expect(chat.getPendingPause()).toMatchObject({
+      kind: 'client_tool',
+      callId: 'call-9',
+      arguments: { title: 'WS trace', body: 'trace run' },
+    });
+    expect(calls).toEqual([]);
+
+    const result = await chat.approveClientTool({ callId: 'call-9' });
+    await settle();
+    expect(result.ok).toBe(true);
+    expect(result.ran).toBe(true);
+    expect(calls).toEqual([{ title: 'WS trace', body: 'trace run' }]);
+    expect(sent.some((e) => e.command === 'anx.communicate.conversations.get')).toBe(true);
+  });
+
+  it('leaves genuinely empty args alone and skips the hydrate round-trip', async () => {
+    const calls: unknown[] = [];
+    const { chat, sent } = makeChat({}, { pendingPause: null });
+    chat.registerClientTool({
+      name: 'app.note.create',
+      access: 'write',
+      parameters: { type: 'object', properties: { title: { type: 'string' } }, required: [] },
+      handler: async (args) => {
+        calls.push(args);
+        return { ok: true };
+      },
+    });
+    await chat.sendMessage('go', { conversationId: 'c1' });
+    await settle();
+    const beforeGets = sent.filter((e) => e.command === 'anx.communicate.conversations.get').length;
+    FakeWebSocket.instances[FakeWebSocket.instances.length - 1]!.emit({
+      type: 'client_tool_request',
+      data: {
+        callId: 'call-10',
+        name: 'app.note.create',
+        arguments: {},
+        access: 'write',
+        requiresApproval: true,
+        action: 'request',
+      },
+    });
+    await settle();
+    const afterGets = sent.filter((e) => e.command === 'anx.communicate.conversations.get').length;
+    // Declared params exist, so the hydrate round-trip fires on the pause; with
+    // no matching persisted row the wire `{}` is kept verbatim.
+    expect(afterGets).toBe(beforeGets + 1);
+    await chat.approveClientTool({ callId: 'call-10' });
+    await settle();
+    expect(calls).toEqual([{}]);
   });
 });
