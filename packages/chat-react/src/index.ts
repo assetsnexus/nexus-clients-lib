@@ -78,6 +78,9 @@ export type {
   EmbodimentPlaybackHost,
 } from './components/embodiment-playback.js';
 export type { VoiceAvatarHost } from './components/VoiceAvatarCanvas.js';
+// Dictation primitives reused by host-side voice loops (e.g. the desktop meeting
+// voice pipeline: mic → STT → agent → TTS).
+export { startMicCapture, blobToInlineAudio } from './dictation/recordAudio.js';
 export { SpendChip } from './components/SpendChip.js';
 export type { ContextSpendChipProps } from './components/SpendChip.js';
 export { AdminRoutes } from './components/admin/AdminRoutes.js';

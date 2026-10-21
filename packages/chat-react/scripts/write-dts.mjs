@@ -84,6 +84,15 @@ export declare function createHostBridge(input: Record<string, unknown>): { post
 export declare function listenWindowMessages(onFromHost: Function, targetOrigin?: string): () => void;
 export declare function parseHostMessage(raw: unknown): unknown;
 
+/** Dictation primitives reused by host-side voice loops (mic → STT → agent → TTS). */
+export declare function startMicCapture(opts?: {
+  onChunk?: (frame: ArrayBuffer) => void;
+}): Promise<{ stop: () => Promise<Blob>; cancel: () => void }>;
+export declare function blobToInlineAudio(
+  blob: Blob,
+  filename: string,
+): Promise<import('@nexus/chat-core').IoDescriptor>;
+
 export type ChatIdentitySession = {
   key: string;
   label: string;
