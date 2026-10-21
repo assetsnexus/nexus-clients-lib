@@ -1,0 +1,39 @@
+{
+  "name": "@nexus/meetings-vue3",
+  "version": "0.1.0",
+  "description": "Vue 3 adapter for @nexus/meetings-core: shared MeetingCard + capability-gated MeetingView",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "vite build && node ./scripts/write-dts.mjs",
+    "prepare": "npm run build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@nexus/meetings-core": "*",
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "@nexus/meetings-core": "file:../meetings-core",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.4",
+    "vue": "^3.5.12"
+  }
+}
