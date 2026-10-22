@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
-const dts = `import type { ComponentType, ReactNode } from 'react';
+const dts = `import type { ComponentType, PointerEvent, ReactNode } from 'react';
 export type {
   NexusChat,
   CreateNexusChatOptions,
@@ -51,9 +51,9 @@ export type ComposerControls = {
   dictation: {
     phase: 'idle' | 'recording' | 'cancel' | 'working';
     note: string | null;
-    onPointerDown: Function;
-    onPointerMove: Function;
-    onPointerUp: Function;
+    onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
+    onPointerMove: (event: PointerEvent<HTMLButtonElement>) => void;
+    onPointerUp: (event: PointerEvent<HTMLButtonElement>) => void;
     onPointerCancel: () => void;
   };
   call: {
@@ -67,6 +67,42 @@ export type ComposerControls = {
   };
   error: string | null;
 };
+
+/**
+ * Model-picker catalog shapes. Re-exported from the runtime entry, so the types
+ * must be declared here too — hosts read the same catalog the picker renders.
+ */
+export type PickerModel = {
+  id: string;
+  modelRef?: string;
+  label: string;
+  externalModelId?: string;
+  providerId?: string | null;
+  iconUrl?: string | null;
+  intelligenceIndex: number | null;
+  inputPerM: number | null;
+  outputPerM: number | null;
+  cachedPerM: number | null;
+  cachedPerMSource: 'catalog' | 'derived' | null;
+  costCurrency: string | null;
+  chatPriceCreditsPerMillion: number | null;
+  preferredHostingType?: import('@nexus/chat-core').ChatModelOverride['preferredHostingType'];
+  availableHostingTypes: string[];
+  visionSupported?: boolean;
+  subscriptionIds?: string[];
+  capabilities?: string[];
+  category?: string | null;
+};
+
+export declare function loadPickerModels(
+  client: import('@nexus/chat-core').CommandClient,
+  opts?: { employeeId?: string | null },
+): Promise<PickerModel[]>;
+export declare function mergePickerModels(...args: unknown[]): PickerModel[];
+export declare function buildModelOverride(
+  selectedId: string | null | undefined,
+  models: PickerModel[],
+): import('@nexus/chat-core').ChatModelOverride | null;
 
 export type ChatSlots = {
   header?: ComponentType<any>;
