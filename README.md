@@ -75,16 +75,16 @@ Local portal development keeps `file:../anx-npm-modules/packages/...` — no Git
 
 ## Install from GitHub (external apps)
 
-The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.5.11` cover `@nexus/commands-client`, `@nexus/webhooks`, and `@nexus/privacy` together. `dist/` is not in git. Each of those packages runs `prepare` on install (`scripts/git-prepare.mjs`), which builds one package at a time so privacy can typecheck against the webhooks declarations. Its `tsconfig` does not depend on the monorepo root.
+The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.5.12` cover `@nexus/commands-client`, `@nexus/webhooks`, and `@nexus/privacy` together. `dist/` is not in git. Each of those packages runs `prepare` on install (`scripts/git-prepare.mjs`), which builds one package at a time so privacy can typecheck against the webhooks declarations. Its `tsconfig` does not depend on the monorepo root.
 
 pnpm 10:
 
 ```json
 {
   "dependencies": {
-    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.11&path:/packages/commands-client",
-    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.11&path:/packages/webhooks",
-    "@nexus/privacy": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.11&path:/packages/privacy"
+    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.12&path:/packages/commands-client",
+    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.12&path:/packages/webhooks",
+    "@nexus/privacy": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.12&path:/packages/privacy"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/commands-client", "@nexus/webhooks", "@nexus/privacy"]
@@ -99,9 +99,9 @@ Chat UI packages ship from the same tag (they build via their own `prepare` scri
 ```json
 {
   "dependencies": {
-    "@nexus/chat-core": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.11&path:/packages/chat-core",
-    "@nexus/chat-react": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.11&path:/packages/chat-react",
-    "@nexus/page-agent": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.11&path:/packages/page-agent"
+    "@nexus/chat-core": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.12&path:/packages/chat-core",
+    "@nexus/chat-react": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.12&path:/packages/chat-react",
+    "@nexus/page-agent": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.12&path:/packages/page-agent"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/chat-core", "@nexus/chat-react", "@nexus/page-agent"]
