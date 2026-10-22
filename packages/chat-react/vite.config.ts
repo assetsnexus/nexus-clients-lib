@@ -20,6 +20,7 @@ export default defineConfig({
         '@nexus/character-react',
         '@nexus/character-kit',
         '@nexus/character-kit/asset-cache',
+        '@nexus/wake-word',
         'three',
         'marked',
         'dompurify',
