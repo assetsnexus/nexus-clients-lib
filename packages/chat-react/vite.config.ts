@@ -23,6 +23,7 @@ export default defineConfig({
         '@nexus/character-kit/presence-moods',
         '@nexus/character-ui-kit',
         '@nexus/character-ui-kit/style.css',
+        '@nexus/wake-word',
         'three',
         'marked',
         'dompurify',

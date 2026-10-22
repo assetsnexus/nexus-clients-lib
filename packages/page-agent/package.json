@@ -1,6 +1,6 @@
 {
   "name": "@nexus/page-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Framework-free page tour/copilot executor: understand, outline, highlight, form preview (no UI framework)",
   "license": "UNLICENSED",
   "publishConfig": { "access": "public" },
@@ -19,6 +19,7 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
