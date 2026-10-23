@@ -46,25 +46,28 @@ describe('clientTools prop reapplication', () => {
     const handler = () => ({ ok: true });
     const chat = { registerTool: vi.fn(), registerClientTool };
 
+    // Partner-neutral names: this package is a shared SDK, so the fixture stands in for any
+    // host's tool rather than naming one partner's. `app.<partner>.<object>.<verb>` is the
+    // convention the SDK documents, with `<partner>` a placeholder.
     applyClientToolsProps(chat, [
       {
-        name: 'xcamp_note_open',
+        name: 'app.partner.note.open',
         description: 'Open a note',
         availability: 'discoverable',
         access: 'read',
-        conceptSlugs: ['xcamp.notes'],
+        conceptSlugs: ['partner.notes'],
         handler,
       },
     ]);
 
     expect(registerClientTool).toHaveBeenCalledTimes(1);
     expect(registerClientTool).toHaveBeenCalledWith({
-      name: 'xcamp_note_open',
+      name: 'app.partner.note.open',
       description: 'Open a note',
       parameters: undefined,
       access: 'read',
       availability: 'discoverable',
-      conceptSlugs: ['xcamp.notes'],
+      conceptSlugs: ['partner.notes'],
       handler,
     });
   });
