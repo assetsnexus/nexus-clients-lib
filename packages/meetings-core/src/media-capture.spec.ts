@@ -57,20 +57,20 @@ describe('startCameraCapture', () => {
 
   it('requests audio + video by default and returns the stream', async () => {
     const stream = fakeStream(['video', 'audio']);
-    const getUserMedia = vi.fn(async () => stream);
+    const getUserMedia = vi.fn(async (_constraints: Record<string, unknown>) => stream);
     const devices: MediaDevicesLike = { getUserMedia };
     const res = await startCameraCapture({ mediaDevices: devices });
     expect(res.ok).toBe(true);
     expect(getUserMedia).toHaveBeenCalledTimes(1);
-    const constraints = getUserMedia.mock.calls[0][0] as { video: unknown; audio: boolean };
+    const constraints = getUserMedia.mock.calls[0]![0] as { video: unknown; audio: boolean };
     expect(constraints.audio).toBe(true);
     expect(constraints.video).toEqual({ width: 1280, height: 720 });
   });
 
   it('pins an explicit device id with an exact constraint', async () => {
-    const getUserMedia = vi.fn(async () => fakeStream(['video']));
+    const getUserMedia = vi.fn(async (_constraints: Record<string, unknown>) => fakeStream(['video']));
     await startCameraCapture({ mediaDevices: { getUserMedia }, deviceId: 'cam-2', withAudio: false });
-    const constraints = getUserMedia.mock.calls[0][0] as { video: Record<string, unknown>; audio: boolean };
+    const constraints = getUserMedia.mock.calls[0]![0] as { video: Record<string, unknown>; audio: boolean };
     expect(constraints.video.deviceId).toEqual({ exact: 'cam-2' });
     expect(constraints.audio).toBe(false);
   });
@@ -97,17 +97,17 @@ describe('startScreenCapture', () => {
 
   it('defaults to no audio and returns the display stream', async () => {
     const stream = fakeStream(['video']);
-    const getDisplayMedia = vi.fn(async () => stream);
+    const getDisplayMedia = vi.fn(async (_constraints: Record<string, unknown>) => stream);
     const res = await startScreenCapture({ mediaDevices: { getDisplayMedia } });
     expect(res.ok).toBe(true);
-    const constraints = getDisplayMedia.mock.calls[0][0] as { audio: boolean };
+    const constraints = getDisplayMedia.mock.calls[0]![0] as { audio: boolean };
     expect(constraints.audio).toBe(false);
   });
 
   it('passes a current-tab display surface hint and audio when asked', async () => {
-    const getDisplayMedia = vi.fn(async () => fakeStream(['video', 'audio']));
+    const getDisplayMedia = vi.fn(async (_constraints: Record<string, unknown>) => fakeStream(['video', 'audio']));
     await startScreenCapture({ mediaDevices: { getDisplayMedia }, withAudio: true, preferCurrentTab: true });
-    const constraints = getDisplayMedia.mock.calls[0][0] as { video: Record<string, unknown>; audio: boolean };
+    const constraints = getDisplayMedia.mock.calls[0]![0] as { video: Record<string, unknown>; audio: boolean };
     expect(constraints.video.displaySurface).toBe('browser');
     expect(constraints.audio).toBe(true);
   });

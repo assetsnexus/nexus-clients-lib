@@ -13,6 +13,7 @@ import {
   filterConversationsForLockedAgent,
   resolveConversationListMode,
 } from './locked-agent.js';
+import type { PanelState } from '../state.js';
 
 const LOCKED = 've-locked';
 
@@ -54,7 +55,7 @@ describe('locked agent labels', () => {
     });
     expect(
       parseLockedAgent({ virtualEmployeeId: LOCKED, displayName: 'Guide', avatarUrl: 'https://cdn.example/a.png' })
-        .avatarUrl,
+        ?.avatarUrl,
     ).toBe('https://cdn.example/a.png');
     expect(lockedAgentVisibleName({ virtualEmployeeId: LOCKED })).toBe('Agent');
     expect(threadEmptyLabel({ lockedAgent: { virtualEmployeeId: LOCKED }, contactSelected: true })).toBe(
@@ -322,6 +323,8 @@ describe('createNexusChat lockedAgent', () => {
           conversationId: 'other',
           virtualEmployeeId: 've-other',
           status: 'active',
+          lastActivityAt: '2026-06-01T00:00:00.000Z',
+          title: 'Other agent',
         },
       ],
     });
@@ -597,6 +600,8 @@ describe('createNexusChat lockedAgent', () => {
           conversationId: 'other',
           virtualEmployeeId: 've-other',
           status: 'active',
+          lastActivityAt: '2026-06-01T00:00:00.000Z',
+          title: 'Other agent',
         },
       ],
       messageSendConversationId: () => returned,
@@ -737,7 +742,7 @@ describe('createNexusChat lockedAgent', () => {
   });
 });
 
-function panelOf(chat: { getState: () => { panels: Array<{ conversationId: string | null; roomId: string | null; roomPurpose: string }>; activePanelIndex: number } }) {
+function panelOf(chat: { getState: () => { panels: PanelState[]; activePanelIndex: number } }) {
   return chat.getState().panels[chat.getState().activePanelIndex];
 }
 

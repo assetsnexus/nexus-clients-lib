@@ -169,7 +169,11 @@ describe('createMediaGenerationSession ref max', () => {
     }) => void> = [];
     const getWorkload = vi.fn(
       () =>
-        new Promise<{ status: string; resultImageUrl: string }>((resolve) => {
+        new Promise<{
+      status: string;
+      resultImageUrl?: string;
+      resultPayload?: { batchAcceptedImageUrls?: string[] };
+    }>((resolve) => {
           pending.push(resolve);
         }),
     );

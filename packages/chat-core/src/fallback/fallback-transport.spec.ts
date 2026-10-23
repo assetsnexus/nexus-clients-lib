@@ -4,12 +4,13 @@ import {
   assistantFromFallbackCompletion,
   fallbackMessagesFromTurns,
   fallbackTransportSelected,
+  type FallbackChatRequest,
   type FallbackChatTransport,
 } from './fallback-transport.js';
 
 describe('fallback transport selection', () => {
   it('uses the fallback when the host says Nexus is unavailable', async () => {
-    const complete = vi.fn(async () => ({
+    const complete = vi.fn(async (_request: FallbackChatRequest) => ({
       choices: [{ message: { role: 'assistant', content: 'from-fallback' } }],
       cards: [{ id: 'c1', title: 'Note', body: 'A card', kind: 'content' }],
     }));
