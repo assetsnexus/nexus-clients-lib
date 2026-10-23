@@ -622,7 +622,48 @@ export type PlayAudioUrlOpts = {
     stream: MediaStream | null,
     audioContext: AudioContext | null,
   ) => void;
+  /**
+   * Output device(s) to play on, by `MediaDeviceInfo.deviceId`
+   * (`HTMLMediaElement.setSinkId`). Omitted → the host's default sink provider
+   * (see {@link setAudioOutputSinkProvider}) → the OS default. More than one sink
+   * mirrors the same audio to each device (a "broadcast"). Unsupported devices
+   * are ignored rather than failing playback.
+   */
+  sinkIds?: string[] | null;
 };
+
+/**
+ * Host-installed provider for the default output sink(s). The desktop app points
+ * this at its persisted audio routing so every agent utterance follows the
+ * configured primary speaker (or the speaker an agent redirected to via its
+ * audio tools) without every call site threading a device id.
+ */
+let audioOutputSinkProvider: (() => string[] | null) | null = null;
+
+export function setAudioOutputSinkProvider(provider: (() => string[] | null) | null): void {
+  audioOutputSinkProvider = provider;
+}
+
+/** Resolve which sinks a playback should use (explicit → provider → none). */
+export function resolvePlaybackSinks(opts?: PlayAudioUrlOpts): string[] {
+  const explicit = opts?.sinkIds;
+  if (Array.isArray(explicit)) return explicit.filter((id): id is string => Boolean(id));
+  const fromProvider = audioOutputSinkProvider?.() ?? null;
+  return Array.isArray(fromProvider) ? fromProvider.filter((id): id is string => Boolean(id)) : [];
+}
+
+/** Apply one sink to one element; resolves false when the device rejects it. */
+async function applySink(el: HTMLAudioElement, deviceId: string): Promise<boolean> {
+  const setSinkId = (el as unknown as { setSinkId?: (id: string) => Promise<void> }).setSinkId;
+  if (typeof setSinkId !== 'function') return false;
+  try {
+    await setSinkId.call(el, deviceId);
+    return true;
+  } catch {
+    // A vanished/permission-gated device must not break playback.
+    return false;
+  }
+}
 
 function resolveAudioContextCtor(): (typeof AudioContext) | null {
   if (typeof globalThis === 'undefined') return null;
@@ -646,6 +687,7 @@ export async function playAudioUrl(
   const audio = new Audio(audioUrl);
   let ctx: AudioContext | null = null;
   let notified = false;
+  const mirrors: HTMLAudioElement[] = [];
   const notify = (stream: MediaStream | null) => {
     if (!opts?.onPlaybackStream) return;
     if (!stream && notified && !ctx) {
@@ -658,6 +700,43 @@ export async function playAudioUrl(
   const endNotify = () => notify(null);
 
   try {
+    // Route to the configured sink(s) before playing. When the audio graph is
+    // active the element is silent (it feeds an AudioContext), so each extra sink
+    // gets its own mirrored element instead of a second sink on this one.
+    const sinks = resolvePlaybackSinks(opts);
+    const graphActive = Boolean(resolveAudioContextCtor() && opts?.onPlaybackStream);
+    const applied = sinks.filter((id) => id);
+    if (applied.length) {
+      if (graphActive) {
+        for (const id of applied) {
+          const mirror = new Audio(audioUrl);
+          if (await applySink(mirror, id)) {
+            mirrors.push(mirror);
+          }
+        }
+        // Try the primary sink on the element too (harmless if it is muted).
+        await applySink(audio, applied[0]!);
+        void Promise.all(
+          mirrors.map((mirror) =>
+            mirror.play().catch(() => {
+              /* a mirror that cannot autoplay is skipped */
+            }),
+          ),
+        );
+      } else {
+        await applySink(audio, applied[0]!);
+        for (const id of applied.slice(1)) {
+          const mirror = new Audio(audioUrl);
+          if (await applySink(mirror, id)) {
+            mirrors.push(mirror);
+            void mirror.play().catch(() => {
+              /* ignore */
+            });
+          }
+        }
+      }
+    }
+
     const AudioCtx = resolveAudioContextCtor();
     if (AudioCtx && opts?.onPlaybackStream) {
       ctx = new AudioCtx();
@@ -686,7 +765,18 @@ export async function playAudioUrl(
     }
     throw err instanceof Error ? err : new Error(msg || 'Audio playback failed');
   }
-  audio.addEventListener('ended', endNotify, { once: true });
+  // Main element ended: stop the mirrors with it (the caller holds only `audio`).
+  audio.addEventListener('ended', () => {
+    for (const mirror of mirrors) {
+      try {
+        mirror.pause();
+        mirror.src = '';
+      } catch {
+        /* ignore */
+      }
+    }
+    endNotify();
+  }, { once: true });
   audio.addEventListener('error', endNotify, { once: true });
   return audio;
 }

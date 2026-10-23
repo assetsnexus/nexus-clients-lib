@@ -382,6 +382,8 @@ export {
   pollSttJob,
   createAndPollTts,
   playAudioUrl,
+  setAudioOutputSinkProvider,
+  resolvePlaybackSinks,
   listTtsVoices,
   ttsVoicesForPicker,
   transcribeOrNull,

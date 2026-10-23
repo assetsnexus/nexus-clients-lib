@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAndPollStt, createAndPollTts, createLiveSttSession, createSttJob, listAudioModels } from './stt-tts.js';
+import { createAndPollStt, createAndPollTts, createLiveSttSession, createSttJob, listAudioModels, resolvePlaybackSinks, setAudioOutputSinkProvider } from './stt-tts.js';
 
 type SendFn = (
   command: string,
@@ -223,5 +223,27 @@ describe('stt-tts helpers', () => {
       agentId: '11111111-1111-1111-1111-111111111111',
       difficultWords: ['Acme'],
     });
+  });
+});
+
+describe('playback sink resolution', () => {
+  it('prefers explicit sinks, else the installed provider, else none', () => {
+    setAudioOutputSinkProvider(null);
+    expect(resolvePlaybackSinks({ sinkIds: ['a', 'b'] })).toEqual(['a', 'b']);
+    expect(resolvePlaybackSinks({ sinkIds: [] })).toEqual([]);
+    expect(resolvePlaybackSinks({})).toEqual([]);
+
+    setAudioOutputSinkProvider(() => ['spk-1']);
+    expect(resolvePlaybackSinks({})).toEqual(['spk-1']);
+    // An explicit list wins over the provider.
+    expect(resolvePlaybackSinks({ sinkIds: ['spk-2'] })).toEqual(['spk-2']);
+    setAudioOutputSinkProvider(null);
+  });
+
+  it('drops empty ids and tolerates a null provider', () => {
+    setAudioOutputSinkProvider(() => null);
+    expect(resolvePlaybackSinks({})).toEqual([]);
+    expect(resolvePlaybackSinks({ sinkIds: ['', 'x'] })).toEqual(['x']);
+    setAudioOutputSinkProvider(null);
   });
 });
