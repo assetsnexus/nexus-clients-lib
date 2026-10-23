@@ -55,6 +55,13 @@ export type CompanionHostLike = {
   }>;
   /** Action-feed subscription (motion feed). */
   onAction?: (listener: (ev: unknown) => void) => () => void;
+  /**
+   * OS-global cursor feed (desktop companion): push a gaze NDC computed from
+   * Electron screen coordinates, and route gaze through it so the avatar keeps
+   * tracking while the cursor is outside the window.
+   */
+  setPointerNdc?: (x: number, y: number) => void;
+  setExternalPointerEnabled?: (on: boolean) => void;
 };
 
 type CharacterReactModule = {
