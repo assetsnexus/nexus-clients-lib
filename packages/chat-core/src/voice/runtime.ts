@@ -200,3 +200,27 @@ export function applyLocalPause(runtime: BrowserRealtimeCallRuntime | null, paus
     void runtime.audioEl?.play?.()?.catch?.(() => {});
   }
 }
+
+/**
+ * Phase 7d — mute/unmute a participant's INBOUND (remote) audio without tearing
+ * down the call. Used when a moderator disables an agent's listening / mutes an
+ * agent in the meeting roster: the remote audio element is silenced while the
+ * stream and PeerConnection stay alive, so re-enabling is instantaneous.
+ */
+export function applyRemoteMute(runtime: BrowserRealtimeCallRuntime | null, muted: boolean): void {
+  if (!runtime) return;
+  const el = runtime.audioEl;
+  if (el) {
+    try {
+      el.muted = muted;
+    } catch {
+      /* ignore */
+    }
+  }
+  const stream = runtime.remoteStream;
+  if (stream) {
+    for (const track of stream.getAudioTracks?.() ?? []) {
+      track.enabled = !muted;
+    }
+  }
+}

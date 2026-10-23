@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  conversationInitials,
+  conversationRowView,
   conversationToRow,
   filterInboxRowsForLockedAgent,
   matchesKindFilter,
@@ -101,5 +103,52 @@ describe('inbox rows', () => {
     expect(merged[0]?.avatarUrl).toBe('https://cdn.example/contact.png');
     const empty = mergeInboxAgentAvatars([{ ...row, avatarUrl: '  ' }], [{ id: 've-1', avatarUrl: '   ' }]);
     expect(empty[0]?.avatarUrl).toBeNull();
+  });
+
+  it('names a title-less agent DM after the agent, not a generic placeholder', () => {
+    // Shape the region actually returns for most agent conversations:
+    // `title: null` with `agentName` populated.
+    const row = conversationToRow(
+      {
+        conversationId: '923a3904-f9a2-46e8-8883-a1a3feef7d49',
+        title: null,
+        agentId: 'ag-1',
+        agentName: 'Xcamp',
+        lastMessagePreview: 'What would you like to do?',
+      },
+      { key: 'u:private', label: 'Personal', logo: null },
+    )!;
+    expect(row.title).toBe('Xcamp');
+    expect(row.title).not.toBe('Conversation');
+    expect(row.summary).toBe('What would you like to do?');
+  });
+
+  it('keeps a stored room title over the agent name (portal precedence)', () => {
+    const view = conversationRowView({
+      conversationId: 'c9',
+      title: 'Quick Ping',
+      agentName: 'Rune',
+      oneLineSummary: 'What are we growing this week?',
+    });
+    expect(view.title).toBe('Quick Ping');
+    expect(view.subtitle).toBe('What are we growing this week?');
+  });
+
+  it('falls back to the participant label, then the untitled label', () => {
+    expect(conversationRowView({ conversationId: 'r1', participantNames: ['Veyla'] }).title).toBe('Veyla');
+    expect(conversationRowView({ conversationId: 'r2' }).title).toBe('Untitled conversation');
+  });
+
+  it('prefers the loaded contact avatar and derives initials from the agent name', () => {
+    const view = conversationRowView(
+      { conversationId: 'c1', title: 'Quick Ping', agentName: 'Xcamp', virtualEmployeeId: 've-1' },
+      [{ id: 've-1', virtualEmployeeId: 've-1', avatarUrl: 'https://cdn.example/contact.png' }],
+    );
+    expect(view.avatarUrl).toBe('https://cdn.example/contact.png');
+    // Portal parity: a renamed thread keeps the agent's initials, not the title's.
+    expect(view.avatarName).toBe('Xcamp');
+    expect(conversationInitials(view.avatarName)).toBe('XC');
+    expect(conversationInitials('Ada Lovelace')).toBe('AL');
+    expect(conversationInitials('')).toBe('?');
   });
 });

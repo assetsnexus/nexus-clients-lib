@@ -1604,6 +1604,8 @@ export type NexusChat = {
     handler: import('./voice/types.js').PlaybackStreamHandler,
   ) => () => void;
   getRemotePlaybackStream: () => MediaStream | null;
+  /** Phase 7d — silence/restore inbound agent audio without ending the call. */
+  setRemoteMuted: (muted: boolean) => void;
   /** TTS speak-turn controller with optional lip-sync MediaStream callback. */
   createSpeakTurn: (opts: {
     agentId?: string | null;
@@ -3674,6 +3676,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     refreshWake: () => wake.refresh(),
     subscribeRemotePlaybackStream: voice.subscribeRemotePlaybackStream,
     getRemotePlaybackStream: voice.getRemotePlaybackStream,
+    setRemoteMuted: voice.setRemoteMuted,
     createSpeakTurn: voice.createSpeakTurn,
     reattachVoice: voice.reattachVoice,
     toggleMute: voice.toggleMute,

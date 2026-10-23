@@ -26,6 +26,12 @@ describe('wake-word trust invariants', () => {
     expect(WAKE_WORD_TRUST.audioLeavesDeviceBeforeWake).toBe(false);
   });
 
+  it('is not telemetry: no detection (true or false positive) is ever reported', () => {
+    expect(WAKE_WORD_TRUST.reportsDetectionsToBackend).toBe(false);
+    expect(WAKE_WORD_TRUST.isActivityTracker).toBe(false);
+    expect(WAKE_WORD_TRUST.transmitsOnlyOnUserSubmit).toBe(true);
+  });
+
   it('only allows open_voice_session as a wake-driven action', () => {
     expect([...WAKE_WORD_ALLOWED_ACTIONS]).toEqual(['open_voice_session']);
   });

@@ -70,6 +70,7 @@ export type ComposerControls = {
 
 export type ChatSlots = {
   header?: ComponentType<any>;
+  headerActions?: ComponentType<any>;
   composer?: ComponentType<any>;
   empty?: ComponentType<any>;
   contactRow?: ComponentType<any>;

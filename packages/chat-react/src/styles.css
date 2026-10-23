@@ -587,10 +587,39 @@
 }
 
 .nexus-chat__voice-avatar {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
   height: 100%;
   font-size: 48px;
+}
+
+/*
+ * DM / companion "avatar only" stage: the 3D pane owns the full height of the
+ * voice surface, so the canvas (and its host) can stretch instead of leaving an
+ * empty slab under the widget.
+ */
+.nexus-chat__voice--avatar-only {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.nexus-chat__voice--avatar-only .nexus-chat__voice-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.nexus-chat__voice--avatar-only .nexus-chat__voice-avatar > * {
+  width: 100%;
+  height: 100%;
 }
 
 .nexus-chat__empty {
@@ -791,6 +820,73 @@
   align-items: center;
   gap: 0.25rem;
   flex-shrink: 0;
+}
+/* Table-ish row: name grows, then IQ / hosting / price columns stay aligned. */
+.nexus-chat-model-picker-row > .nexus-chat-model-picker-name {
+  flex: 1 1 auto;
+  min-width: 10rem;
+}
+.nexus-chat-model-col {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+.nexus-chat-model-col-intel {
+  width: 2.6rem;
+}
+.nexus-chat-model-col-hosting {
+  width: 4.4rem;
+  justify-content: center;
+}
+.nexus-chat-model-col-price {
+  width: 4.4rem;
+}
+.nexus-chat-model-col-empty {
+  color: var(--nx-chat-muted);
+  font-size: 0.72rem;
+}
+.nexus-chat-model-hosting {
+  display: inline-flex;
+  gap: 0.15rem;
+  align-items: center;
+}
+/* One small pill per hosting class (public / managed / private / edge). */
+.nexus-chat-model-hosting-pill {
+  border-radius: 999px;
+  border: 1px solid var(--nx-chat-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd3df;
+  padding: 0 0.25rem;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+.nexus-chat-model-hosting-pill.hosting-public {
+  color: #9fe7b8;
+  border-color: rgba(70, 160, 100, 0.5);
+  background: rgba(70, 160, 100, 0.18);
+}
+.nexus-chat-model-hosting-pill.hosting-managed {
+  color: #9ec4ef;
+  border-color: rgba(60, 110, 180, 0.5);
+  background: rgba(60, 110, 180, 0.2);
+}
+.nexus-chat-model-hosting-pill.hosting-private {
+  color: #f0d48a;
+  border-color: rgba(180, 140, 40, 0.5);
+  background: rgba(180, 140, 40, 0.18);
+}
+.nexus-chat-model-hosting-pill.hosting-edge {
+  color: #d3b6f5;
+  border-color: rgba(140, 90, 200, 0.5);
+  background: rgba(140, 90, 200, 0.2);
+}
+/* Portal dot `.is-active`: the row's preferredHostingType stands out. */
+.nexus-chat-model-hosting-pill.is-preferred {
+  box-shadow: 0 0 0 1px currentColor;
 }
 .nexus-chat-model-provider-icon {
   width: 16px;
@@ -1830,6 +1926,11 @@
   color: var(--nx-chat-text);
   text-align: left;
   min-height: 64px;
+  /* Own the containing block and clip the row, so an absolutely-positioned
+     child (the peer avatar's stacked variant) can never escape the row's
+     hit-box and steal clicks from a neighbouring row. */
+  position: relative;
+  overflow: hidden;
 }
 
 .nexus-chat__stack {
@@ -1848,13 +1949,21 @@
   z-index: 0;
 }
 
+/* Default: a plain in-flow avatar for rows that render the peer on its own
+   (e.g. the inline conversation list). Only the stacked owner+peer layout
+   absolutely overlays the peer on the owner mark. */
 .nexus-chat__peer {
+  position: relative;
+  flex: none;
+  border: 2px solid var(--nx-chat-surface);
+  overflow: hidden;
+}
+
+.nexus-chat__stack .nexus-chat__peer {
   position: absolute;
   right: 0;
   top: 0;
   z-index: 1;
-  border: 2px solid var(--nx-chat-surface);
-  overflow: hidden;
 }
 
 .nexus-chat__peer img {

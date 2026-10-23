@@ -34,6 +34,8 @@ export type EmbodimentPlaybackHost = {
     name: string,
     opts?: { source?: string; face?: EmbodimentFace },
   ) => unknown;
+  /** Ambient mood setter (character-kit `CompanionHost.setMood`). */
+  setMood?: (mood: string, source?: string, detail?: string) => boolean;
 };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -113,6 +115,28 @@ export function playSessionRoutine(
 ): boolean {
   if (!host?.playEmbodimentRoutine) return false;
   void host.playEmbodimentRoutine(routine, { source: 'session', face: opts.face });
+  return true;
+}
+
+/**
+ * Apply the ambient mood the agent's emotion engine produced for a turn.
+ *
+ * `presenceMood` arrives on the turn (from `emotionLevers.presenceMood`); it is
+ * the engine's vocabulary (`calm` / `happy` / `alert` / `sad` / `energetic` /
+ * `neutral`) which the character host aliases onto a `PRESENCE_MOODS` id. An
+ * empty/unknown value is a no-op so the profile default stays in force.
+ *
+ * Returns true when a mood was actually dispatched.
+ */
+export function applyTurnPresenceMood(
+  host: EmbodimentPlaybackHost | null | undefined,
+  presenceMood: string | null | undefined,
+): boolean {
+  if (!host?.setMood) return false;
+  const mood = typeof presenceMood === 'string' ? presenceMood.trim() : '';
+  if (!mood) return false;
+  // `setMood` returns false for an unchanged/unknown mood — that is fine.
+  host.setMood(mood, 'agent', 'emotion');
   return true;
 }
 

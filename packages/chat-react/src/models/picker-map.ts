@@ -1,5 +1,13 @@
 import { isChatAgentPickerModel } from '@nexus/chat-core';
-import { readIntelligenceIndex, readUsdPerM, type PickerModel } from './picker-types.js';
+import {
+  normalizeHostingTypes,
+  readAvailableHostingTypes,
+  readCostCurrency,
+  readCachedUsdPerM,
+  readIntelligenceIndex,
+  readUsdPerM,
+  type PickerModel,
+} from './picker-types.js';
 
 export function mapCatalogRow(m: Record<string, unknown>): PickerModel | null {
   if (!m || m.active === false) return null;
@@ -12,14 +20,10 @@ export function mapCatalogRow(m: Record<string, unknown>): PickerModel | null {
       : typeof m.priceCreditsPerMillion === 'number'
         ? m.priceCreditsPerMillion
         : null;
-  const hosting = String(m.preferredHostingType || m.hostingType || '').trim();
-  const preferredHostingType =
-    hosting === 'public_cloud' ||
-    hosting === 'managed_cloud' ||
-    hosting === 'private_cloud' ||
-    hosting === 'edge_processing'
-      ? hosting
-      : undefined;
+  const preferredHostingType = normalizeHostingTypes(
+    m.preferredHostingType || m.hostingType,
+  )[0] as PickerModel['preferredHostingType'];
+  const cached = readCachedUsdPerM(m);
   return {
     id,
     modelRef: typeof m.modelRef === 'string' ? m.modelRef : undefined,
@@ -37,8 +41,12 @@ export function mapCatalogRow(m: Record<string, unknown>): PickerModel | null {
     intelligenceIndex: readIntelligenceIndex(m),
     inputPerM: readUsdPerM(m, 'input'),
     outputPerM: readUsdPerM(m, 'output'),
+    cachedPerM: cached.cachedPerM,
+    cachedPerMSource: cached.source,
+    costCurrency: readCostCurrency(m),
     chatPriceCreditsPerMillion: chatPrice,
     preferredHostingType,
+    availableHostingTypes: readAvailableHostingTypes(m),
     visionSupported: typeof m.visionSupported === 'boolean' ? m.visionSupported : undefined,
     subscriptionIds: m.subscriptionId ? [String(m.subscriptionId)] : undefined,
     capabilities: caps,
@@ -65,6 +73,21 @@ export function mergePickerModels(
       intelligenceIndex: mapped.intelligenceIndex ?? prev.intelligenceIndex,
       inputPerM: mapped.inputPerM ?? prev.inputPerM,
       outputPerM: mapped.outputPerM ?? prev.outputPerM,
+      // An explicit catalog cache row outranks a value derived from input.
+      cachedPerM:
+        mapped.cachedPerMSource === 'catalog'
+          ? mapped.cachedPerM
+          : (mapped.cachedPerM ?? prev.cachedPerM),
+      cachedPerMSource:
+        mapped.cachedPerMSource === 'catalog'
+          ? 'catalog'
+          : (mapped.cachedPerMSource ?? prev.cachedPerMSource),
+      costCurrency: mapped.costCurrency || prev.costCurrency,
+      availableHostingTypes: mergeHostingTypes(
+        prev.availableHostingTypes,
+        mapped.availableHostingTypes,
+      ),
+      preferredHostingType: mapped.preferredHostingType || prev.preferredHostingType,
       iconUrl: mapped.iconUrl || prev.iconUrl,
       providerId: mapped.providerId || prev.providerId,
     });
@@ -76,4 +99,11 @@ export function mergePickerModels(
       externalModelId: m.externalModelId,
     }),
   );
+}
+
+/** Union of two hosting lists, region order first. */
+export function mergeHostingTypes(a: string[], b: string[]): string[] {
+  const out = [...a];
+  for (const h of b) if (!out.includes(h)) out.push(h);
+  return out;
 }

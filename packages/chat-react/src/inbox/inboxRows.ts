@@ -73,6 +73,112 @@ function timeOf(raw: Record<string, unknown>): number {
   return 0;
 }
 
+/** Shown when a thread has no stored title and no agent nickname (portal parity). */
+export const UNTITLED_CONVERSATION_LABEL = 'Untitled conversation';
+
+/** Partner/participant names, which may arrive as `participantNames` or a single label. */
+function partnerNameOf(raw: Record<string, unknown>): string {
+  const single = textOf(raw, ['participantLabel', 'contactName']);
+  if (single) return single;
+  const names = raw.participantNames;
+  if (Array.isArray(names)) {
+    return names.map((n) => (typeof n === 'string' ? n.trim() : '')).filter(Boolean).join(', ');
+  }
+  return '';
+}
+
+/**
+ * Row label, mirroring the portal session list (`conversationListTitle`): the
+ * stored room title, then the agent nickname, then the partner/participant
+ * name. The region returns `title: null` for most agent DMs, so a mapper that
+ * reads only `title`/`name` degrades every row to a generic placeholder.
+ */
+export function conversationTitleOf(raw: Record<string, unknown>): string {
+  return (
+    textOf(raw, ['title', 'name', 'customName', 'displayName']) ||
+    textOf(raw, ['agentName']) ||
+    partnerNameOf(raw) ||
+    UNTITLED_CONVERSATION_LABEL
+  );
+}
+
+/** One-line row subtitle; never repeats the title. */
+export function conversationSubtitleOf(raw: Record<string, unknown>, title: string): string {
+  const summary = textOf(raw, [
+    'oneLineSummary',
+    'lastMessagePreview',
+    'summary',
+    'lastMessage',
+    'preview',
+    'lastText',
+  ]);
+  return summary && summary !== title ? summary : '';
+}
+
+/** Row identity keys that a contact can be matched on (portal `indexContactsById` parity). */
+function rowContactKeys(raw: Record<string, unknown>): string[] {
+  return ['virtualEmployeeId', 'anxVeId', 'virtualAgentId', 'agentId', 'peerUserId', 'contactId']
+    .map((key) => textOf(raw, [key]))
+    .filter(Boolean);
+}
+
+function contactMatchesRow(
+  contact: { id?: string | null; virtualEmployeeId?: string | null; agentId?: string | null },
+  raw: Record<string, unknown>,
+): boolean {
+  const keys = [contact.id, contact.virtualEmployeeId, contact.agentId]
+    .map((value) => (value || '').trim())
+    .filter(Boolean);
+  if (!keys.length) return false;
+  return rowContactKeys(raw).some((key) => keys.includes(key));
+}
+
+export type ConversationRowView = {
+  title: string;
+  subtitle: string;
+  avatarUrl: string | null;
+  /** Name the avatar initials follow: the agent/contact, never the room title. */
+  avatarName: string;
+};
+
+/**
+ * Presentation model for one list row: the portal's title precedence, its
+ * subtitle, and an avatar resolved from the loaded contacts first, then the
+ * row itself. Used by both the identity inbox and the single-identity list.
+ */
+export function conversationRowView(
+  raw: Record<string, unknown>,
+  contacts: Array<{
+    id?: string | null;
+    virtualEmployeeId?: string | null;
+    agentId?: string | null;
+    avatarUrl?: string | null;
+  }> = [],
+): ConversationRowView {
+  const title = conversationTitleOf(raw);
+  const contact = contacts.find((item) => contactMatchesRow(item, raw));
+  const fromContact = typeof contact?.avatarUrl === 'string' ? contact.avatarUrl.trim() : '';
+  const fromRow = inboxAvatarFromRow(raw);
+  return {
+    title,
+    subtitle: conversationSubtitleOf(raw, title),
+    avatarUrl: fromContact || fromRow || null,
+    // Portal `sessionAvatarName`: the agent/partner identity, not the title.
+    avatarName: textOf(raw, ['agentName']) || partnerNameOf(raw) || title,
+  };
+}
+
+/**
+ * Letters for the avatar fallback, from the agent/contact name. Mirrors the
+ * portal `SessionList.initials`: two words take their first letters ("Ada
+ * Lovelace" -> AL), one word takes its first two characters ("Veyla" -> VE).
+ */
+export function conversationInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return parts[0]?.slice(0, 2).toUpperCase() || '?';
+}
+
 export function conversationToRow(
   raw: Record<string, unknown>,
   identity: { key: string; label: string; logo: string | null },
@@ -80,9 +186,7 @@ export function conversationToRow(
   const conversationId = textOf(raw, ['conversationId', 'id', '_id']);
   if (!conversationId) return null;
   const kind = classifyKind(raw);
-  const title =
-    textOf(raw, ['title', 'name', 'displayName', 'contactName']) ||
-    (kind === 'agent' ? 'Agent' : kind === 'group' || kind === 'room' ? 'Group' : 'Conversation');
+  const title = conversationTitleOf(raw);
   return {
     id: `${identity.key}|${conversationId}`,
     identityKey: identity.key,
@@ -93,7 +197,7 @@ export function conversationToRow(
     virtualEmployeeId: textOf(raw, ['virtualEmployeeId', 'anxVeId']) || null,
     agentId: textOf(raw, ['agentId']) || null,
     title,
-    summary: textOf(raw, ['summary', 'lastMessage', 'preview', 'lastText']),
+    summary: conversationSubtitleOf(raw, title),
     avatarUrl: inboxAvatarFromRow(raw),
     kind,
     unreadCount: Number(raw.unreadCount || raw.unread || 0) || 0,

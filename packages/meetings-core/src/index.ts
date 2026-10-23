@@ -102,3 +102,20 @@ export {
   type PipelineSessionHandle,
   type RealtimeSessionHandle,
 } from './voice-session.js';
+
+export {
+  captureErrorMessage,
+  classifyCaptureError,
+  hasLiveAudio,
+  hasLiveVideo,
+  startCameraCapture,
+  startScreenCapture,
+  stopMediaStream,
+  type CameraCaptureOptions,
+  type CaptureErrorCode,
+  type CaptureResult,
+  type MediaDevicesLike,
+  type MediaStreamLike,
+  type MediaTrackLike,
+  type ScreenCaptureOptions,
+} from './media-capture.js';

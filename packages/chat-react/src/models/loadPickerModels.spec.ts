@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { formatIntelScore, intelTone } from './intel.js';
-import { authorMarkInput, compactIntelLabel, compactPriceLabel } from './picker-row.js';
-import { readUsdPerM } from './picker-types.js';
+import {
+  authorMarkInput,
+  compactIntelLabel,
+  compactPriceLabel,
+  hostingBadges,
+  pricingTooltip,
+  pricingTooltipText,
+} from './picker-row.js';
+import {
+  CACHE_READ_INPUT_RATE,
+  normalizeHostingTypes,
+  readAvailableHostingTypes,
+  readCachedUsdPerM,
+  readUsdPerM,
+} from './picker-types.js';
 import { buildModelOverride, loadPickerModels, mergePickerModels } from './loadPickerModels.js';
 import { mergeEntitledModelsForPicker } from './mergeEntitledModels.js';
 import { modelDisplayName, resolveModelProvider } from './providerMark.js';
@@ -54,7 +67,11 @@ describe('buildModelOverride', () => {
         intelligenceIndex: 12,
         inputPerM: null,
         outputPerM: null,
+        cachedPerM: null,
+        cachedPerMSource: null,
+        costCurrency: null,
         chatPriceCreditsPerMillion: null,
+        availableHostingTypes: ['public_cloud'],
         externalModelId: 'openai/gpt-5',
         preferredHostingType: 'public_cloud',
       },
@@ -135,6 +152,167 @@ describe('provider mark', () => {
     ).toBe('https://cdn.example/o.png');
     expect(resolveModelProvider({ modelId: 'anthropic/claude-3' }).prefix).toBe('anthropic');
     expect(modelDisplayName('openrouter:anthropic/claude-sonnet-4')).toBe('claude-sonnet-4');
+  });
+});
+
+describe('hosting badges (picker column)', () => {
+  it('renders one badge per class with the portal word label', () => {
+    expect(hostingBadges(['public_cloud', 'edge_processing']).map((b) => b.short)).toEqual([
+      'public',
+      'edge',
+    ]);
+    expect(hostingBadges(['edge_processing', 'private_cloud']).map((b) => b.short)).toEqual([
+      'edge',
+      'private',
+    ]);
+  });
+
+  it('covers every hosting class the region can return', () => {
+    const all = hostingBadges([
+      'public_cloud',
+      'managed_cloud',
+      'private_cloud',
+      'edge_processing',
+    ]);
+    expect(all.map((b) => b.key)).toEqual([
+      'public_cloud',
+      'managed_cloud',
+      'private_cloud',
+      'edge_processing',
+    ]);
+    // public and private must not collapse to the same pill text.
+    expect(new Set(all.map((b) => b.short)).size).toBe(4);
+  });
+
+  it('flags the preferred hosting type and omits unknown keys', () => {
+    const badges = hostingBadges(['public_cloud', 'managed_cloud'], {
+      preferred: 'managed_cloud',
+    });
+    expect(badges.map((b) => b.preferred)).toEqual([false, true]);
+    expect(badges[1].label).toBe('Managed cloud (preferred)');
+    expect(hostingBadges(['frobnicate_cloud', ''])).toEqual([]);
+  });
+
+  it('renders nothing when the row has no hosting metadata', () => {
+    expect(hostingBadges(null)).toEqual([]);
+    expect(hostingBadges(undefined)).toEqual([]);
+    expect(hostingBadges([])).toEqual([]);
+  });
+
+  it('accepts the short aliases models.list returns', () => {
+    expect(normalizeHostingTypes(['public', 'managed', 'edge'])).toEqual([
+      'public_cloud',
+      'managed_cloud',
+      'edge_processing',
+    ]);
+    expect(readAvailableHostingTypes({ hostingType: 'managed' })).toEqual(['managed_cloud']);
+    expect(readAvailableHostingTypes({ preferredHostingType: 'edge' })).toEqual([
+      'edge_processing',
+    ]);
+  });
+});
+
+describe('pricing tooltip (in / out / cached)', () => {
+  it('lists input, output and an explicit cached row in order', () => {
+    const tip = pricingTooltip({
+      inputPerM: 3,
+      outputPerM: 15,
+      cachedPerM: 0.3,
+      cachedPerMSource: 'catalog',
+      costCurrency: 'USD',
+      chatPriceCreditsPerMillion: 40,
+    });
+    expect(tip.lines).toEqual([
+      'In: $3.00/M tokens',
+      'Out: $15.00/M tokens',
+      'Cached: $0.300/M tokens',
+      'Billing: 40 cr/M',
+    ]);
+    expect(tip.hasUsd).toBe(true);
+    expect(tip.hasCredits).toBe(true);
+  });
+
+  it('labels a derived cached price so it is not mistaken for a quoted rate', () => {
+    expect(
+      pricingTooltipText({
+        inputPerM: 3,
+        outputPerM: 15,
+        cachedPerM: 0.3,
+        cachedPerMSource: 'derived',
+        costCurrency: 'USD',
+        chatPriceCreditsPerMillion: null,
+      }),
+    ).toBe(
+      'In: $3.00/M tokens\nOut: $15.00/M tokens\nCached: $0.300/M tokens (est. 10% of input)',
+    );
+  });
+
+  it('omits missing sides and falls back to the credit rate', () => {
+    expect(
+      pricingTooltipText({
+        inputPerM: null,
+        outputPerM: null,
+        cachedPerM: null,
+        cachedPerMSource: null,
+        costCurrency: null,
+        chatPriceCreditsPerMillion: 5,
+      }),
+    ).toBe('Billing: 5.0 cr/M');
+  });
+
+  it('returns null when nothing is priced, so no empty tooltip renders', () => {
+    expect(
+      pricingTooltipText({
+        inputPerM: null,
+        outputPerM: null,
+        cachedPerM: null,
+        cachedPerMSource: null,
+        costCurrency: null,
+        chatPriceCreditsPerMillion: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps a non-USD currency visible and marks a zero price free', () => {
+    expect(
+      pricingTooltipText({
+        inputPerM: 0,
+        outputPerM: 1.5,
+        cachedPerM: 0,
+        cachedPerMSource: 'derived',
+        costCurrency: 'EUR',
+        chatPriceCreditsPerMillion: null,
+      }),
+    ).toBe('In: free\nOut: EUR $1.50/M tokens\nCached: free (est. 10% of input)');
+  });
+});
+
+describe('cached token price derivation', () => {
+  it('reads an explicit cache_read millicent row when present', () => {
+    expect(
+      readCachedUsdPerM({
+        costPricing: [
+          { unit: 'token_in', unitPriceMillicents: 0.3, currency: 'USD' },
+          { unit: 'cache_read', unitPriceMillicents: 0.03, currency: 'USD' },
+        ],
+      }),
+    ).toEqual({ cachedPerM: 0.3, source: 'catalog' });
+  });
+
+  it('derives 10% of the input rate when the region has no cache row', () => {
+    const derived = readCachedUsdPerM({
+      costPricing: [{ unit: 'token_in', unitPriceMillicents: 0.3 }],
+    });
+    expect(derived.source).toBe('derived');
+    expect(derived.cachedPerM).toBeCloseTo(0.3);
+    expect(CACHE_READ_INPUT_RATE).toBe(0.1);
+  });
+
+  it('has no cached price when the input price is unknown', () => {
+    expect(readCachedUsdPerM({ costPricing: [] })).toEqual({
+      cachedPerM: null,
+      source: null,
+    });
   });
 });
 
@@ -306,7 +484,10 @@ describe('loadPickerModels', () => {
         throw new Error(command);
       },
     });
-    expect(models).toEqual([]);
+    // The loader hangs `defaultModelId` off the array (portal contract), so the
+    // rows are what must be empty — not the array's own properties.
+    expect([...models]).toEqual([]);
+    expect((models as unknown as { defaultModelId?: string | null }).defaultModelId).toBeNull();
   });
 });
 

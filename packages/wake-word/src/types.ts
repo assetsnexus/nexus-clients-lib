@@ -9,6 +9,11 @@
  *     fires and the user has an authenticated voice session.
  *  4. A private wake sample (wav) is fetched by opaque ref, kept in memory only,
  *     never logged, never sent to a model or any remote service.
+ *  5. Detection is not telemetry. A wake — and equally a *false positive* — is
+ *     never reported to any backend, and no detection counters/analytics are
+ *     transmitted. The backend only ever sees a transcript the user explicitly
+ *     submits (an ordinary user message). See {@link WAKE_WORD_TRUST}
+ *     `reportsDetectionsToBackend` / `isActivityTracker`.
  */
 
 export type WakeWordEngineKind = 'builtin' | 'custom_sample' | 'external';
@@ -110,6 +115,12 @@ export const WAKE_WORD_TRUST = {
   mayTriggerCommand: false,
   mayApproveCommand: false,
   audioLeavesDeviceBeforeWake: false,
+  /** No detection event (true positive OR false positive) is sent to a backend. */
+  reportsDetectionsToBackend: false,
+  /** Wake listening is not an activity/usage tracker; it emits no telemetry. */
+  isActivityTracker: false,
+  /** Nothing is sent anywhere until the user explicitly submits a transcript. */
+  transmitsOnlyOnUserSubmit: true,
 } as const;
 
 export function defaultWakeWordConfig(partial: Partial<WakeWordConfig> = {}): WakeWordConfig {

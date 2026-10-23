@@ -14,6 +14,10 @@ const characterKitAssetCache = resolve(
   __dirname,
   '../../../anx-libs/nexus-collaboration-vr/packages/character-kit/src/asset-cache.ts',
 );
+const characterKitPresenceMoods = resolve(
+  __dirname,
+  '../../../anx-libs/nexus-collaboration-vr/packages/character-kit/src/presence-moods.ts',
+);
 const clusterSceneReact = resolve(
   __dirname,
   '../../../anx-libs/nexus-collaboration-vr/packages/cluster-scene-react/src/index.ts',
@@ -35,6 +39,7 @@ export default defineConfig({
       '@nexus/chat-core': resolve(__dirname, '../chat-core/src/index.ts'),
       '@nexus/character-react': characterReact,
       '@nexus/character-kit/asset-cache': characterKitAssetCache,
+      '@nexus/character-kit/presence-moods': characterKitPresenceMoods,
       '@nexus/character-kit': characterKit,
       '@nexus/cluster-scene-react': clusterSceneReact,
       '@nexus/scene-client': sceneClient,

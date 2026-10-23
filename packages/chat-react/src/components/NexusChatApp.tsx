@@ -124,6 +124,7 @@ import { mergeInboxAgentAvatars } from '../inbox/inboxRows.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
 import type { InboxRow } from '../inbox/inboxRows.js';
+import { conversationInitials, conversationRowView } from '../inbox/inboxRows.js';
 import { loadConversationHistory } from '../utils/openContactFlow.js';
 import '../styles.css';
 
@@ -900,8 +901,12 @@ export function NexusChatApp({
             intelligenceIndex: m.intelligenceIndex,
             inputPerM: null,
             outputPerM: null,
+            cachedPerM: null,
+            cachedPerMSource: null,
+            costCurrency: null,
             chatPriceCreditsPerMillion: m.chatPriceCreditsPerMillion,
             preferredHostingType: m.preferredHostingType || undefined,
+            availableHostingTypes: m.availableHostingTypes || [],
             visionSupported: m.visionSupported,
             capabilities: m.capabilities,
             category: m.category,
@@ -1106,6 +1111,7 @@ export function NexusChatApp({
   };
 
   const HeaderSlot = slots?.header;
+  const HeaderActionsSlot = slots?.headerActions;
   const EmptySlot = slots?.empty;
 
   const showAdmin = features.adminPanels && route === 'admin';
@@ -1400,6 +1406,7 @@ export function NexusChatApp({
                 Call
               </button>
             ) : null}
+            {HeaderActionsSlot ? <HeaderActionsSlot chat={chat} contact={contact} /> : null}
             <button type="button" className="nexus-chat__btn" aria-label="Config" onClick={() => setMoreOpen(true)}>
               Config
             </button>
@@ -1474,11 +1481,7 @@ export function NexusChatApp({
                     <div className="nexus-chat__inbox-list" role="list" aria-label="Conversations">
                       {conversationRows.map((row) => {
                         const id = conversationIdFromRow(row);
-                        const title =
-                          (typeof row.title === 'string' && row.title) ||
-                          (typeof row.name === 'string' && row.name) ||
-                          (typeof row.displayName === 'string' && row.displayName) ||
-                          'Conversation';
+                        const view = conversationRowView(row, state.contacts);
                         const marked = conversationHighlightsAgent(
                           {
                             virtualEmployeeId: typeof row.virtualEmployeeId === 'string' ? row.virtualEmployeeId : null,
@@ -1489,14 +1492,26 @@ export function NexusChatApp({
                         );
                         return (
                           <button
-                            key={id || title}
+                            key={id || view.title}
                             type="button"
                             role="listitem"
                             className={`nexus-chat__inbox-row${marked ? ' nexus-chat__inbox-row--highlight' : ''}`}
                             aria-current={marked ? 'true' : undefined}
                             onClick={() => void openListedConversation(row)}
                           >
-                            <span className="nexus-chat__inbox-title">{title}</span>
+                            <span className="nexus-chat__peer">
+                              {view.avatarUrl ? (
+                                <CachedAvatarImage src={view.avatarUrl} alt="" fallback={conversationInitials(view.avatarName)} />
+                              ) : (
+                                conversationInitials(view.avatarName)
+                              )}
+                            </span>
+                            <span className="nexus-chat__inbox-copy">
+                              <span className="nexus-chat__inbox-title">{view.title}</span>
+                              {view.subtitle ? (
+                                <span className="nexus-chat__inbox-summary">{view.subtitle}</span>
+                              ) : null}
+                            </span>
                           </button>
                         );
                       })}

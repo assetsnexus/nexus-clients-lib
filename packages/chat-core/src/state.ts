@@ -147,6 +147,15 @@ export type ChatTurn = {
     body?: string;
     kind?: string;
   }>;
+  /**
+   * Ambient presence mood the agent's emotion engine produced for this turn
+   * (e.g. `calm`, `happy`, `alert`, `energetic`). Drives the 3D avatar mood when
+   * present; absent means "keep the presence/profile default". Tolerant: an
+   * unknown value is ignored by the character host.
+   */
+  presenceMood?: string | null;
+  /** Voice style hint paired with `presenceMood` (`warm` / `soft` / `quick`). */
+  voiceStyleHint?: string | null;
 };
 
 export type PanelState = {

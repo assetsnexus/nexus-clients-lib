@@ -7,6 +7,8 @@ import type {
   VoiceCallSurface,
 } from './types.js';
 import {
+  applyRemoteMute,
+  getBrowserRealtimeCallRuntime,
   getBrowserRealtimeRemoteStream,
   setBrowserRealtimeRemoteStreamHandler,
 } from './runtime.js';
@@ -267,6 +269,14 @@ export function createVoiceApi(deps: VoiceApiDeps) {
     },
     getRemotePlaybackStream(): MediaStream | null {
       return getBrowserRealtimeRemoteStream();
+    },
+    /**
+     * Phase 7d — silence/restore the inbound (remote agent) audio without
+     * ending the call. A moderator's "disable listening" / "mute" on an agent
+     * seat calls this so the local client stops playing that agent immediately.
+     */
+    setRemoteMuted(muted: boolean): void {
+      applyRemoteMute(getBrowserRealtimeCallRuntime(), muted);
     },
     /** TTS speak-turn with optional lip-sync MediaStream callback. */
     createSpeakTurn(opts: {

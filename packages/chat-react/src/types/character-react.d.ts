@@ -14,6 +14,9 @@ declare module '@nexus/character-react' {
       stopLipSync: () => void;
       ensureLipSync?: (ctx?: AudioContext) => Promise<unknown>;
     } | null) => void;
+    /** Catalog gate for `vrmUrl` — required for a non-platform VRM to be fetched. */
+    validationStatus?: string | null;
+    previewUnverified?: boolean;
   };
 
   export const CompanionCanvas: ComponentType<CompanionCanvasProps>;
@@ -24,11 +27,13 @@ declare module '@nexus/character-react' {
     defaultMood?: string | null;
     clothes?: unknown;
     settings?: { lip_sync_enabled?: boolean };
+    vrmValidationStatus?: string | null;
   }): {
     vrmUrl?: string | null;
     gestureManifestUrl?: string | null;
     mood?: string;
     clothes?: unknown;
     lipSyncEnabled?: boolean;
+    validationStatus?: string | null;
   };
 }

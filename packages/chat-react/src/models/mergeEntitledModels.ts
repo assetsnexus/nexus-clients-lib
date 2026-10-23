@@ -1,4 +1,4 @@
-import { mapCatalogRow, mergePickerModels } from './picker-map.js';
+import { mapCatalogRow, mergeHostingTypes, mergePickerModels } from './picker-map.js';
 import type { PickerModel } from './picker-types.js';
 
 /** Region-sold entitlement sources (same as portal mergeEntitledModelsForPicker). */
@@ -107,6 +107,16 @@ function mergePickerRow(base: PickerModel, extra: PickerModel): PickerModel {
     intelligenceIndex: extra.intelligenceIndex ?? base.intelligenceIndex,
     inputPerM: extra.inputPerM ?? base.inputPerM,
     outputPerM: extra.outputPerM ?? base.outputPerM,
+    // An explicit catalog cache row outranks a value derived from input.
+    cachedPerM:
+      extra.cachedPerMSource === 'catalog'
+        ? extra.cachedPerM
+        : (extra.cachedPerM ?? base.cachedPerM),
+    cachedPerMSource:
+      extra.cachedPerMSource === 'catalog'
+        ? 'catalog'
+        : (extra.cachedPerMSource ?? base.cachedPerMSource),
+    costCurrency: extra.costCurrency || base.costCurrency,
     iconUrl: extra.iconUrl || base.iconUrl,
     providerId: extra.providerId || base.providerId,
     subscriptionIds: [
@@ -115,6 +125,10 @@ function mergePickerRow(base: PickerModel, extra: PickerModel): PickerModel {
     capabilities: extra.capabilities?.length ? extra.capabilities : base.capabilities,
     visionSupported: extra.visionSupported ?? base.visionSupported,
     preferredHostingType: extra.preferredHostingType || base.preferredHostingType,
+    availableHostingTypes: mergeHostingTypes(
+      base.availableHostingTypes,
+      extra.availableHostingTypes,
+    ),
   };
 }
 
@@ -166,6 +180,16 @@ export function mergeEntitledModelsForPicker(opts: {
           ? pickerId
           : `static:${pickerId}`;
 
+    // Region route-level pricing is the entitlement's own price table when the
+    // row carries none (portal `routeFromEntitlement`: `r.pricing || row.costPricing`).
+    const routes = Array.isArray(row.routes)
+      ? (row.routes as Record<string, unknown>[])
+      : [];
+    const routePricing = routes.find((r) => Array.isArray(r.pricing) && r.pricing.length)
+      ?.pricing as Record<string, unknown>[] | undefined;
+    const routeHosting = routes
+      .map((r) => r.hostingType || r.preferredHostingType)
+      .find((h) => typeof h === 'string' && h);
     const seeded = mapCatalogRow({
       ...row,
       id: pickerId,
@@ -175,12 +199,16 @@ export function mergeEntitledModelsForPicker(opts: {
       category: row.category || catalogHit?.category || 'chat',
       capabilities: row.capabilities || catalogHit?.capabilities,
       externalModelId: row.externalModelId || catalogHit?.externalModelId || catalogKey,
-      preferredHostingType: row.preferredHostingType || catalogHit?.preferredHostingType,
+      preferredHostingType:
+        row.preferredHostingType || routeHosting || catalogHit?.preferredHostingType,
+      availableHostingTypes: row.availableHostingTypes || catalogHit?.availableHostingTypes,
+      hostingType: row.hostingType || routeHosting || catalogHit?.preferredHostingType,
       intelligenceIndex: row.intelligenceIndex ?? catalogHit?.intelligenceIndex,
       iconUrl: catalogHit?.iconUrl,
       providerId: row.providerId || catalogHit?.providerId,
       providerIconUrl: catalogHit?.iconUrl,
-      costPricing: row.costPricing,
+      costPricing: row.costPricing || routePricing,
+      suggestedCostPricing: row.suggestedCostPricing,
       chatPriceCreditsPerMillion:
         row.chatPriceCreditsPerMillion ?? catalogHit?.chatPriceCreditsPerMillion,
       visionSupported: row.visionSupported === true || catalogHit?.visionSupported === true,

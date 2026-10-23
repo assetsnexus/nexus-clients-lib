@@ -65,6 +65,7 @@
   "devDependencies": {
     "@nexus/chat-core": "file:../chat-core",
     "@types/dompurify": "^3.0.5",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",

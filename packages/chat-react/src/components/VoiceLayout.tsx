@@ -8,9 +8,10 @@ import {
   type VoiceLayoutMode,
 } from '@nexus/chat-core';
 import { ThreadView } from './ThreadView.js';
-import { VoiceAvatarCanvas } from './VoiceAvatarCanvas.js';
+import { VoiceAvatarCanvas, type VoiceAvatarHost } from './VoiceAvatarCanvas.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import {
+  applyTurnPresenceMood,
   playAssistantEmbodiment,
   playSessionRoutine,
   resolveEmbodimentFace,
@@ -49,6 +50,17 @@ export type VoiceLayoutProps = {
   onVoiceState?: (state: { active: boolean; muted: boolean; status: string; errorMessage: string | null }) => void;
   autoStart?: boolean;
   /**
+   * Render the walkable companion scene ({@link CompanionSceneCanvas}) instead of
+   * the flat stage, so locomotion (`character_walk` / `approach` / `turn_to`) is
+   * visibly meaningful. Desktop-only opt-in (Settings → Companion debug).
+   */
+  sceneMode?: boolean;
+  /**
+   * Fired whenever the mounted 3D avatar host changes (mount, host-ready, swap,
+   * unmount). The desktop binds the character tool pack + debug panels to it.
+   */
+  onAvatarHost?: (host: VoiceAvatarHost | null) => void;
+  /**
    * Which axis the split view uses. `vertical` (default) stacks the avatar above
    * the transcript; `horizontal` puts the chat *beside* the 3D avatar — the
    * desktop DM stage mode. Only affects the `split` layout.
@@ -75,6 +87,8 @@ export function VoiceLayout({
   onView,
   onVoiceState,
   autoStart,
+  sceneMode = false,
+  onAvatarHost,
   splitAxis = 'vertical',
   initialLayout = 'split',
 }: VoiceLayoutProps) {
@@ -142,17 +156,25 @@ export function VoiceLayout({
     (next: import('./VoiceAvatarCanvas.js').VoiceAvatarHost | null) => {
       embodimentHostRef.current = next;
       setVoiceHostTick((n) => n + 1);
+      onAvatarHost?.(next);
     },
-    [],
+    [onAvatarHost],
   );
 
-  // Play inline tags for each new assistant turn (greeting fires on live).
+  // Play inline tags for each new assistant turn (greeting fires on live) and
+  // apply the emotion-engine mood the turn carries (if any).
   useEffect(() => {
     const host = embodimentHostRef.current;
     if (!host) return;
     const pending = unplayedAssistantTurns(turns, playedAssistantTurns.current);
     for (const turn of pending) {
       playAssistantEmbodiment(host, turn.text, { face: embodimentFace, profile: presence?.embodiment });
+    }
+    if (pending.length > 0) {
+      // The latest assistant turn's mood wins, so a stale earlier turn cannot
+      // overwrite the current one.
+      const latest = [...turns].reverse().find((t) => t.role === 'assistant');
+      applyTurnPresenceMood(host, latest?.presenceMood ?? null);
     }
   }, [turns, voiceHostTick, embodimentFace, presence?.embodiment]);
 
@@ -337,6 +359,7 @@ export function VoiceLayout({
             presence={presence}
             playbackStream={playbackStream}
             audioContext={audioContext}
+            sceneMode={sceneMode}
             onHostReady={handleVoiceHostReady}
           />
         ) : contact?.avatarUrl ? (
