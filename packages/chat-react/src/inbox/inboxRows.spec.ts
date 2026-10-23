@@ -6,6 +6,7 @@ import {
   filterInboxRowsForLockedAgent,
   matchesKindFilter,
   mergeInboxAgentAvatars,
+  ownerContactIdForRow,
   sortInboxRows,
   unwrapList,
 } from './inboxRows.js';
@@ -150,5 +151,51 @@ describe('inbox rows', () => {
     expect(conversationInitials(view.avatarName)).toBe('XC');
     expect(conversationInitials('Ada Lovelace')).toBe('AL');
     expect(conversationInitials('')).toBe('?');
+  });
+
+  describe('ownerContactIdForRow', () => {
+    const resolve = (map: Record<string, string>) => (id: string) =>
+      map[id] ? { id: map[id] } : null;
+
+    it('resolves the canonical contact from the VE id when contactId is null', () => {
+      // Region list rows report contactId: null and only expose virtualEmployeeId.
+      expect(
+        ownerContactIdForRow(
+          { contactId: null, virtualEmployeeId: 've-nox', agentId: 'agent-uuid' },
+          resolve({ 've-nox': 've-nox' }),
+        ),
+      ).toBe('ve-nox');
+    });
+
+    it('resolves through an alias to the canonical contact id', () => {
+      expect(
+        ownerContactIdForRow(
+          { contactId: null, virtualEmployeeId: 'alias-nox', agentId: null },
+          resolve({ 'alias-nox': 've-nox' }),
+        ),
+      ).toBe('ve-nox');
+    });
+
+    it('falls back to the sidecar agent id when no contact matches', () => {
+      expect(
+        ownerContactIdForRow(
+          { contactId: null, virtualEmployeeId: null, agentId: 'agent-uuid' },
+          () => null,
+        ),
+      ).toBe('agent-uuid');
+    });
+
+    it('prefers the row contactId when it already resolves', () => {
+      expect(
+        ownerContactIdForRow(
+          { contactId: 've-direct', virtualEmployeeId: 've-other', agentId: null },
+          resolve({ 've-direct': 've-direct', 've-other': 've-other' }),
+        ),
+      ).toBe('ve-direct');
+    });
+
+    it('returns undefined when the row carries no identity keys', () => {
+      expect(ownerContactIdForRow({ contactId: null, virtualEmployeeId: null, agentId: null }, () => null)).toBeUndefined();
+    });
   });
 });

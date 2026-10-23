@@ -218,6 +218,31 @@ export function filterInboxRowsForLockedAgent(rows: InboxRow[], virtualEmployeeI
   });
 }
 
+/**
+ * Resolve which contact an inbox row belongs to before opening its conversation.
+ *
+ * The region's `conversations.list` reports `contactId: null` for agent DMs and
+ * only populates `virtualEmployeeId` (VE id) and/or the sidecar `agentId`. If a
+ * caller forwards only `row.contactId`, the chat panel opens unbound: the header
+ * falls back to a generic title and the host cannot resolve the agent, so call /
+ * companion-mode affordances disappear. Prefer the canonical contact matched by
+ * the shared identity matcher, then degrade through the raw row keys.
+ */
+export function ownerContactIdForRow(
+  row: Pick<InboxRow, 'contactId' | 'virtualEmployeeId' | 'agentId'>,
+  resolve: (id: string) => Partial<{ id?: string | null }> | null | undefined,
+): string | undefined {
+  const candidates = [row.contactId, row.virtualEmployeeId, row.agentId]
+    .map((value) => (value || '').trim())
+    .filter(Boolean);
+  for (const candidate of candidates) {
+    const match = resolve(candidate);
+    const id = match?.id ? String(match.id).trim() : '';
+    if (id) return id;
+  }
+  return candidates[0];
+}
+
 function nestedRecord(raw: Record<string, unknown>, key: string): Record<string, unknown> | null {
   const value = raw[key];
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;

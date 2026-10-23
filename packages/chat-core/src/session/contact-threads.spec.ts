@@ -257,3 +257,63 @@ describe('NexusChat.openLatest panel bind', () => {
     expect(state.panels[state.activePanelIndex]?.conversationId).toBe('bound-1');
   });
 });
+
+describe('NexusChat.streamInit contact bind', () => {
+  it('binds the owning agent contact when only a conversation id + contact id are known', async () => {
+    // Regression: opening an agent DM from the region list arrives with only a
+    // conversation id and the contact id (the list reports contactId: null and
+    // only exposes virtualEmployeeId/agentId). streamInit must bind the panel so
+    // the header resolves the agent — otherwise call / companion affordances hide.
+    const chat = createNexusChat({
+      client: {
+        send: async (command) => {
+          if (command === 'anx.communicate.stream-init') {
+            return { ok: true, data: { resourceId: 'conv-9' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    chat.getState().contacts.push({
+      id: 've-nox',
+      name: 'Nox',
+      type: 'agent',
+      virtualEmployeeId: 've-nox',
+      aliases: ['alias-nox'],
+    });
+
+    // Panel starts unbound, mirroring a fresh app open.
+    expect(chat.getState().panels[chat.getState().activePanelIndex]?.contactId).toBe('');
+
+    await chat.streamInit({ conversationId: 'conv-9', contactId: 'alias-nox' });
+
+    const state = chat.getState();
+    const panel = state.panels[state.activePanelIndex];
+    expect(panel?.contactId).toBe('ve-nox');
+    expect(panel?.contactType).toBe('agent');
+    expect(panel?.conversationId).toBe('conv-9');
+    expect(state.selectedAgentId).toBe('ve-nox');
+    expect(state.conversationId).toBe('conv-9');
+  });
+
+  it('does not overwrite an existing contact binding when streamInit omits contactId', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command) => {
+          if (command === 'anx.communicate.stream-init') {
+            return { ok: true, data: { resourceId: 'conv-10' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    chat.getState().contacts.push({ id: 've-a', name: 'A', type: 'agent', virtualEmployeeId: 've-a' });
+    await chat.streamInit({ conversationId: 'conv-1', contactId: 've-a' });
+
+    await chat.streamInit({ conversationId: 'conv-10' });
+
+    const state = chat.getState();
+    expect(state.panels[state.activePanelIndex]?.contactId).toBe('ve-a');
+    expect(state.panels[state.activePanelIndex]?.conversationId).toBe('conv-10');
+  });
+});

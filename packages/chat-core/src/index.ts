@@ -2825,6 +2825,22 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       store.setState({ conversationId: String(payload.resourceId) });
       patchCurrentPanel({ conversationId: String(payload.resourceId) });
     }
+    // Bind the panel to the agent contact when the caller knows which one owns
+    // this conversation. List rows and restored threads can arrive with only a
+    // conversation id; without this the panel stays contact-less, so the header
+    // falls back to a generic title and host affordances (call / companion mode)
+    // cannot resolve the agent. Resolve through the shared identity matcher so
+    // VE ids, aliases, and sidecar agent ids all land on the same contact.
+    if (!initOpts.roomId && initOpts.contactId) {
+      const bound = findChatContact(store.getState().contacts, initOpts.contactId);
+      if (bound) {
+        store.setState({ selectedAgentId: bound.id });
+        patchCurrentPanel({
+          contactId: bound.id,
+          contactType: bound.type || 'agent',
+        });
+      }
+    }
   };
 
   const openContact = async (contactId: string, openOpts?: { title?: string }) => {

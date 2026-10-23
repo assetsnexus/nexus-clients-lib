@@ -124,7 +124,7 @@ import { mergeInboxAgentAvatars } from '../inbox/inboxRows.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
 import type { InboxRow } from '../inbox/inboxRows.js';
-import { conversationInitials, conversationRowView } from '../inbox/inboxRows.js';
+import { conversationInitials, conversationRowView, ownerContactIdForRow } from '../inbox/inboxRows.js';
 import { loadConversationHistory } from '../utils/openContactFlow.js';
 import '../styles.css';
 
@@ -819,9 +819,16 @@ export function NexusChatApp({
       }
       setActiveInboxId(row.id);
       if (!row.conversationId || !client) return;
+      // Region list rows report `contactId: null` for agent DMs — the owner shows
+      // up as `virtualEmployeeId` (VE id) and/or the sidecar `agentId`. Resolve
+      // the owning contact (id, VE id, alias, agent id) before opening so the
+      // panel binds and host affordances (call / companion mode) stay available.
+      const ownerContactId = ownerContactIdForRow(row, (id) =>
+        findChatContact(chat.getState().contacts, id),
+      );
       try {
         await loadConversationHistory(client, chat, row.conversationId);
-        await chat.streamInit({ conversationId: row.conversationId, contactId: row.contactId || undefined });
+        await chat.streamInit({ conversationId: row.conversationId, contactId: ownerContactId });
       } catch (error) {
         setListError(error instanceof Error ? error.message : 'Could not open conversation');
       }
