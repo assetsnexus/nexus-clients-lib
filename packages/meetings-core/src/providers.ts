@@ -8,7 +8,7 @@
  * provider supports.
  *
  * The same catalog is consumed by the portal, mobile, desktop, and external
- * nexus apps (e.g. xcamp), so meeting cards render and route identically.
+ * nexus apps, so meeting cards render and route identically.
  */
 
 export type MeetingProviderId =
