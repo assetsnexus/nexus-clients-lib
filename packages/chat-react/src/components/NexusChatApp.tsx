@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   createNexusChat,
   conversationHighlightsAgent,
-  conversationIdFromRow,
   filterConversationsForLockedAgent,
   findChatContact,
   isUnreachableLabel,
@@ -47,7 +46,6 @@ import {
   type ClientToolProp,
 } from '../page-tools/apply-page-tools-props.js';
 import { ContactList } from './ContactList.js';
-import { PastConversationList } from './PastConversationList.js';
 import { ThreadView } from './ThreadView.js';
 import { Composer } from './Composer.js';
 export type { ComposerControls, ComposerCallMode } from './composerHost.js';
@@ -107,8 +105,10 @@ import {
 import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
-import { ConversationInbox } from './ConversationInbox.js';
+import { ConversationInbox, type InboxRowAction, type NewConversationKind } from './ConversationInbox.js';
 import { filterInboxRowsForLockedAgent } from '../inbox/inboxRows.js';
+import { readAutoVoice, writeAutoVoice } from '../chrome/auto-voice.js';
+import { applyTextScaleToElement, readTextScaleDelta, writeTextScaleDelta } from '../chrome/text-scale.js';
 import { resolveChatChrome } from '../chrome/chat-chrome.js';
 import { WorkingOnStrip } from './WorkingOnStrip.js';
 import { PermissionSummaryCard } from './PermissionSummaryCard.js';
@@ -120,11 +120,11 @@ import { ReasoningEffortControl } from '../chrome/ReasoningEffortControl.js';
 import { UsageChrome } from '../chrome/UsageChrome.js';
 import { resolveEffectivePickerModel } from '../chrome/advanced-model-facts.js';
 import type { DictationModel } from '../dictation/dictationPlan.js';
-import { mergeInboxAgentAvatars } from '../inbox/inboxRows.js';
+import { mergeInboxAgentAvatars, inboxRowsFromConversationRows } from '../inbox/inboxRows.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
 import type { InboxRow } from '../inbox/inboxRows.js';
-import { conversationInitials, conversationRowView, ownerContactIdForRow } from '../inbox/inboxRows.js';
+import { ownerContactIdForRow } from '../inbox/inboxRows.js';
 import { loadConversationHistory } from '../utils/openContactFlow.js';
 import '../styles.css';
 
@@ -525,6 +525,11 @@ export function NexusChatApp({
   const [inboxLoading, setInboxLoading] = useState(false);
   const [hiddenIdentityKeys, setHiddenIdentityKeys] = useState<string[]>([]);
   const [activeInboxId, setActiveInboxId] = useState<string | null>(null);
+  /** Quickbar state: the Archive link swaps the list to archived threads. */
+  const [inboxArchived, setInboxArchived] = useState(false);
+  /** Composer preferences shared across panels and persisted to storage. */
+  const [autoVoice, setAutoVoice] = useState(() => readAutoVoice(false));
+  const [textScaleDelta, setTextScaleDelta] = useState(() => readTextScaleDelta(0));
   const [voiceView, setVoiceView] = useState<'background' | 'transcript' | 'avatar'>('background');
   const [moreOpen, setMoreOpen] = useState(false);
   const [catalog, setCatalog] = useState<PickerModel[]>([]);
@@ -580,6 +585,31 @@ export function NexusChatApp({
     return filterInboxRowsForLockedAgent(rows, lockedAgent.virtualEmployeeId);
   }, [inboxRows, state.contacts, chrome.conversationList, lockedAgent]);
   const activeInbox = visibleInbox.find((row) => row.id === activeInboxId) || null;
+  /**
+   * Conversations with a tool run awaiting approval, so the sidebar can flag the
+   * row (portal `Approval` badge). Conversation-scoped: `ApprovalsStrip` reads the
+   * same `needs_approval` runs, so the badge and the strip never disagree.
+   */
+  const pendingApprovalConversationIds = useMemo(() => {
+    const ids = new Set<string>();
+    const turns = panel?.turns?.length ? panel.turns : state.turns;
+    for (const turn of turns) {
+      for (const run of turn.toolEvents || []) {
+        if (run.status === 'needs_approval') {
+          const id = String((turn as { conversationId?: string }).conversationId || '');
+          if (id) ids.add(id);
+        }
+      }
+    }
+    const openId = panel?.conversationId || state.conversationId || '';
+    if (ids.size || !openId) return Array.from(ids);
+    // The open conversation's own turns are the usual home for the pause; the
+    // turn rows do not always carry the id, so attribute them to the open thread.
+    const openHasApproval = turns.some((turn) =>
+      (turn.toolEvents || []).some((run) => run.status === 'needs_approval'),
+    );
+    return openHasApproval ? [openId] : [];
+  }, [panel?.turns, panel?.conversationId, state.turns, state.conversationId]);
   const listedContact = findChatContact(state.contacts, activeContactId || activeInbox?.contactId || '') || null;
   const contact =
     listedContact ||
@@ -594,6 +624,17 @@ export function NexusChatApp({
       : null);
   const sheetContact = findChatContact(state.contacts, sheetContactId || '') || null;
   const conversationId = panel?.conversationId || state.conversationId;
+  /**
+   * Row to mark in the sidebar. A row opened through the list sets
+   * `activeInboxId`; a conversation opened elsewhere (contact directory,
+   * companion popout, host deep link) only sets `conversationId`, so fall back
+   * to matching that — otherwise the list shows nothing selected.
+   */
+  const activeInboxRowId = useMemo(() => {
+    if (activeInboxId) return activeInboxId;
+    if (!conversationId) return null;
+    return visibleInbox.find((row) => row.conversationId === conversationId)?.id ?? null;
+  }, [activeInboxId, conversationId, visibleInbox]);
   const presentation = lockedEmbedPresentation({
     lockedAgent,
     contactName: displayNameProp || contact?.name,
@@ -735,6 +776,28 @@ export function NexusChatApp({
     if (rootRef.current) applyThemeToElement(rootRef.current, activeTheme || {});
   }, [activeTheme]);
 
+  // One CSS variable on the chat root scales the whole surface; the preference
+  // is persisted so a reload keeps the chosen size.
+  useEffect(() => {
+    applyTextScaleToElement(rootRef.current, textScaleDelta);
+  }, [textScaleDelta]);
+
+  const toggleAutoVoice = useCallback(() => {
+    setAutoVoice((prev) => {
+      writeAutoVoice(!prev);
+      return !prev;
+    });
+  }, []);
+
+  const nudgeTextScale = useCallback((next: number) => {
+    setTextScaleDelta((prev) => {
+      const clamped = Math.max(-2, Math.min(3, next));
+      if (clamped === prev) return prev;
+      writeTextScaleDelta(clamped);
+      return clamped;
+    });
+  }, []);
+
   const reloadLists = useCallback(async () => {
     if (!chrome.showConversationList) return;
     const listLock = chrome.conversationList === 'drawer' ? lockedAgent : null;
@@ -746,6 +809,7 @@ export function NexusChatApp({
           identities,
           hiddenKeys: hiddenIdentityKeys,
           lockedAgent: listLock,
+          status: inboxArchived ? 'archived' : 'active',
           send: sendWithClient(client as CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void }),
         });
         setInboxRows(loaded.rows);
@@ -767,16 +831,29 @@ export function NexusChatApp({
         return;
       }
       try {
-        const rows = await chat.listConversations({ status: 'active', limit: 100 });
+        const rows = await chat.listConversations({
+          status: inboxArchived ? 'archived' : 'active',
+          limit: 100,
+        });
         setConversationRows(listLock ? filterConversationsForLockedAgent(rows, listLock) : rows);
+        // Single-identity hosts (desktop shell, embed) have no identity list to
+        // fan out over, but the sidebar is the same component. Project the plain
+        // rows onto it so one identity and many identities share one design.
+        setInboxRows(
+          inboxRowsFromConversationRows(
+            listLock ? filterConversationsForLockedAgent(rows, listLock) : rows,
+            chat.getState().contacts,
+          ),
+        );
       } catch (error) {
         setConversationRows([]);
+        setInboxRows([]);
         setListError(error instanceof Error ? error.message : 'Could not load conversations');
       }
     } finally {
       setInboxLoading(false);
     }
-  }, [chat, chrome.showConversationList, chrome.conversationList, client, identities, hiddenIdentityKeys, lockedAgent?.virtualEmployeeId]);
+  }, [chat, chrome.showConversationList, chrome.conversationList, client, identities, hiddenIdentityKeys, lockedAgent?.virtualEmployeeId, inboxArchived]);
 
   useEffect(() => {
     if (chrome.conversationList === 'drawer' && !drawerOpen) return;
@@ -836,26 +913,89 @@ export function NexusChatApp({
     [chat, chrome.showConversationDrawer, client, identities, lockedAgent],
   );
 
-  const openListedConversation = useCallback(
-    async (row: ConversationRow) => {
-      const id = conversationIdFromRow(row);
-      if (!id || !client) return;
-      if (lockedAgent && !filterConversationsForLockedAgent([row], lockedAgent).length) return;
-      if (chrome.showConversationDrawer) setDrawerOpen(false);
-      const contactId =
-        typeof row.virtualEmployeeId === 'string'
-          ? row.virtualEmployeeId
-          : typeof row.contactId === 'string'
-            ? row.contactId
-            : undefined;
+  /**
+   * Archive the open thread for a contact and start a fresh one. Extracted so
+   * both the Config sheet and a session-list "Reset conversation" action share
+   * one implementation.
+   */
+  const resetThreadFor = useCallback(
+    async (target: { id: string }, currentId: string | null) => {
+      const res = await chat.resetConversation(target, currentId || undefined);
+      chat.rehydrateTurns([], { conversationId: res.conversationId, detachStream: true });
+      await chat.streamInit({ conversationId: res.conversationId, contactId: target.id });
+      chat.observeSubAgents({ conversationId: res.conversationId });
+    },
+    [chat],
+  );
+
+  /**
+   * Row actions from the sidebar kebab / context menu. Each maps to the same
+   * region command the portal uses, so a rename here shows up there and vice
+   * versa. The list reloads afterwards instead of guessing the new state.
+   */
+  const handleRowAction = useCallback(
+    async (action: InboxRowAction, row: InboxRow) => {
+      setListError(null);
+      const region = client as
+        | (CommandClient & { updateAuth?: (next: { identity?: Record<string, unknown> }) => void })
+        | undefined;
+      const identity = identities.find((item) => item.key === row.identityKey);
+      if (identity && region?.updateAuth) {
+        region.updateAuth({
+          identity: {
+            token: identity.token,
+            userId: identity.userId,
+            orgId: identity.orgId,
+            role: identity.role,
+            deviceId: identity.deviceId,
+          },
+        });
+      }
       try {
-        await loadConversationHistory(client, chat, id);
-        await chat.streamInit({ conversationId: id, contactId });
+        if (action === 'rename') {
+          const title = window.prompt('Rename conversation', row.title);
+          const next = (title || '').trim();
+          if (!next || next === row.title) return;
+          if (row.kind === 'group' || row.kind === 'room') {
+            await chat.updateRoom({ roomId: row.conversationId, name: next });
+          } else if (client) {
+            await client.send('anx.communicate.conversations.update', {
+              conversationId: row.conversationId,
+              title: next,
+            });
+          }
+        } else if (action === 'archive') {
+          await chat.archiveConversation(row.conversationId);
+        } else if (action === 'delete') {
+          await chat.deleteConversation(row.conversationId);
+        } else if (action === 'reset') {
+          const owner = findChatContact(chat.getState().contacts, row.contactId || '');
+          if (owner) await resetThreadFor(owner, row.conversationId);
+        } else if (action === 'leave_group') {
+          await chat.leaveRoom({ roomId: row.conversationId, action: 'leave' });
+        }
+        await reloadLists();
       } catch (error) {
-        setListError(error instanceof Error ? error.message : 'Could not open conversation');
+        setListError(error instanceof Error ? error.message : 'The action failed');
       }
     },
-    [chat, chrome.showConversationDrawer, client, lockedAgent],
+    [chat, client, identities, reloadLists, resetThreadFor],
+  );
+
+  /**
+   * New-conversation menu. "Message agent" and "Direct message" both open the
+   * contacts directory (they differ only in what the directory emphasises), and
+   * a group starts from the rooms tab.
+   */
+  const handleNewConversation = useCallback(
+    (kind: NewConversationKind) => {
+      if (kind === 'new-group') {
+        if (chrome.showRoomsTab) setSidebarTab('rooms');
+        return;
+      }
+      setSidebarTab('contacts');
+    },
+    [chrome.showRoomsTab],
   );
 
   useEffect(() => {
@@ -1087,12 +1227,8 @@ export function NexusChatApp({
 
   const resetThread = useCallback(async () => {
     if (!contact) return;
-    const currentId = conversationId;
-    const res = await chat.resetConversation(contact, currentId);
-    chat.rehydrateTurns([], { conversationId: res.conversationId, detachStream: true });
-    await chat.streamInit({ conversationId: res.conversationId, contactId: contact.id });
-    chat.observeSubAgents({ conversationId: res.conversationId });
-  }, [chat, contact, conversationId]);
+    await resetThreadFor(contact, conversationId);
+  }, [contact, conversationId, resetThreadFor]);
 
   const selectedChatModel = catalog.find((model) => model.id === selectedModelId) || null;
   const effectiveModel = resolveEffectivePickerModel(catalog, selectedModelId, defaultModelId);
@@ -1138,36 +1274,27 @@ export function NexusChatApp({
             Close
           </button>
         </div>
-        {identities.length ? (
-          <ConversationInbox
-            identities={identities}
-            hiddenKeys={hiddenIdentityKeys}
-            rows={visibleInbox}
-            loading={inboxLoading}
-            error={listError}
-            activeRowId={activeInboxId}
-            onToggleIdentity={(key) =>
-              setHiddenIdentityKeys((prev) =>
-                prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
-              )
-            }
-            onOpen={(row) => void openInboxRow(row)}
-            onRetry={() => void reloadLists()}
-          />
-        ) : (
-          <PastConversationList
-            rows={conversationRows}
-            activeId={conversationId}
-            locale={locale}
-            loading={inboxLoading}
-            error={listError}
-            onRetry={() => void reloadLists()}
-            onOpen={(id) => {
-              const row = conversationRows.find((item) => conversationIdFromRow(item) === id);
-              if (row) void openListedConversation(row);
-            }}
-          />
-        )}
+        <ConversationInbox
+          identities={identities}
+          hiddenKeys={hiddenIdentityKeys}
+          rows={visibleInbox}
+          loading={inboxLoading}
+          error={listError}
+          activeRowId={activeInboxRowId}
+          activityConnectionStatus={outgoing.presence}
+          pendingApprovalConversationIds={pendingApprovalConversationIds}
+          archivedActive={inboxArchived}
+          onToggleIdentity={(key) =>
+            setHiddenIdentityKeys((prev) =>
+              prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+            )
+          }
+          onOpen={(row) => void openInboxRow(row)}
+          onRetry={() => void reloadLists()}
+          onOpenArchived={() => setInboxArchived((prev) => !prev)}
+          onNewConversation={handleNewConversation}
+          onRowAction={(action, row) => void handleRowAction(action, row)}
+        />
       </aside>
     </div>
   ) : null;
@@ -1333,7 +1460,13 @@ export function NexusChatApp({
           onSelectModel={setSelectedModelId}
           modelOverride={modelOverride}
           reasoningEffort={reasoningForSend}
+          reasoningLevels={reasoningLevels}
+          onReasoningEffort={setReasoningEffort}
           showModelPicker={false}
+          autoVoice={autoVoice}
+          onToggleAutoVoice={toggleAutoVoice}
+          textScaleDelta={textScaleDelta}
+          onTextScaleDelta={nudgeTextScale}
           dictationMethod={dictation.method}
           sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
           sttLive={sttLive}
@@ -1465,84 +1598,43 @@ export function NexusChatApp({
                   </button>
                 ) : null}
               </div>
-              {chrome.showContactsTab && sidebarTab !== 'rooms' && identities.length ? (
-                <ConversationInbox
-                  identities={identities}
-                  hiddenKeys={hiddenIdentityKeys}
-                  rows={visibleInbox}
-                  loading={inboxLoading}
-                  error={listError}
-                  activeRowId={activeInboxId}
-                  highlightAgentId={chrome.highlightAgentId}
-                  onToggleIdentity={(key) =>
-                    setHiddenIdentityKeys((prev) =>
-                      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
-                    )
-                  }
-                  onOpen={(row) => void openInboxRow(row)}
-                  onRetry={() => void reloadLists()}
-                />
-              ) : chrome.showNewDm && chrome.showContactsTab && sidebarTab !== 'rooms' ? (
+              {chrome.showContactsTab && sidebarTab !== 'rooms' ? (
                 <>
-                  {conversationRows.length ? (
-                    <div className="nexus-chat__inbox-list" role="list" aria-label="Conversations">
-                      {conversationRows.map((row) => {
-                        const id = conversationIdFromRow(row);
-                        const view = conversationRowView(row, state.contacts);
-                        const marked = conversationHighlightsAgent(
-                          {
-                            virtualEmployeeId: typeof row.virtualEmployeeId === 'string' ? row.virtualEmployeeId : null,
-                            agentId: typeof row.agentId === 'string' ? row.agentId : null,
-                            contactId: typeof row.contactId === 'string' ? row.contactId : null,
-                          },
-                          chrome.highlightAgentId,
-                        );
-                        return (
-                          <button
-                            key={id || view.title}
-                            type="button"
-                            role="listitem"
-                            className={`nexus-chat__inbox-row${marked ? ' nexus-chat__inbox-row--highlight' : ''}`}
-                            aria-current={marked ? 'true' : undefined}
-                            onClick={() => void openListedConversation(row)}
-                          >
-                            <span className="nexus-chat__peer">
-                              {view.avatarUrl ? (
-                                <CachedAvatarImage src={view.avatarUrl} alt="" fallback={conversationInitials(view.avatarName)} />
-                              ) : (
-                                conversationInitials(view.avatarName)
-                              )}
-                            </span>
-                            <span className="nexus-chat__inbox-copy">
-                              <span className="nexus-chat__inbox-title">{view.title}</span>
-                              {view.subtitle ? (
-                                <span className="nexus-chat__inbox-summary">{view.subtitle}</span>
-                              ) : null}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  {listError ? (
-                    <div className="nexus-chat__banner" role="alert">
-                      <span>{listError}</span>
-                      <button type="button" className="nexus-chat__btn" onClick={() => void reloadLists()}>
-                        Retry
-                      </button>
-                    </div>
-                  ) : null}
-                  <ContactList
-                    chat={chat}
-                    contacts={state.contacts}
-                    conversationRows={conversationRows}
-                    activeContactId={activeContactId}
+                  <ConversationInbox
+                    identities={identities}
+                    hiddenKeys={hiddenIdentityKeys}
+                    rows={visibleInbox}
+                    loading={inboxLoading}
+                    error={listError}
+                    activeRowId={activeInboxRowId}
                     highlightAgentId={chrome.highlightAgentId}
-                    slots={slots}
-                    onActionSheet={
-                      chrome.showContactSheet ? (id) => setSheetContactId(id) : undefined
+                    activityConnectionStatus={outgoing.presence}
+                    pendingApprovalConversationIds={pendingApprovalConversationIds}
+                    archivedActive={inboxArchived}
+                    onToggleIdentity={(key) =>
+                      setHiddenIdentityKeys((prev) =>
+                        prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+                      )
                     }
+                    onOpen={(row) => void openInboxRow(row)}
+                    onRetry={() => void reloadLists()}
+                    onOpenArchived={() => setInboxArchived((prev) => !prev)}
+                    onNewConversation={handleNewConversation}
+                    onRowAction={(action, row) => void handleRowAction(action, row)}
                   />
+                  {chrome.showNewDm ? (
+                    <ContactList
+                      chat={chat}
+                      contacts={state.contacts}
+                      conversationRows={conversationRows}
+                      activeContactId={activeContactId}
+                      highlightAgentId={chrome.highlightAgentId}
+                      slots={slots}
+                      onActionSheet={
+                        chrome.showContactSheet ? (id) => setSheetContactId(id) : undefined
+                      }
+                    />
+                  ) : null}
                 </>
               ) : chrome.showRoomsTab ? (
                 <RoomsPanel chat={chat} />
@@ -1716,7 +1808,13 @@ export function NexusChatApp({
                 onSelectModel={setSelectedModelId}
                 modelOverride={modelOverride}
                 reasoningEffort={reasoningForSend}
+                reasoningLevels={reasoningLevels}
+                onReasoningEffort={setReasoningEffort}
                 showModelPicker={composerModelPickerVisible()}
+                autoVoice={autoVoice}
+                onToggleAutoVoice={toggleAutoVoice}
+                textScaleDelta={textScaleDelta}
+                onTextScaleDelta={nudgeTextScale}
                 dictationMethod={dictation.method}
                 sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
                 sttLive={sttLive}

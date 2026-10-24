@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChatContact, ChatModelOverride, IoDescriptor, NexusChat, OutgoingSendQueue } from '@nexus/chat-core';
+import type {
+  ChatContact,
+  ChatModelOverride,
+  IoDescriptor,
+  NexusChat,
+  OutgoingSendQueue,
+  ReasoningEffortLevel,
+} from '@nexus/chat-core';
 import { isRetryableOutgoingFailure, latestUnsentUserTurnId } from '@nexus/chat-core';
 import {
   connectLiveSttWebSocket,
@@ -31,6 +38,17 @@ import {
   webSpeechAvailable,
 } from '../dictation/phoneStt.js';
 import { blobToInlineAudio, startMicCapture } from '../dictation/recordAudio.js';
+import {
+  IconMic,
+  IconPaperclip,
+  IconPhone,
+  IconQueue,
+  IconSend,
+  IconSpeaker,
+  IconStop,
+} from './icons.js';
+import { reasoningEffortLabel } from '../chrome/reasoning-slider.js';
+import { spokenTurnKey } from '../chrome/auto-voice.js';
 
 export type ComposerProps = {
   chat: NexusChat;
@@ -57,8 +75,17 @@ export type ComposerProps = {
   onSelectModel?: (id: string | null) => void;
   modelOverride?: ChatModelOverride | null;
   reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | null;
+  /** Reasoning stops the selected model allows; `null` = agent default. */
+  reasoningLevels?: readonly ReasoningEffortLevel[] | null;
+  onReasoningEffort?: (next: ReasoningEffortLevel) => void;
   /** Ignored. The model picker lives in the config sheet. */
   showModelPicker?: boolean;
+  /** Auto-play new assistant replies with TTS. */
+  autoVoice?: boolean;
+  onToggleAutoVoice?: () => void;
+  /** Chat text scale stepper (`-a` / `+A`). */
+  textScaleDelta?: number;
+  onTextScaleDelta?: (next: number) => void;
   dictationMethod?: DictationMethod;
   sttModelId?: string | null;
   /** Speech model accepts a live session while the button is held. */
@@ -68,7 +95,7 @@ export type ComposerProps = {
   dictationNote?: string | null;
   commandClient?: { send: (command: string, payload?: Record<string, unknown>) => Promise<unknown> };
   onOpenFile?: (file: ViewerFileRef) => void;
-  /** When true, hide the compact button (lives in context panel). */
+  /** @deprecated Ignored. The composer has no separate compact button any more. */
   hideCompact?: boolean;
   /** Library call control. Hosts skin it; the default composer shows the same modes. */
   callsEnabled?: boolean;
@@ -98,6 +125,12 @@ export function Composer({
   onTransportFailure,
   modelOverride,
   reasoningEffort = null,
+  reasoningLevels = null,
+  onReasoningEffort,
+  autoVoice = false,
+  onToggleAutoVoice,
+  textScaleDelta = 0,
+  onTextScaleDelta,
   dictationMethod = 'phone',
   sttModelId = null,
   sttLive = false,
@@ -105,7 +138,6 @@ export function Composer({
   dictationNote = null,
   commandClient,
   onOpenFile,
-  hideCompact = true,
   callsEnabled = true,
   onRegisterDraftSetter,
 }: ComposerProps) {
@@ -116,6 +148,9 @@ export function Composer({
   const [holdPhase, setHoldPhase] = useState<'idle' | 'recording' | 'cancel' | 'working'>('idle');
   const fileRef = useRef<HTMLInputElement>(null);
   const holdRef = useRef<HTMLButtonElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** Assistant text already spoken by the auto-voice toggle, so a re-render never repeats it. */
+  const spokenTurnsRef = useRef<Set<string>>(new Set());
   const sessionRef = useRef<{
     cancel: () => void;
     finish: (commit: boolean) => Promise<void>;
@@ -128,6 +163,18 @@ export function Composer({
     });
     return () => onRegisterDraftSetter(null);
   }, [onRegisterDraftSetter]);
+
+  /**
+   * Grow the composer with its content, from one line up to a short cap, so a
+   * long draft never eats the thread above it. Runs on every value change
+   * (including programmatic prefill/dictation, which do not fire `input`).
+   */
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [text]);
 
   const mentionCandidates = useMemo(() => {
     if (mentionQuery == null) return [];
@@ -423,6 +470,36 @@ export function Composer({
   const callSnap = composerCallSnapshot(chatState.calls, chat.getVoiceSurface());
   const callTarget = resolveComposerCallTarget(contacts, contactId);
 
+  /**
+   * Auto voice: speak each new assistant reply once, when the toggle is on and
+   * the turn has finished streaming. Keyed by turn id so a re-render (or a
+   * history rehydrate) never replays audio the user already heard. A missing
+   * TTS surface (or a failed synthesis) degrades to silence — it never blocks
+   * the composer.
+   */
+  useEffect(() => {
+    if (!autoVoice || streaming) return;
+    if (typeof chat.createSpeakTurn !== 'function') return;
+    const turns = chatState.turns;
+    const last = [...turns].reverse().find((t) => t.role === 'assistant' && t.text?.trim());
+    if (!last) return;
+    const key = spokenTurnKey(last);
+    if (spokenTurnsRef.current.has(key)) return;
+    spokenTurnsRef.current.add(key);
+    const agentId = (callTarget?.agentId || contactId || '').trim();
+    try {
+      const speak = chat.createSpeakTurn({
+        agentId: agentId || null,
+        virtualAgentId: callTarget?.virtualEmployeeId ?? null,
+      });
+      void speak.speak(last.text.trim()).catch((error) => {
+        console.warn('anx.chat.auto-voice failed', error);
+      });
+    } catch (error) {
+      console.warn('anx.chat.auto-voice unavailable', error);
+    }
+  }, [autoVoice, streaming, chatState.turns, chat, callTarget?.agentId, callTarget?.virtualEmployeeId, contactId]);
+
   const startCall = useCallback(
     async (mode: ComposerCallMode) => {
       setCallMenuOpen(false);
@@ -543,8 +620,6 @@ export function Composer({
     );
   }
 
-  const holdLabel = holdPhase === 'cancel' ? 'Cancel' : holdPhase === 'working' ? '…' : 'Hold';
-
   return (
     <div className="nexus-chat__composer">
       {queueBanner}
@@ -598,16 +673,12 @@ export function Composer({
             {holdPhase === 'cancel' ? 'Release to cancel' : 'Recording… release to insert, slide off to cancel'}
           </div>
         ) : null}
-        <div className="nexus-chat__composer-row">
-          <button
-            type="button"
-            className="nexus-chat__btn"
-            onClick={() => fileRef.current?.click()}
-            aria-label="Attach files"
-          >
-            +
-          </button>
+        {/* One bordered box: the draft on top, the action strip underneath, so
+            the whole composer is two compact rows instead of a toolbar plus a
+            separate input row. */}
+        <div className="nexus-chat__composer-box">
           <textarea
+            ref={textareaRef}
             className="nexus-chat__input"
             value={text}
             placeholder={streaming ? 'Queued until the current turn finishes…' : 'Message'}
@@ -623,59 +694,129 @@ export function Composer({
               }
             }}
           />
-          <button
-            ref={holdRef}
-            type="button"
-            className={`nexus-chat__btn nexus-chat__hold${holdPhase === 'recording' ? ' nexus-chat__hold--recording' : ''}${holdPhase === 'cancel' ? ' nexus-chat__hold--cancel' : ''}`}
-            aria-label="Hold to talk"
-            disabled={holdPhase === 'working'}
-            onPointerDown={onHoldPointerDown}
-            onPointerMove={onHoldPointerMove}
-            onPointerUp={onHoldPointerUp}
-            onPointerCancel={() => void endHold(false)}
-            onContextMenu={(event) => event.preventDefault()}
-          >
-            {holdLabel}
-          </button>
-          {callsEnabled ? (
-            <button
-              type="button"
-              className="nexus-chat__btn"
-              aria-label={callSnap.active ? 'End call' : 'Call'}
-              aria-expanded={callMenuOpen}
-              disabled={!controls.call.supported && !callSnap.active}
-              onClick={() => {
-                if (callSnap.active) {
-                  void endActiveCall();
-                  return;
-                }
-                setCallMenuOpen((open) => !open);
-              }}
-            >
-              {callSnap.active ? 'End' : 'Call'}
-            </button>
-          ) : null}
-          {conversationId && streaming ? (
-            <button
-              type="button"
-              className="nexus-chat__btn"
-              onClick={() => {
-                setActionError(null);
-                void chat
-                  .cancelConversation({ conversationId })
-                  .catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
-              }}
-            >
-              Stop
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="nexus-chat__btn nexus-chat__btn--primary"
-            onClick={() => void sendNow()}
-          >
-            {streaming ? 'Queue' : 'Send'}
-          </button>
+          <div className="nexus-chat__composer-bar">
+            <div className="nexus-chat__composer-bar-left">
+              <button
+                type="button"
+                className="nexus-chat__icon-btn"
+                onClick={() => fileRef.current?.click()}
+                aria-label="Attach files"
+                title="Attach files"
+              >
+                <IconPaperclip />
+              </button>
+              <button
+                ref={holdRef}
+                type="button"
+                className={`nexus-chat__icon-btn nexus-chat__hold${holdPhase === 'recording' ? ' nexus-chat__hold--recording' : ''}${holdPhase === 'cancel' ? ' nexus-chat__hold--cancel' : ''}`}
+                aria-label="Hold to talk"
+                title={holdPhase === 'recording' ? 'Recording… release to insert' : 'Hold to talk'}
+                disabled={holdPhase === 'working'}
+                onPointerDown={onHoldPointerDown}
+                onPointerMove={onHoldPointerMove}
+                onPointerUp={onHoldPointerUp}
+                onPointerCancel={() => void endHold(false)}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                <IconMic />
+              </button>
+              {callsEnabled ? (
+                <button
+                  type="button"
+                  className={`nexus-chat__icon-btn${callSnap.active ? ' is-on' : ''}`}
+                  aria-label={callSnap.active ? 'End call' : 'Call'}
+                  title={callSnap.active ? 'End call' : 'Call'}
+                  aria-expanded={callMenuOpen}
+                  disabled={!controls.call.supported && !callSnap.active}
+                  onClick={() => {
+                    if (callSnap.active) {
+                      void endActiveCall();
+                      return;
+                    }
+                    setCallMenuOpen((open) => !open);
+                  }}
+                >
+                  <IconPhone />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={`nexus-chat__icon-btn nexus-chat__icon-btn--label${autoVoice ? ' is-on' : ''}`}
+                aria-pressed={autoVoice ? 'true' : 'false'}
+                aria-label={`Auto voice: ${autoVoice ? 'on' : 'off'}`}
+                title={autoVoice ? 'Auto voice: on' : 'Auto voice: off'}
+                onClick={() => onToggleAutoVoice?.()}
+              >
+                <IconSpeaker />
+                <span className="nexus-chat__icon-btn-label">Auto voice</span>
+              </button>
+              {onTextScaleDelta ? (
+                <>
+                  <button
+                    type="button"
+                    className="nexus-chat__icon-btn nexus-chat__icon-btn--text"
+                    aria-label="Decrease chat text size"
+                    title="Decrease chat text size"
+                    onClick={() => onTextScaleDelta(Math.max(-2, textScaleDelta - 1))}
+                  >
+                    -a
+                  </button>
+                  <button
+                    type="button"
+                    className="nexus-chat__icon-btn nexus-chat__icon-btn--text"
+                    aria-label="Increase chat text size"
+                    title="Increase chat text size"
+                    onClick={() => onTextScaleDelta(Math.min(3, textScaleDelta + 1))}
+                  >
+                    +A
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <div className="nexus-chat__composer-bar-right">
+              {reasoningLevels && reasoningLevels.length && onReasoningEffort ? (
+                <select
+                  className="nexus-chat__select"
+                  aria-label="Reasoning effort"
+                  title="Reasoning effort"
+                  value={reasoningEffort ?? ''}
+                  onChange={(e) => onReasoningEffort(e.target.value as ReasoningEffortLevel)}
+                >
+                  {reasoningLevels.map((level) => (
+                    <option key={level} value={level}>
+                      {reasoningEffortLabel(level)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              {conversationId && streaming ? (
+                <button
+                  type="button"
+                  className="nexus-chat__icon-btn"
+                  aria-label="Stop generating"
+                  title="Stop generating"
+                  onClick={() => {
+                    setActionError(null);
+                    void chat
+                      .cancelConversation({ conversationId })
+                      .catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
+                  }}
+                >
+                  <IconStop />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="nexus-chat__send"
+                aria-label={streaming ? 'Queue message' : 'Send message'}
+                title={streaming ? 'Queue message' : 'Send message'}
+                disabled={!text.trim() && !pendingFiles.length}
+                onClick={() => void sendNow()}
+              >
+                {streaming ? <IconQueue /> : <IconSend />}
+              </button>
+            </div>
+          </div>
         </div>
         {callSnap.dialIn?.phone || callSnap.dialIn?.accessCode ? (
           <div className="nexus-chat__call-detail" role="status">
@@ -700,20 +841,6 @@ export function Composer({
           </div>
         ) : null}
       </div>
-      {!hideCompact && conversationId ? (
-          <button
-            type="button"
-            className="nexus-chat__btn"
-            onClick={() => {
-              setActionError(null);
-              void chat
-                .compactConversation({ conversationId })
-                .catch((e) => setActionError(e instanceof Error ? e.message : String(e)));
-            }}
-          >
-            Compact
-          </button>
-        ) : null}
       {actionError || callSnap.error ? (
         <div className="nexus-chat__error">{actionError || callSnap.error}</div>
       ) : null}

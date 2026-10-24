@@ -455,11 +455,13 @@
 
 .nexus-chat__composer {
   border-top: 1px solid var(--nx-chat-border);
-  padding: var(--nx-chat-pad);
+  /* Tighter than `--nx-chat-pad` so the whole composer stays two short rows and
+     the thread above keeps its vertical space. */
+  padding: 8px var(--nx-chat-pad) 10px;
   background: var(--nx-chat-surface);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .nexus-chat__composer-row {
@@ -474,17 +476,174 @@
   color: var(--nx-chat-text);
 }
 
-.nexus-chat__input {
-  flex: 1;
-  min-height: 40px;
-  max-height: 160px;
-  resize: vertical;
+/* One bordered box: the draft on top, the action strip underneath. The whole
+   composer is two compact rows instead of a toolbar plus a separate input row,
+   so the thread keeps its vertical space. */
+.nexus-chat__composer-box {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--nx-chat-border);
   border-radius: var(--nx-chat-radius);
   background: var(--nx-chat-bg);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.nexus-chat__composer-box:focus-within {
+  border-color: color-mix(in srgb, var(--nx-chat-accent) 55%, var(--nx-chat-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nx-chat-accent) 18%, transparent);
+}
+
+.nexus-chat__input {
+  flex: 1;
+  min-height: 0;
+  /* Grows with the draft up to a short cap (set inline), then scrolls. */
+  max-height: 160px;
+  resize: none;
+  border: 0;
+  border-radius: var(--nx-chat-radius) var(--nx-chat-radius) 0 0;
+  background: transparent;
   color: var(--nx-chat-text);
-  padding: 10px 12px;
+  padding: 9px 12px 4px;
   font: inherit;
+  line-height: 1.45;
+  overflow-y: auto;
+}
+
+.nexus-chat__input:focus {
+  outline: none;
+}
+
+.nexus-chat__composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 6px;
+  flex-wrap: wrap;
+}
+
+.nexus-chat__composer-bar-left,
+.nexus-chat__composer-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nexus-chat__composer-bar-right {
+  margin-left: auto;
+}
+
+.nexus-chat__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nx-chat-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.nexus-chat__icon-btn:hover:not(:disabled) {
+  color: var(--nx-chat-text);
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
+}
+
+.nexus-chat__icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nexus-chat__icon-btn.is-on,
+.nexus-chat__icon-btn--toggle.is-on {
+  color: var(--nx-chat-accent);
+  border-color: color-mix(in srgb, var(--nx-chat-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--nx-chat-accent) 14%, transparent);
+}
+
+/* Text-scale stepper: wider than a square icon button, since the label is text. */
+.nexus-chat__icon-btn--text {
+  width: auto;
+  padding: 0 8px;
+  border-color: var(--nx-chat-border);
+  font-weight: 600;
+}
+
+/* Labeled icon button (e.g. `Auto voice`): icon + short caption in one pill. */
+.nexus-chat__icon-btn--label {
+  width: auto;
+  gap: 5px;
+  padding: 0 9px;
+  border-color: var(--nx-chat-border);
+}
+
+.nexus-chat__icon-btn-label {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.nexus-chat__hold--recording {
+  color: #f87171;
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+  background: color-mix(in srgb, #f87171 14%, transparent);
+}
+
+.nexus-chat__hold--cancel {
+  color: #fbbf24;
+  border-color: color-mix(in srgb, #fbbf24 45%, transparent);
+  background: color-mix(in srgb, #fbbf24 14%, transparent);
+}
+
+.nexus-chat__select {
+  flex: 0 1 auto;
+  max-width: 9rem;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nx-chat-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nexus-chat__select:hover {
+  color: var(--nx-chat-text);
+}
+
+.nexus-chat__send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--nx-chat-accent);
+  color: #fff;
+  cursor: pointer;
+  transition: filter 0.12s ease, opacity 0.12s ease;
+}
+
+.nexus-chat__send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.nexus-chat__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .nexus-chat__btn {
@@ -1834,61 +1993,674 @@
   clip: rect(0 0 0 0);
 }
 
-.nexus-chat__search input,
-.nexus-chat__btn,
-.nexus-chat__identity-chip,
-.nexus-chat__kind,
-.nexus-chat__inbox-row {
-  min-height: 44px;
+.nexus-chat__btn {
+  min-height: 36px;
 }
 
-.nexus-chat__search {
-  display: block;
-  padding: 8px;
+/* ---------------------------------------------------------------------------
+   Session list (portal `SessionList.vue` parity)
+   Toolbar + identity chips + Archive|Latest quickbar + stacked rows.
+   --------------------------------------------------------------------------- */
+
+.nexus-chat__inbox {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
-.nexus-chat__search input {
+.nexus-chat__session-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--nx-chat-border);
+}
+
+.nexus-chat__session-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.nexus-chat__session-search-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--nx-chat-muted);
+  pointer-events: none;
+}
+
+.nexus-chat__session-search input {
   width: 100%;
+  height: 30px;
   border: 1px solid var(--nx-chat-border);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 0 8px 0 26px;
   background: var(--nx-chat-bg);
   color: var(--nx-chat-text);
   font: inherit;
+  font-size: 12px;
 }
 
-.nexus-chat__identity-row,
-.nexus-chat__kind-row {
+.nexus-chat__session-search input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--nx-chat-accent) 50%, var(--nx-chat-border));
+}
+
+.nexus-chat__session-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.nexus-chat__session-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--nx-chat-text) 5%, transparent);
+  color: var(--nx-chat-muted);
+  cursor: pointer;
+}
+
+.nexus-chat__session-icon-btn:hover,
+.nexus-chat__session-icon-btn.is-active {
+  border-color: var(--nx-chat-accent);
+  color: var(--nx-chat-accent);
+}
+
+.nexus-chat__session-icon-btn--primary {
+  background: var(--nx-chat-accent);
+  border-color: var(--nx-chat-accent);
+  color: #fff;
+}
+
+.nexus-chat__session-icon-btn--primary:hover {
+  filter: brightness(1.08);
+  color: #fff;
+}
+
+.nexus-chat__session-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 132px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--nx-chat-surface);
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.nexus-chat__session-dropdown--end {
+  left: auto;
+  right: 0;
+}
+
+.nexus-chat__session-dropdown-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--nx-chat-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nexus-chat__session-dropdown-item:hover,
+.nexus-chat__session-dropdown-item.is-active {
+  background: color-mix(in srgb, var(--nx-chat-accent) 16%, transparent);
+  color: var(--nx-chat-accent);
+}
+
+.nexus-chat__identity-row {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   padding: 0 8px 8px;
   overflow-x: auto;
 }
 
-.nexus-chat__identity-chip,
-.nexus-chat__kind {
-  border: 1px solid var(--nx-chat-border);
-  background: var(--nx-chat-bg);
+.nexus-chat__identity-chip {
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--nx-chat-text) 28%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--nx-chat-text) 6%, transparent);
+  color: var(--nx-chat-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.nexus-chat__identity-chip--private {
+  border-radius: 50%;
+}
+
+.nexus-chat__identity-chip.is-hidden {
+  opacity: 0.45;
+}
+
+.nexus-chat__identity-logo {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+}
+
+.nexus-chat__identity-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nexus-chat__session-quickbar {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--nx-chat-border);
+}
+
+.nexus-chat__session-archive,
+.nexus-chat__session-latest {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  padding: 5px 10px 6px;
+  font-size: 11px;
+  color: var(--nx-chat-muted);
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.nexus-chat__session-archive {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.nexus-chat__session-latest {
+  flex-shrink: 0;
+  border-left: 1px solid var(--nx-chat-border);
+  font-weight: 600;
+}
+
+.nexus-chat__session-archive:hover,
+.nexus-chat__session-latest:hover {
+  color: var(--nx-chat-accent);
+  background: color-mix(in srgb, var(--nx-chat-accent) 8%, transparent);
+}
+
+.nexus-chat__session-archive.is-active,
+.nexus-chat__session-latest.is-active {
+  color: var(--nx-chat-accent);
+  background: color-mix(in srgb, var(--nx-chat-accent) 14%, transparent);
+}
+
+.nexus-chat__inbox-list {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.nexus-chat__session-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  min-height: 44px;
+  cursor: pointer;
+  border: 1px solid transparent;
   color: var(--nx-chat-text);
-  border-radius: 999px;
-  padding: 4px 10px;
+  text-align: left;
 }
 
-.nexus-chat__identity-chip--off {
-  opacity: 0.4;
+.nexus-chat__session-row:hover {
+  background: color-mix(in srgb, var(--nx-chat-text) 6%, transparent);
 }
 
-.nexus-chat__kind--on,
-.nexus-chat__inbox-row--active {
-  border-color: var(--nx-chat-accent);
+.nexus-chat__session-row.is-active {
+  background: color-mix(in srgb, var(--nx-chat-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--nx-chat-accent) 36%, transparent);
 }
 
-.nexus-chat__inbox-row--highlight,
-.nexus-chat__contact--highlight {
+.nexus-chat__session-row--highlight {
   box-shadow: inset 3px 0 0 var(--nx-chat-accent);
 }
 
-.nexus-chat__identity-logo,
+/* The nest list overlays the row below, so it needs its own stacking context. */
+.nexus-chat__session-row.is-nest-open {
+  z-index: 5;
+}
+
+.nexus-chat__session-stack {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.nexus-chat__session-owner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  position: relative;
+  z-index: 0;
+  margin-right: -13px;
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
+}
+
+.nexus-chat__session-avatar {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px var(--nx-chat-surface);
+  border-radius: 50%;
+}
+
+.nexus-chat__session-face {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--nx-chat-accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.nexus-chat__session-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nexus-chat__session-presence {
+  position: absolute;
+  left: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--nx-chat-surface);
+  background: #adb5bd;
+  z-index: 2;
+}
+
+.nexus-chat__session-presence.is-online,
+.nexus-chat__session-presence.is-edge-online {
+  background: #28a745;
+}
+
+.nexus-chat__session-presence.is-connecting {
+  background: #fbc658;
+}
+
+.nexus-chat__session-presence.is-error,
+.nexus-chat__session-presence.is-both-offline {
+  background: #dc3545;
+}
+
+.nexus-chat__session-presence.is-disabled {
+  background: #9a9a9a;
+}
+
+.nexus-chat__session-presence.is-offline {
+  background: #ced4da;
+}
+
+.nexus-chat__session-presence.is-edge-offline {
+  background: #2d7dff;
+}
+
+.nexus-chat__session-presence.is-registry-offline-edge-online {
+  background: #fd7e14;
+}
+
+.nexus-chat__session-overlay {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  z-index: 2;
+  font-size: 7px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 4px;
+  border: 1px solid var(--nx-chat-surface);
+}
+
+.nexus-chat__session-overlay--ai {
+  background: #6f42c1;
+  color: #fff;
+}
+
+.nexus-chat__session-overlay--group {
+  background: #51bcda;
+  color: #fff;
+}
+
+.nexus-chat__session-body {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.nexus-chat__session-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nexus-chat__session-title {
+  font-size: 12px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-chat__session-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 13px;
+  margin-top: 1px;
+  font-size: 10px;
+  color: var(--nx-chat-muted);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.nexus-chat__session-subtitle-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-chat__session-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--nx-chat-muted);
+  white-space: nowrap;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nexus-chat__session-badge--streaming {
+  border-color: var(--nx-chat-accent);
+  color: var(--nx-chat-accent);
+  background: color-mix(in srgb, var(--nx-chat-accent) 12%, transparent);
+}
+
+.nexus-chat__session-badge--done {
+  border-color: #6bd098;
+  color: #4ec98a;
+  background: color-mix(in srgb, #6bd098 12%, transparent);
+  text-transform: none;
+}
+
+/* Tool run awaiting approval — amber, matches the in-chat approvals strip. */
+.nexus-chat__session-badge--approval {
+  border-color: color-mix(in srgb, #e0a33a 55%, transparent);
+  color: #e8b45c;
+  background: color-mix(in srgb, #e0a33a 16%, transparent);
+  text-transform: none;
+}
+
+.nexus-chat__session-badge--platform {  border-color: color-mix(in srgb, #2f6fed 50%, transparent);
+  color: #7aa8f8;
+  background: color-mix(in srgb, #2f6fed 16%, transparent);
+}
+
+.nexus-chat__session-badge--org {
+  border-color: color-mix(in srgb, #6f42c1 50%, transparent);
+  color: #b39ddb;
+  background: color-mix(in srgb, #6f42c1 16%, transparent);
+}
+
+.nexus-chat__session-badge--asset {
+  border-color: color-mix(in srgb, #51cbce 50%, transparent);
+  color: #6fd8da;
+  background: color-mix(in srgb, #51cbce 16%, transparent);
+}
+
+.nexus-chat__session-unread {
+  flex-shrink: 0;
+  background: #ef8157;
+  color: #fff;
+  border-radius: 8px;
+  font-size: 10px;
+  min-width: 16px;
+  text-align: center;
+  padding: 0 4px;
+}
+
+.nexus-chat__session-nest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #b39ddb;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nexus-chat__session-nest-toggle.is-live {
+  animation: nexus-subagents-fade 1.6s ease-in-out infinite;
+}
+
+.nexus-chat__session-nest-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-chat__session-nest-chev {
+  flex-shrink: 0;
+  color: var(--nx-chat-muted);
+  font-size: 9px;
+}
+
+.nexus-chat__session-pulse {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6f42c1;
+  box-shadow: 0 0 0 0 rgba(111, 66, 193, 0.45);
+  animation: nexus-subagents-pulse 1.4s ease-out infinite;
+}
+
+.nexus-chat__session-nest {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 3px;
+  background: var(--nx-chat-surface);
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+
+.nexus-chat__session-nest-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+  padding: 3px 5px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nx-chat-text);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nexus-chat__session-nest-item:hover {
+  background: color-mix(in srgb, #6f42c1 14%, transparent);
+}
+
+.nexus-chat__session-nest-item.is-active {
+  background: color-mix(in srgb, var(--nx-chat-accent) 20%, transparent);
+  color: var(--nx-chat-accent);
+}
+
+.nexus-chat__session-nest-dot {
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #adb5bd;
+}
+
+.nexus-chat__session-nest-dot.is-live {
+  background: #6f42c1;
+  box-shadow: 0 0 0 2px rgba(111, 66, 193, 0.18);
+}
+
+.nexus-chat__session-nest-dot.is-done {
+  background: #6bd098;
+}
+
+.nexus-chat__session-nest-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.nexus-chat__session-nest-meta {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: #b39ddb;
+  font-weight: 600;
+  text-transform: lowercase;
+}
+
+.nexus-chat__session-nest-meta.is-unread {
+  color: #ef8157;
+}
+
+@keyframes nexus-subagents-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(111, 66, 193, 0.45); opacity: 1; }
+  70% { box-shadow: 0 0 0 6px rgba(111, 66, 193, 0); opacity: 0.85; }
+  100% { box-shadow: 0 0 0 0 rgba(111, 66, 193, 0); opacity: 1; }
+}
+
+@keyframes nexus-subagents-fade {
+  0%, 100% { opacity: 0.78; }
+  50% { opacity: 1; }
+}
+
+.nexus-chat__session-kebab {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--nx-chat-muted);
+  cursor: pointer;
+  padding: 2px;
+  line-height: 1;
+  opacity: 0;
+}
+
+.nexus-chat__session-row:hover .nexus-chat__session-kebab,
+.nexus-chat__session-row.is-active .nexus-chat__session-kebab,
+.nexus-chat__session-kebab:focus-visible {
+  opacity: 1;
+}
+
+.nexus-chat__session-menu-root {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+}
+
+.nexus-chat__session-context {
+  position: fixed;
+  min-width: 180px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--nx-chat-surface);
+  border: 1px solid var(--nx-chat-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.nexus-chat__session-context li {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--nx-chat-text);
+  cursor: pointer;
+}
+
+.nexus-chat__session-context li:hover {
+  background: color-mix(in srgb, var(--nx-chat-accent) 16%, transparent);
+  color: var(--nx-chat-accent);
+}
+
+/* Contact directory rows: a lighter peer-avatar row than a session row. */
 .nexus-chat__peer,
 .nexus-chat__owner-mark {
   width: 28px;
@@ -1904,14 +2676,18 @@
 }
 
 .nexus-chat__peer {
-  width: 40px;
-  height: 40px;
-  font-size: 14px;
+  position: relative;
+  flex: none;
+  border: 2px solid var(--nx-chat-surface);
+  overflow: hidden;
 }
 
-.nexus-chat__inbox-list {
-  overflow: auto;
-  flex: 1;
+.nexus-chat__peer img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50%;
 }
 
 .nexus-chat__inbox-row {
@@ -1925,18 +2701,18 @@
   background: transparent;
   color: var(--nx-chat-text);
   text-align: left;
-  min-height: 64px;
+  min-height: 56px;
   /* Own the containing block and clip the row, so an absolutely-positioned
-     child (the peer avatar's stacked variant) can never escape the row's
-     hit-box and steal clicks from a neighbouring row. */
+     child can never escape the row's hit-box and steal clicks from a
+     neighbouring row. */
   position: relative;
   overflow: hidden;
 }
 
 .nexus-chat__stack {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 40px;
+  height: 40px;
   flex: none;
 }
 
@@ -1949,29 +2725,11 @@
   z-index: 0;
 }
 
-/* Default: a plain in-flow avatar for rows that render the peer on its own
-   (e.g. the inline conversation list). Only the stacked owner+peer layout
-   absolutely overlays the peer on the owner mark. */
-.nexus-chat__peer {
-  position: relative;
-  flex: none;
-  border: 2px solid var(--nx-chat-surface);
-  overflow: hidden;
-}
-
 .nexus-chat__stack .nexus-chat__peer {
   position: absolute;
   right: 0;
   top: 0;
   z-index: 1;
-}
-
-.nexus-chat__peer img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  border-radius: 50%;
 }
 
 .nexus-chat__kind-badge {
@@ -2066,8 +2824,15 @@
 .nexus-chat__hold {
   touch-action: none;
   user-select: none;
-  min-width: 44px;
-  min-height: 44px;
+}
+
+/* Touch surfaces keep the 44px minimum hit target; a pointer device gets the
+   compact toolbar height so the action strip stays one short row. */
+@media (pointer: coarse) {
+  .nexus-chat__hold {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .nexus-chat__hold--recording {

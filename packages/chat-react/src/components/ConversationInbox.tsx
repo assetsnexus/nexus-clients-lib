@@ -1,23 +1,60 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { conversationHighlightsAgent } from '@nexus/chat-core';
-import { matchesKindFilter, type InboxRow, type KindFilter } from '../inbox/inboxRows.js';
+import {
+  inboxPresenceStatus,
+  inboxPresenceTitle,
+  inboxScopeBadge,
+  isSubagentRow,
+  latestInboxPerContact,
+  matchesKindFilter,
+  nestedSubagentsFor,
+  partitionSubagentRows,
+  type InboxRow,
+  type KindFilter,
+} from '../inbox/inboxRows.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
+import {
+  ROW_ACTION_LABELS,
+  rowActionsFor,
+  type InboxRowAction,
+} from '../inbox/rowActions.js';
+import {
+  IconArchive,
+  IconBriefcase,
+  IconFilter,
+  IconKebab,
+  IconPlus,
+  IconSearch,
+  IconUser,
+} from './icons.js';
 
 const FILTERS: Array<{ id: KindFilter; label: string }> = [
   { id: 'all', label: 'All' },
-  { id: 'humans', label: 'People' },
+  { id: 'humans', label: 'Humans' },
   { id: 'agents', label: 'Agents' },
   { id: 'groups', label: 'Groups' },
   { id: 'pinned', label: 'Pinned' },
 ];
+
+/** New-conversation menu entries, mirroring the portal's `new-*` events. */
+export type NewConversationKind = 'new-agent' | 'new-dm' | 'new-group';
+
+// Re-exported so existing consumers can keep importing the action type from here.
+export type { InboxRowAction } from '../inbox/rowActions.js';
 
 function initials(title: string): string {
   const parts = title.trim().split(/\s+/).slice(0, 2);
   return parts.map((part) => part[0]?.toUpperCase() || '').join('') || '?';
 }
 
-export function ConversationInbox(props: {
+/** Identity chip title: the org/person label, with a sign-in hint on expiry. */
+function identityButtonTitle(identity: ChatIdentitySession, hidden: boolean): string {
+  const name = identity.label || (identity.orgId ? 'Organization' : 'Private');
+  return hidden ? `${name} · hidden` : name;
+}
+
+export type ConversationInboxProps = {
   identities: ChatIdentitySession[];
   hiddenKeys: string[];
   rows: InboxRow[];
@@ -25,70 +62,317 @@ export function ConversationInbox(props: {
   error: string | null;
   activeRowId: string | null;
   highlightAgentId?: string | null;
+  /**
+   * Conversation ids with a tool run awaiting approval (portal `Approval` badge).
+   * Conversation-scoped only — never fanned out to every row of an agent.
+   */
+  pendingApprovalConversationIds?: string[] | null;
   onToggleIdentity: (key: string) => void;
   onOpen: (row: InboxRow) => void;
   onRetry: () => void;
-}) {
+  /** Shared activity WebSocket health, so rows can show a presence dot. */
+  activityConnectionStatus?: string;
+  /** Open the archived list (portal `open-archived`). */
+  onOpenArchived?: () => void;
+  /** True while the archived list is showing, so the link reads as active. */
+  archivedActive?: boolean;
+  /** Start a new conversation (portal `new-agent` / `new-dm` / `new-group`). */
+  onNewConversation?: (kind: NewConversationKind) => void;
+  /** Rename / archive / delete / reset / leave a row. */
+  onRowAction?: (action: InboxRowAction, row: InboxRow) => void;
+};
+
+const LATEST_ONLY_KEY = 'anx-chat-session-list:latest-only';
+
+/** Persisted "latest per contact" preference; storage failures never throw. */
+function readLatestOnly(fallback = false): boolean {
+  try {
+    const raw = localStorage.getItem(LATEST_ONLY_KEY);
+    return raw == null ? fallback : raw === '1' || raw === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLatestOnly(value: boolean): void {
+  try {
+    localStorage.setItem(LATEST_ONLY_KEY, value ? '1' : '0');
+  } catch {
+    /* private mode / storage disabled */
+  }
+}
+
+/**
+ * Portal-parity conversation list: toolbar (search + filter + new), identity
+ * chips, Archive | Latest quickbar, and stacked rows with owner logo, presence
+ * dot, AI/group badge, subtitle, subagent nest, unread pill, and a kebab menu.
+ */
+export function ConversationInbox(props: ConversationInboxProps) {
   const [filter, setFilter] = useState<KindFilter>('all');
   const [query, setQuery] = useState('');
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [latestOnly, setLatestOnly] = useState(() => readLatestOnly(false));
+  const [expandedNests, setExpandedNests] = useState<Record<string, boolean>>({});
+  const [menu, setMenu] = useState<{ row: InboxRow; x: number; y: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
   const visibleIdentities = props.identities.filter((row) => !props.hiddenKeys.includes(row.key));
   const showOwner = visibleIdentities.length > 1;
-  const rows = useMemo(() => {
+  const approvalConversationIds = useMemo(
+    () => new Set(props.pendingApprovalConversationIds || []),
+    [props.pendingApprovalConversationIds],
+  );
+  const orgNameOf = (orgId: string | null): string | null => {
+    if (!orgId) return null;
+    const hit = props.identities.find((item) => item.orgId === orgId);
+    return hit?.label || null;
+  };
+
+  const activeFilterLabel = useMemo(() => {
+    const hit = FILTERS.find((item) => item.id === filter);
+    return hit ? `Filter: ${hit.label}` : 'Filter';
+  }, [filter]);
+
+  const { rows, nestedByParent } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return props.rows.filter((row) => {
-      if (!matchesKindFilter(row, filter)) return false;
-      if (!q) return true;
-      return `${row.title} ${row.summary}`.toLowerCase().includes(q);
+    const { parents, children } = partitionSubagentRows(props.rows);
+    const nested = new Map<string, InboxRow[]>();
+    for (const parent of parents) {
+      const kids = nestedSubagentsFor(parent, props.rows, {
+        parentFocused: parent.id === props.activeRowId,
+        activeRowId: props.activeRowId,
+      });
+      if (kids.length) nested.set(parent.conversationId, kids);
+    }
+    let list = [...parents, ...children]
+      .filter((row) => matchesKindFilter(row, filter))
+      .filter((row) => {
+        if (!q) return true;
+        const hay = `${row.title} ${row.summary} ${row.agentName || ''}`.toLowerCase();
+        if (hay.includes(q)) return true;
+        if (isSubagentRow(row)) return false;
+        return (nested.get(row.conversationId) || []).some((kid) =>
+          `${kid.title} ${kid.summary}`.toLowerCase().includes(q),
+        );
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    if (latestOnly) {
+      list = latestInboxPerContact(list, { isActive: (row) => row.id === props.activeRowId });
+    }
+    return { rows: list, nestedByParent: nested };
+  }, [props.rows, props.activeRowId, filter, query, latestOnly]);
+
+  const closeMenus = () => {
+    setFilterMenuOpen(false);
+    setNewMenuOpen(false);
+    setMenu(null);
+  };
+
+  // Pointer-outside closes the dropdowns and collapses any open subagent nest,
+  // matching the portal's document listener.
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const el = rootRef.current;
+      if (el && event.target instanceof Node && el.contains(event.target)) return;
+      closeMenus();
+      setExpandedNests((prev) => (Object.values(prev).some(Boolean) ? {} : prev));
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, []);
+
+  const toggleLatestOnly = () => {
+    setLatestOnly((prev) => {
+      writeLatestOnly(!prev);
+      return !prev;
     });
-  }, [props.rows, filter, query]);
+  };
+
+  const openMenu = (row: InboxRow, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setFilterMenuOpen(false);
+    setNewMenuOpen(false);
+    setMenu({ row, x: event.clientX || 0, y: event.clientY || 0 });
+  };
 
   return (
-    <div className="nexus-chat__inbox">
-      <label className="nexus-chat__search">
-        <span className="nexus-chat__sr">Search conversations</span>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search"
-          aria-label="Search conversations"
-        />
-      </label>
-      <div className="nexus-chat__identity-row" role="toolbar" aria-label="Identities">
-        {props.identities.map((identity) => {
-          const hidden = props.hiddenKeys.includes(identity.key);
-          const src = identity.orgLogo || identity.avatarUrl;
-          return (
-            <button
-              key={identity.key}
-              type="button"
-              className={`nexus-chat__identity-chip${hidden ? ' nexus-chat__identity-chip--off' : ''}`}
-              aria-pressed={!hidden}
-              aria-label={`${hidden ? 'Show' : 'Hide'} ${identity.label}`}
-              onClick={() => props.onToggleIdentity(identity.key)}
-            >
-              {src ? (
-                <CachedAvatarImage src={src} alt="" className="nexus-chat__identity-logo" fallback={initials(identity.label)} />
-              ) : (
-                <span className="nexus-chat__identity-logo">{initials(identity.label)}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <div className="nexus-chat__kind-row" role="tablist" aria-label="Conversation type">
-        {FILTERS.map((item) => (
+    <div className="nexus-chat__inbox" ref={rootRef}>
+      <div className="nexus-chat__session-toolbar" role="toolbar" aria-label="Conversations">
+        <label className="nexus-chat__session-search">
+          <span className="nexus-chat__sr">Search conversations</span>
+          <IconSearch className="nexus-chat__session-search-icon" size={14} />
+          <input
+            value={query}
+            type="search"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search…"
+            aria-label="Search conversations"
+          />
+        </label>
+        <div className="nexus-chat__session-menu">
           <button
-            key={item.id}
             type="button"
-            role="tab"
-            aria-selected={filter === item.id}
-            className={`nexus-chat__kind${filter === item.id ? ' nexus-chat__kind--on' : ''}`}
-            onClick={() => setFilter(item.id)}
+            className={`nexus-chat__session-icon-btn${filterMenuOpen || filter !== 'all' ? ' is-active' : ''}`}
+            title={activeFilterLabel}
+            aria-label={activeFilterLabel}
+            aria-haspopup="listbox"
+            aria-expanded={filterMenuOpen}
+            onClick={(event) => {
+              event.stopPropagation();
+              setNewMenuOpen(false);
+              setFilterMenuOpen((open) => !open);
+            }}
           >
-            {item.label}
+            <IconFilter size={14} />
           </button>
-        ))}
+          {filterMenuOpen ? (
+            <ul className="nexus-chat__session-dropdown" role="listbox" aria-label="Filter conversations">
+              {FILTERS.map((item) => (
+                <li
+                  key={item.id}
+                  role="option"
+                  aria-selected={filter === item.id}
+                  className={`nexus-chat__session-dropdown-item${filter === item.id ? ' is-active' : ''}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setFilter(item.id);
+                    setFilterMenuOpen(false);
+                  }}
+                >
+                  {item.label}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+        <div className="nexus-chat__session-menu">
+          <button
+            type="button"
+            className="nexus-chat__session-icon-btn nexus-chat__session-icon-btn--primary"
+            title="New conversation"
+            aria-label="New conversation"
+            aria-haspopup="menu"
+            aria-expanded={newMenuOpen}
+            onClick={(event) => {
+              event.stopPropagation();
+              setFilterMenuOpen(false);
+              setNewMenuOpen((open) => !open);
+            }}
+          >
+            <IconPlus size={15} />
+          </button>
+          {newMenuOpen ? (
+            <ul
+              className="nexus-chat__session-dropdown nexus-chat__session-dropdown--end"
+              role="menu"
+              aria-label="New conversation"
+            >
+              <li
+                role="menuitem"
+                className="nexus-chat__session-dropdown-item"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setNewMenuOpen(false);
+                  props.onNewConversation?.('new-agent');
+                }}
+              >
+                Message agent
+              </li>
+              <li
+                role="menuitem"
+                className="nexus-chat__session-dropdown-item"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setNewMenuOpen(false);
+                  props.onNewConversation?.('new-dm');
+                }}
+              >
+                Direct message
+              </li>
+              <li
+                role="menuitem"
+                className="nexus-chat__session-dropdown-item"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setNewMenuOpen(false);
+                  props.onNewConversation?.('new-group');
+                }}
+              >
+                New group
+              </li>
+            </ul>
+          ) : null}
+        </div>
       </div>
+
+      {props.identities.length > 1 ? (
+        <div className="nexus-chat__identity-row" role="toolbar" aria-label="Identities">
+          {props.identities.map((identity) => {
+            const hidden = props.hiddenKeys.includes(identity.key);
+            const src = identity.orgId ? identity.orgLogo : identity.avatarUrl;
+            return (
+              <button
+                key={identity.key}
+                type="button"
+                className={`nexus-chat__identity-chip${identity.orgId ? '' : ' nexus-chat__identity-chip--private'}${hidden ? ' is-hidden' : ''}`}
+                title={identityButtonTitle(identity, hidden)}
+                aria-label={identityButtonTitle(identity, hidden)}
+                aria-pressed={!hidden}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onToggleIdentity(identity.key);
+                }}
+              >
+                {src ? (
+                  <CachedAvatarImage
+                    src={src}
+                    alt=""
+                    className="nexus-chat__identity-logo"
+                    fallback={initials(identity.label)}
+                  />
+                ) : (
+                  <span className="nexus-chat__identity-logo">
+                    {identity.orgId ? <IconBriefcase size={12} /> : <IconUser size={12} />}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="nexus-chat__session-quickbar">
+        <button
+          type="button"
+          className={`nexus-chat__session-archive${props.archivedActive ? ' is-active' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onOpenArchived?.();
+          }}
+        >
+          <IconArchive size={12} />
+          <span>Archive</span>
+        </button>
+        <button
+          type="button"
+          className={`nexus-chat__session-latest${latestOnly ? ' is-active' : ''}`}
+          aria-pressed={latestOnly}
+          title={
+            latestOnly
+              ? 'Showing the latest conversation per contact'
+              : 'Showing all conversations'
+          }
+          onClick={(event) => {
+            event.stopPropagation();
+            toggleLatestOnly();
+          }}
+        >
+          Latest
+        </button>
+      </div>
+
       {props.error ? (
         <div className="nexus-chat__banner" role="alert">
           <span>{props.error}</span>
@@ -97,6 +381,7 @@ export function ConversationInbox(props: {
           </button>
         </div>
       ) : null}
+
       <div className="nexus-chat__inbox-list" role="list">
         {props.loading && !rows.length
           ? [0, 1, 2, 3].map((i) => <div key={i} className="nexus-chat__skeleton" />)
@@ -104,44 +389,218 @@ export function ConversationInbox(props: {
         {!props.loading && !rows.length ? (
           <p className="nexus-chat__empty">No conversations yet. Start a chat with an agent.</p>
         ) : null}
-        {rows.map((row) => (
-          <button
-            key={row.id}
-            type="button"
-            role="listitem"
-            className={`nexus-chat__inbox-row${props.activeRowId === row.id ? ' nexus-chat__inbox-row--active' : ''}${
-              conversationHighlightsAgent(row, props.highlightAgentId) ? ' nexus-chat__inbox-row--highlight' : ''
-            }`}
-            aria-current={conversationHighlightsAgent(row, props.highlightAgentId) ? 'true' : undefined}
-            onClick={() => props.onOpen(row)}
-          >
-            <span className="nexus-chat__stack">
-              {showOwner && row.identityLogo ? (
-                <CachedAvatarImage src={row.identityLogo} alt="" className="nexus-chat__owner-mark" fallback="" />
-              ) : null}
-              <span className="nexus-chat__peer">
-                {row.avatarUrl ? (
-                  <CachedAvatarImage src={row.avatarUrl} alt="" fallback={initials(row.title)} />
-                ) : (
-                  initials(row.title)
-                )}
+        {rows.map((row) => {
+          const highlighted = conversationHighlightsAgent(row, props.highlightAgentId);
+          const badge = inboxScopeBadge(row, orgNameOf(row.orgId));
+          const presence = inboxPresenceStatus(row, props.activityConnectionStatus || 'disconnected');
+          const nest = nestedByParent.get(row.conversationId) || [];
+          const nestOpen = Boolean(expandedNests[row.conversationId]);
+          const liveKids = nest.filter((kid) => kid.streaming).length;
+          return (
+            <div
+              key={row.id}
+              role="listitem"
+              className={`nexus-chat__session-row${props.activeRowId === row.id ? ' is-active' : ''}${
+                highlighted ? ' nexus-chat__session-row--highlight' : ''
+              }${nestOpen ? ' is-nest-open' : ''}`}
+              aria-current={highlighted ? 'true' : undefined}
+              onClick={() => props.onOpen(row)}
+              onContextMenu={(event) => openMenu(row, event)}
+            >
+              <span className="nexus-chat__session-stack">
+                {showOwner && row.identityLogo ? (
+                  <CachedAvatarImage
+                    src={row.identityLogo}
+                    alt=""
+                    className="nexus-chat__session-owner"
+                    fallback=""
+                  />
+                ) : null}
+                <span className="nexus-chat__session-avatar">
+                  <span className="nexus-chat__session-face">
+                    {row.avatarUrl ? (
+                      <CachedAvatarImage
+                        src={row.avatarUrl}
+                        alt=""
+                        fallback={initials(row.avatarName || row.title)}
+                      />
+                    ) : (
+                      <span className="nexus-chat__session-initials">
+                        {initials(row.avatarName || row.title)}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`nexus-chat__session-presence is-${presence}`}
+                    title={inboxPresenceTitle(presence)}
+                    aria-hidden="true"
+                  />
+                  {row.kind === 'agent' ? (
+                    <span className="nexus-chat__session-overlay nexus-chat__session-overlay--ai">AI</span>
+                  ) : row.kind === 'group' || row.kind === 'room' ? (
+                    <span className="nexus-chat__session-overlay nexus-chat__session-overlay--group">G</span>
+                  ) : null}
+                </span>
               </span>
-              {row.kind === 'agent' || row.kind === 'group' || row.kind === 'room' ? (
-                <span className="nexus-chat__kind-badge">{row.kind === 'agent' ? 'AI' : 'G'}</span>
-              ) : null}
-            </span>
-            <span className="nexus-chat__inbox-copy">
-              <span className="nexus-chat__inbox-title">{row.title}</span>
-              <span className="nexus-chat__inbox-summary">{row.summary || identityHint(row)}</span>
-            </span>
-            {row.unreadCount > 0 ? <span className="nexus-chat__unread">{row.unreadCount}</span> : null}
-          </button>
-        ))}
+              <span className="nexus-chat__session-body">
+                <span className="nexus-chat__session-top">
+                  <span className="nexus-chat__session-title">{row.title}</span>
+                  {approvalConversationIds.has(row.conversationId) ? (
+                    <span
+                      className="nexus-chat__session-badge nexus-chat__session-badge--approval"
+                      title="Tool run awaiting approval"
+                    >
+                      Approval
+                    </span>
+                  ) : null}
+                  {row.streaming ? (
+                    <span
+                      className="nexus-chat__session-badge nexus-chat__session-badge--streaming"
+                      title="Generating"
+                    >
+                      …
+                    </span>
+                  ) : null}
+                  {row.backgroundSubAgentCompleted && !nest.length ? (
+                    <span
+                      className="nexus-chat__session-badge nexus-chat__session-badge--done"
+                      title="Background subagent finished"
+                    >
+                      Done
+                    </span>
+                  ) : null}
+                  {row.unreadCount > 0 ? (
+                    <span className="nexus-chat__session-unread">{row.unreadCount}</span>
+                  ) : null}
+                </span>
+                {nest.length || row.activeSubAgentCount || row.summary || badge ? (
+                  <span className="nexus-chat__session-subtitle">
+                    {nest.length ? (
+                      <button
+                        type="button"
+                        className={`nexus-chat__session-nest-toggle${liveKids ? ' is-live' : ''}${nestOpen ? ' is-open' : ''}`}
+                        aria-expanded={nestOpen}
+                        title={
+                          liveKids
+                            ? `${liveKids} running · click to ${nestOpen ? 'collapse' : 'expand'}`
+                            : `Subagents · click to ${nestOpen ? 'collapse' : 'expand'}`
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setExpandedNests((prev) => (prev[row.conversationId] ? {} : { [row.conversationId]: true }));
+                        }}
+                      >
+                        {liveKids ? <span className="nexus-chat__session-pulse" aria-hidden="true" /> : null}
+                        <span className="nexus-chat__session-nest-label">
+                          {liveKids && liveKids === nest.length
+                            ? liveKids === 1
+                              ? '1 subagent'
+                              : `${liveKids} subagents`
+                            : liveKids
+                              ? `${liveKids}/${nest.length} subagents`
+                              : nest.length === 1
+                                ? '1 subagent'
+                                : `${nest.length} subagents`}
+                        </span>
+                        <span className="nexus-chat__session-nest-chev" aria-hidden="true">
+                          {nestOpen ? '▾' : '▸'}
+                        </span>
+                      </button>
+                    ) : row.activeSubAgentCount ? (
+                      <span className="nexus-chat__session-nest-toggle is-live">
+                        <span className="nexus-chat__session-pulse" aria-hidden="true" />
+                        <span className="nexus-chat__session-nest-label">
+                          {row.activeSubAgentCount === 1
+                            ? '1 subagent'
+                            : `${row.activeSubAgentCount} subagents`}
+                        </span>
+                      </span>
+                    ) : row.summary ? (
+                      <span className="nexus-chat__session-subtitle-text">{row.summary}</span>
+                    ) : null}
+                    {badge && !nest.length && !row.activeSubAgentCount ? (
+                      <span className={`nexus-chat__session-badge nexus-chat__session-badge--${badge.tone}`}>
+                        {badge.text}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : null}
+                {nestOpen && nest.length ? (
+                  <span className="nexus-chat__session-nest" role="list" onClick={(event) => event.stopPropagation()}>
+                    {nest.map((child) => (
+                      <button
+                        key={child.id}
+                        type="button"
+                        role="listitem"
+                        className={`nexus-chat__session-nest-item${child.id === props.activeRowId ? ' is-active' : ''}${
+                          child.streaming ? ' is-live' : ''
+                        }`}
+                        title={child.title}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          props.onOpen(child);
+                        }}
+                      >
+                        <span
+                          className={`nexus-chat__session-nest-dot${child.streaming ? ' is-live' : ' is-done'}`}
+                          aria-hidden="true"
+                        />
+                        <span className="nexus-chat__session-nest-name">{child.title}</span>
+                        {child.streaming ? (
+                          <span className="nexus-chat__session-nest-meta">live</span>
+                        ) : child.unreadCount ? (
+                          <span className="nexus-chat__session-nest-meta is-unread">{child.unreadCount}</span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                className="nexus-chat__session-kebab"
+                title="Actions"
+                aria-label={`Actions for ${row.title}`}
+                onClick={(event) => openMenu(row, event)}
+              >
+                <IconKebab size={14} />
+              </button>
+            </div>
+          );
+        })}
       </div>
+
+      {menu ? (
+        <div
+          className="nexus-chat__session-menu-root"
+          role="presentation"
+          onClick={() => setMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setMenu(null);
+          }}
+        >
+          <ul
+            className="nexus-chat__session-context"
+            role="menu"
+            style={{ top: menu.y, left: menu.x }}
+          >
+            {rowActionsFor(menu.row).map((action) => (
+              <li
+                key={action}
+                role="menuitem"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setMenu(null);
+                  props.onRowAction?.(action, menu.row);
+                }}
+              >
+                {ROW_ACTION_LABELS[action]}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
-}
-
-function identityHint(row: InboxRow): string {
-  return row.identityLabel;
 }

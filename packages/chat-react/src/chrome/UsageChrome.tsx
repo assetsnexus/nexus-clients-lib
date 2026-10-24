@@ -143,12 +143,14 @@ export function UsageChrome({
     );
   }
 
+  // The reasoning stop lives in the composer action strip now, so this bar stays
+  // a single compact line: model, context, cost. Keeping the slider here too
+  // would spend a second row on a control the user already has under the draft.
   return (
     <div className="nexus-chat__usage">
       <div data-nexus-model="">
         <ModelPicker models={models} value={selectedModelId} loading={modelsLoading} onChange={onSelectModel} />
       </div>
-      <ReasoningEffortControl levels={reasoningLevels} value={reasoningEffort} onChange={onReasoningEffort} />
       <button
         type="button"
         className="nexus-chat__btn"

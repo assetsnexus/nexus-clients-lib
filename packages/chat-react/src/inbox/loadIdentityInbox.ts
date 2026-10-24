@@ -3,6 +3,7 @@ import type { CommandClient } from '@nexus/chat-core';
 import {
   conversationToRow,
   filterInboxRowsForLockedAgent,
+  identityRowLogo,
   sortInboxRows,
   unwrapList,
   type InboxRow,
@@ -25,10 +26,13 @@ export async function loadIdentityInbox(input: {
   send: IdentitySend;
   /** When set, only conversations with this virtual employee are returned. */
   lockedAgent?: { virtualEmployeeId: string } | null;
+  /** `active` (default) or `archived`, so the Archive link loads its own list. */
+  status?: 'active' | 'archived';
 }): Promise<{ rows: InboxRow[]; errors: string[] }> {
   const hidden = new Set(input.hiddenKeys);
   const visible = input.identities.filter((row) => row.token && !hidden.has(row.key));
   const lockedId = input.lockedAgent?.virtualEmployeeId?.trim() || '';
+  const status = input.status || 'active';
   const errors: string[] = [];
   const rows: InboxRow[] = [];
 
@@ -36,7 +40,7 @@ export async function loadIdentityInbox(input: {
     visible.map(async (identity) => {
       try {
         const conversations = commandData(
-          await input.send(identity, 'anx.communicate.conversations.list', { limit: 50, status: 'active' }),
+          await input.send(identity, 'anx.communicate.conversations.list', { limit: 50, status }),
         );
         const list = unwrapList(conversations, ['conversations', 'items', 'rows']);
         for (const item of list) {
@@ -44,7 +48,8 @@ export async function loadIdentityInbox(input: {
           const row = conversationToRow(item as Record<string, unknown>, {
             key: identity.key,
             label: identity.label,
-            logo: identity.orgLogo || identity.avatarUrl,
+            logo: identityRowLogo(identity),
+            orgId: identity.orgId,
           });
           if (!row) continue;
           if (lockedId && !filterInboxRowsForLockedAgent([row], lockedId).length) continue;
