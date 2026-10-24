@@ -399,6 +399,104 @@ describe('chat-core', () => {
     });
   });
 
+  it('openContact resumes the latest active conversation instead of creating a new one', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sent.push({ command, payload });
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [{ employeeId: 've-1', name: 'Helper' }] };
+          }
+          if (command === 'anx.communicate.conversations.list') {
+            return {
+              ok: true,
+              data: {
+                conversations: [
+                  {
+                    conversationId: 'shared-thread',
+                    virtualEmployeeId: 've-1',
+                    status: 'active',
+                    lastActivityAt: '2026-01-02T00:00:00.000Z',
+                  },
+                ],
+              },
+            };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const opened = await chat.openContact('ve-1');
+    // The companion/chat share the same session: no second thread is minted.
+    expect(opened.conversationId).toBe('shared-thread');
+    expect(chat.getState().conversationId).toBe('shared-thread');
+    expect(sent.some((e) => e.command === 'anx.communicate.conversations.create')).toBe(false);
+  });
+
+  it('openContact with forceNew still allocates a fresh conversation', async () => {
+    const sent: Array<{ command: string }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          sent.push({ command });
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [{ employeeId: 've-1', name: 'Helper' }] };
+          }
+          if (command === 'anx.communicate.conversations.list') {
+            return {
+              ok: true,
+              data: {
+                conversations: [
+                  {
+                    conversationId: 'shared-thread',
+                    virtualEmployeeId: 've-1',
+                    status: 'active',
+                    lastActivityAt: '2026-01-02T00:00:00.000Z',
+                  },
+                ],
+              },
+            };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: true, data: { conversationId: 'fresh-thread', agentId: 'agent-1' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const opened = await chat.openContact('ve-1', { forceNew: true });
+    expect(opened.conversationId).toBe('fresh-thread');
+    expect(sent.some((e) => e.command === 'anx.communicate.conversations.create')).toBe(true);
+  });
+
+  it('openContact falls back to create when the reuse list is empty', async () => {
+    const sent: Array<{ command: string }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          sent.push({ command });
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [{ employeeId: 've-1', name: 'Helper' }] };
+          }
+          if (command === 'anx.communicate.conversations.list') {
+            return { ok: true, data: { conversations: [] } };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: true, data: { conversationId: 'first-thread' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const opened = await chat.openContact('ve-1');
+    expect(opened.conversationId).toBe('first-thread');
+    expect(sent.some((e) => e.command === 'anx.communicate.conversations.create')).toBe(true);
+  });
+
   it('surfaces NO_NEXUS_GRANT when send has to open the agent conversation', async () => {
     const errors: unknown[] = [];
     const chat = createNexusChat({

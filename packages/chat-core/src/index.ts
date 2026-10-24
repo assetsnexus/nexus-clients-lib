@@ -1400,8 +1400,17 @@ export type NexusChat = {
     category?: string;
     role?: 'owner' | 'orgMember' | 'public';
   }) => Promise<ModelsAvailableCatalog>;
-  /** Create a new conversation for an agent contact (VE id or agent id). Always allocates a new id. */
-  openContact: (contactId: string, opts?: { title?: string }) => Promise<{ conversationId: string; agentId?: string }>;
+  /**
+   * Open an agent contact and bind the panel to its thread. Resolves to the
+   * **latest active** conversation for the contact (so the caller resumes the
+   * same session the main chat view shows) and only allocates a new one when
+   * none exists. Pass `forceNew: true` to always create a fresh thread (the
+   * explicit "start a new conversation" affordance).
+   */
+  openContact: (
+    contactId: string,
+    opts?: { title?: string; forceNew?: boolean },
+  ) => Promise<{ conversationId: string; agentId?: string }>;
   listConversations: ContactThreadApi['listConversations'];
   listMessages: ContactThreadApi['listMessages'];
   archiveConversation: ContactThreadApi['archiveConversation'];
@@ -2845,7 +2854,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     }
   };
 
-  const openContact = async (contactId: string, openOpts?: { title?: string }) => {
+  const openContact = async (
+    contactId: string,
+    openOpts?: { title?: string; forceNew?: boolean },
+  ) => {
     if (
       lockedAgent &&
       !lockedAgentAllowsContact(lockedAgent, { id: contactId, virtualEmployeeId: contactId })
@@ -2861,8 +2873,41 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       contact?.type === 'agent' ? contact.virtualEmployeeId || contact.id : undefined;
     const agentId = contact?.agentId || undefined;
 
-    // Always creates a new conversation (backend does not resume-per-agent).
-    // Pass an existing conversationId via send/stream paths to continue a thread.
+    // Reuse the latest active thread for this contact instead of unconditionally
+    // minting a new conversation. A blind create is what made a fresh companion
+    // window fork a *second* session and, for agents the viewer does not own,
+    // get denied (`conversations.create denied: ... not owner, no org match`)
+    // and surface "conversations.create failed". The backend is authoritative
+    // for who may resume which thread, so listing is best-effort: an empty or
+    // forbidden list falls through to create exactly as before.
+    if (contact && !openOpts?.forceNew) {
+      try {
+        const open = await contactThreads.openLatest(contact, {
+          title: openOpts?.title,
+        });
+        if (open.conversationId) {
+          store.setState({
+            conversationId: open.conversationId,
+            selectedAgentId: contact.id,
+          });
+          patchCurrentPanel({
+            contactId: contact.id,
+            contactType: contact.type || 'agent',
+            conversationId: open.conversationId,
+            roomId: null,
+            roomPurpose: 'conversation',
+          });
+          return {
+            conversationId: open.conversationId,
+            agentId: contact.agentId ?? undefined,
+          };
+        }
+      } catch {
+        // The reuse lookup is an optimization, never a hard failure — fall
+        // through so a first-ever contact still reaches the create path.
+      }
+    }
+
     const result = (await opts.client.send('anx.communicate.conversations.create', {
       ...(virtualEmployeeId
         ? { virtualEmployeeId }

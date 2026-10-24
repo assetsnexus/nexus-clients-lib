@@ -5,9 +5,21 @@ export async function openContactThread(
   chat: NexusChat,
   contactId: string,
   contact?: ChatContact | null,
+  opts?: { forceNew?: boolean },
 ): Promise<{ conversationId: string | null; created?: boolean }> {
   const resolved =
     contact || findChatContact(chat.getState().contacts, contactId) || ({ id: contactId } as ChatContact);
+
+  // Explicit "new conversation": don't reuse an existing thread.
+  if (opts?.forceNew && typeof chat.openContact === 'function') {
+    const opened = await chat.openContact(contactId, { forceNew: true });
+    const conversationId = opened.conversationId || null;
+    if (conversationId) {
+      chat.rehydrateTurns([], { conversationId, detachStream: true });
+      await chat.streamInit({ conversationId, contactId: resolved.id });
+    }
+    return { conversationId, created: true };
+  }
 
   if (typeof chat.openLatest === 'function') {
     const res = await chat.openLatest(resolved);

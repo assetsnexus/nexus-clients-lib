@@ -175,7 +175,7 @@ export declare function renderChatMarkdown(text: string): string;
 export declare const CHAT_MARKDOWN_ROOT_CLASS: string;
 export declare function sortContactsForList(contacts: import('@nexus/chat-core').ChatContact[], conversationRows?: unknown[]): import('@nexus/chat-core').ChatContact[];
 export declare function createSendQueue(): { list: Function; enqueue: Function; remove: Function; markError: Function };
-export declare function openContactThread(chat: import('@nexus/chat-core').NexusChat, contactId: string, contact?: import('@nexus/chat-core').ChatContact): Promise<{ conversationId: string | null }>;
+export declare function openContactThread(chat: import('@nexus/chat-core').NexusChat, contactId: string, contact?: import('@nexus/chat-core').ChatContact, opts?: { forceNew?: boolean }): Promise<{ conversationId: string | null; created?: boolean }>;
 export declare function loadConversationHistory(client: import('@nexus/chat-core').CommandClient, chat: import('@nexus/chat-core').NexusChat, conversationId: string): Promise<void>;
 export declare function useChatState(chat: import('@nexus/chat-core').NexusChat): import('@nexus/chat-core').ChatState;
 export declare function useChatPanel(chat: import('@nexus/chat-core').NexusChat): { state: import('@nexus/chat-core').ChatState; panel: import('@nexus/chat-core').PanelState | null };
