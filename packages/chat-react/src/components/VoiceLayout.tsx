@@ -10,6 +10,7 @@ import {
 import { ThreadView } from './ThreadView.js';
 import { VoiceAvatarCanvas, type VoiceAvatarHost } from './VoiceAvatarCanvas.js';
 import { CachedAvatarImage } from './CachedAvatarImage.js';
+import { IconMic, IconPhone, IconSpeaker } from './icons.js';
 import {
   applyTurnPresenceMood,
   playAssistantEmbodiment,
@@ -453,8 +454,19 @@ export function VoiceLayout({
   const canSpeakManager = typeof chat.createSpeakTurn === 'function';
   const canSpeak = Boolean(lastAssistantTurn?.text) && canSpeakManager;
 
+  /*
+   * One tight row of compact, icon-first controls.
+   *
+   * The buttons reuse the composer's `nexus-chat__icon-btn` primitives (30px,
+   * 12px text, 8px radius, `.is-on` accent) instead of the chunky
+   * `nexus-chat__btn` (36px tall, 8/12 padding) they used to render, so the
+   * voice chrome matches the rest of the chat. View toggles are text pills (the
+   * bundled icon set has no background/transcript/avatar glyph); the call
+   * controls lead with their icon. Labels are unchanged, so the visible copy
+   * and the `aria-label`/`title`/`textContent` contract still hold.
+   */
   const controls = (
-    <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+    <div className="nexus-chat__voice-bar" role="group" aria-label="Voice controls">
       {!hideWakeIndicator && wakeSnapshot ? (
         <WakeMicIndicator
           snapshot={wakeSnapshot}
@@ -474,8 +486,9 @@ export function VoiceLayout({
         <button
           key={id}
           type="button"
-          className={`nexus-chat__btn${activeView === id ? ' nexus-chat__btn--primary' : ''}`}
+          className={`nexus-chat__icon-btn nexus-chat__icon-btn--text${activeView === id ? ' is-on' : ''}`}
           aria-pressed={activeView === id}
+          title={label}
           onClick={() => handleView(id)}
         >
           {label}
@@ -483,7 +496,7 @@ export function VoiceLayout({
       ))}
       <button
         type="button"
-        className="nexus-chat__btn nexus-chat__btn--primary"
+        className="nexus-chat__icon-btn nexus-chat__icon-btn--label nexus-chat__voice-btn--primary"
         disabled={surface.status === 'live' || surface.status === 'connecting'}
         title={
           captureEnabled
@@ -492,19 +505,22 @@ export function VoiceLayout({
         }
         onClick={() => void startCall()}
       >
-        {surface.status === 'live'
-          ? 'Connected'
-          : surface.status === 'connecting'
-            ? 'Calling…'
-            : 'Start call'}
+        <IconPhone />
+        <span className="nexus-chat__icon-btn-label">
+          {surface.status === 'live'
+            ? 'Connected'
+            : surface.status === 'connecting'
+              ? 'Calling…'
+              : 'Start call'}
+        </span>
       </button>
       {/* `aria-disabled` (not native `disabled`) so clicking still explains why
           nothing can be spoken instead of swallowing the click silently. */}
       <button
         type="button"
-        className="nexus-chat__btn"
+        className="nexus-chat__icon-btn nexus-chat__icon-btn--label"
         aria-disabled={!canSpeak}
-        style={canSpeak ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}
+        title="Speak (TTS)"
         onClick={() => {
           const agentId = contact?.agentId || contact?.id || '';
           const conversationId = chat.getState().conversationId;
@@ -528,7 +544,8 @@ export function VoiceLayout({
           void speak.speak(lastAssistantTurn.text);
         }}
       >
-        Speak (TTS)
+        <IconSpeaker />
+        <span className="nexus-chat__icon-btn-label">Speak (TTS)</span>
       </button>
       {/*
         Mute/Pause use `aria-disabled` rather than the native `disabled`
@@ -536,12 +553,15 @@ export function VoiceLayout({
         no explanation. Keeping it focusable lets the handler say *why* nothing
         happened (no silent no-op) while the styling/semantics still read as
         disabled — and they keep working exactly as today once a call is live.
+        `aria-pressed` mirrors the active mute/pause state (the portal's
+        `RealtimeCallPanel` does the same) and drives the `.is-on` highlight.
       */}
       <button
         type="button"
-        className="nexus-chat__btn"
+        className={`nexus-chat__icon-btn nexus-chat__icon-btn--label${surface.muted ? ' is-on' : ''}`}
         aria-disabled={!callLive}
-        style={callLive ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}
+        aria-pressed={Boolean(surface.muted)}
+        title={surface.muted ? 'Unmute' : 'Mute'}
         onClick={() => {
           if (!callLive) {
             setNotice('No live call to mute.');
@@ -551,13 +571,15 @@ export function VoiceLayout({
           chat.toggleMute();
         }}
       >
-        {surface.muted ? 'Unmute' : 'Mute'}
+        <IconMic />
+        <span className="nexus-chat__icon-btn-label">{surface.muted ? 'Unmute' : 'Mute'}</span>
       </button>
       <button
         type="button"
-        className="nexus-chat__btn"
+        className={`nexus-chat__icon-btn nexus-chat__icon-btn--text${surface.paused ? ' is-on' : ''}`}
         aria-disabled={!callLive}
-        style={callLive ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}
+        aria-pressed={Boolean(surface.paused)}
+        title={surface.paused ? 'Resume' : 'Pause'}
         onClick={() => {
           if (!callLive) {
             setNotice('No live call to pause.');
@@ -572,7 +594,8 @@ export function VoiceLayout({
       {surface.callSid ? (
         <button
           type="button"
-          className="nexus-chat__btn"
+          className="nexus-chat__icon-btn nexus-chat__icon-btn--text"
+          title="End call"
           onClick={() =>
             void chat.endCall({ agentId: contact?.agentId || contact?.id || '', callSid: surface.callSid! })
           }

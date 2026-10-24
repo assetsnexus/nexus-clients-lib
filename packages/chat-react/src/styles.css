@@ -781,6 +781,61 @@
   height: 100%;
 }
 
+/*
+ * Voice/call control row (VoiceLayout `controls`) + the `Background /
+ * Transcript / Avatar` toggles in NexusChatApp's `.nexus-chat__callbar`.
+ *
+ * Both were rendering the full-size `nexus-chat__btn` (36px tall, 8/12 padding,
+ * 16px inherited font) and wrapping onto two or three lines in a narrow pane.
+ * They now reuse the compact composer primitives (`.nexus-chat__icon-btn`,
+ * 30px / 8px radius / 11-12px text) so a whole call session fits one tight row
+ * and matches the rest of the chat chrome. Sizing is token-driven, so light and
+ * dark themes keep working.
+ */
+.nexus-chat__voice-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  /* Top breathing room only; the row itself must not add block height. */
+  margin-top: 10px;
+  line-height: 1;
+}
+
+/* Text-only pills (`Background` / `Transcript` / `Avatar` / `Pause` / `End`)
+   keep the composer's compact height but need a hair more side padding so the
+   label is not flush with the border. */
+.nexus-chat__voice-bar .nexus-chat__icon-btn--text {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+/* Icon + short caption pills (`Start call` / `Speak (TTS)` / `Mute`). */
+.nexus-chat__voice-bar .nexus-chat__icon-btn--label {
+  height: 26px;
+  padding: 0 9px;
+}
+
+/* `aria-disabled` buttons must still read as disabled (the handlers keep the
+   click so the user gets an explanation instead of a silent no-op). */
+.nexus-chat__voice-bar .nexus-chat__icon-btn[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Start call is the primary action: filled accent, like the composer send. */
+.nexus-chat__voice-btn--primary {
+  border-color: transparent;
+  background: var(--nx-chat-accent);
+  color: #fff;
+}
+
+.nexus-chat__voice-btn--primary:hover:not(:disabled) {
+  color: #fff;
+  filter: brightness(1.08);
+}
+
 .nexus-chat__empty {
   flex: 1;
   display: grid;
@@ -2911,13 +2966,55 @@
   align-items: center;
 }
 
+/*
+ * Voice screen call bar (`NexusChatApp`): agent title + the Background /
+ * Transcript / Avatar view toggles. Kept to one tight row so it costs almost no
+ * vertical space above the transcript — the toggles use the same compact
+ * `.nexus-chat__icon-btn--text` pills as the VoiceLayout control row.
+ */
 .nexus-chat__callbar {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px;
   align-items: center;
-  padding: 6px 10px;
+  padding: 4px 10px;
   background: var(--nx-chat-surface);
   border-bottom: 1px solid var(--nx-chat-border);
+  line-height: 1;
+}
+
+/* Agent title gets the remaining width and truncates rather than pushing the
+   toggles onto a second line. */
+.nexus-chat__callbar > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nx-chat-muted);
+  margin-right: 4px;
+}
+
+/*
+ * Compact every view toggle in the bar, whether it still uses the legacy
+ * `nexus-chat__btn` (36px) or the compact `.nexus-chat__icon-btn--text`
+ * primitive the bar is being migrated to. `min-height: 0` defeats the global
+ * `.nexus-chat__btn { min-height: 36px; }` rule, so the whole bar is one row.
+ */
+.nexus-chat__callbar button {
+  height: 26px;
+  min-height: 0;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.nexus-chat__callbar .nexus-chat__view-toggle {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
 }
 
 .nexus-chat__header-avatar {

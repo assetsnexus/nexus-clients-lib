@@ -304,6 +304,95 @@ describe('VoiceLayout host callbacks never drive a render loop', () => {
   });
 });
 
+describe('VoiceLayout compact control row', () => {
+  it('renders one tight row of icon-btn primitives (no chunky nexus-chat__btn)', () => {
+    const chat = makeFakeChat();
+    const { container } = mount({ chat, initialLayout: 'avatar', turns: [ASSISTANT_TURN] });
+
+    const bar = container.querySelector('.nexus-chat__voice-bar');
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute('role')).toBe('group');
+
+    // Every control lives in the single bar (no second wrapping row).
+    const inBar = Array.from(bar!.querySelectorAll('button'));
+    expect(inBar.length).toBeGreaterThanOrEqual(7);
+
+    // The controls moved off the oversized `nexus-chat__btn` styling.
+    expect(inBar.every((b) => b.classList.contains('nexus-chat__btn'))).toBe(false);
+    for (const label of ['Background', 'Transcript', 'Avatar', 'Start call', 'Speak (TTS)', 'Mute', 'Pause']) {
+      expect(button(container, label).classList.contains('nexus-chat__icon-btn')).toBe(true);
+    }
+  });
+
+  it('marks the active view toggle with aria-pressed + the .is-on highlight', () => {
+    const chat = makeFakeChat();
+    const { container } = mount({ chat, initialLayout: 'avatar' });
+
+    const avatar = button(container, 'Avatar');
+    expect(avatar.getAttribute('aria-pressed')).toBe('true');
+    expect(avatar.className).toContain('is-on');
+    expect(avatar.className).toContain('nexus-chat__icon-btn--text');
+    expect(avatar.getAttribute('title')).toBe('Avatar');
+
+    const background = button(container, 'Background');
+    expect(background.getAttribute('aria-pressed')).toBe('false');
+    expect(background.className).not.toContain('is-on');
+  });
+
+  it('carries icons + labels on the call controls and keeps the primary treatment', () => {
+    const chat = makeFakeChat();
+    const { container } = mount({ chat, initialLayout: 'avatar', turns: [ASSISTANT_TURN] });
+
+    const start = button(container, 'Start call');
+    expect(start.className).toContain('nexus-chat__voice-btn--primary');
+    expect(start.querySelector('svg')).not.toBeNull();
+
+    const speak = button(container, 'Speak (TTS)');
+    expect(speak.querySelector('svg')).not.toBeNull();
+
+    const mute = button(container, 'Mute');
+    expect(mute.querySelector('svg')).not.toBeNull();
+    expect(mute.getAttribute('title')).toBe('Mute');
+  });
+
+  it('reflects mute/pause state on aria-pressed + the .is-on highlight (and keeps the click working)', () => {
+    const chat = makeFakeChat();
+    const { container } = mount({ chat, initialLayout: 'avatar', turns: [ASSISTANT_TURN] });
+
+    act(() => {
+      chat.setSurface({ status: 'live', callSid: 'CA1', muted: false, paused: false });
+    });
+
+    const mute = button(container, 'Mute');
+    expect(mute.getAttribute('aria-pressed')).toBe('false');
+    expect(mute.className).not.toContain('is-on');
+
+    // Muted: label flips to Unmute and the toggle reads pressed/selected.
+    act(() => {
+      chat.setSurface({ muted: true });
+    });
+    const unmute = button(container, 'Unmute');
+    expect(unmute.getAttribute('aria-pressed')).toBe('true');
+    expect(unmute.className).toContain('is-on');
+    act(() => {
+      unmute.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(chat.toggleMute).toHaveBeenCalledTimes(1);
+
+    // Paused: same for Pause/Resume.
+    act(() => {
+      chat.setSurface({ paused: true });
+    });
+    const resume = button(container, 'Resume');
+    expect(resume.getAttribute('aria-pressed')).toBe('true');
+    expect(resume.className).toContain('is-on');
+    act(() => {
+      resume.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(chat.pauseOrResumeCall).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('VoiceLayout control feedback (no silent no-ops)', () => {
   it('disables Speak (TTS) with no assistant turn and explains why when clicked', () => {
     const chat = makeFakeChat();
