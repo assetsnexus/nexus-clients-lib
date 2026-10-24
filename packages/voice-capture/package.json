@@ -1,0 +1,60 @@
+{
+  "name": "@nexus/voice-capture",
+  "version": "0.1.0",
+  "description": "Reusable microphone capture, VAD, dictation and audio-batch primitives for Nexus voice surfaces.",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./mic": {
+      "types": "./dist/mic/index.d.ts",
+      "import": "./dist/mic/index.js",
+      "require": "./dist/mic/index.cjs"
+    },
+    "./vad": {
+      "types": "./dist/vad/index.d.ts",
+      "import": "./dist/vad/index.js",
+      "require": "./dist/vad/index.cjs"
+    },
+    "./batch": {
+      "types": "./dist/batch/index.d.ts",
+      "import": "./dist/batch/index.js",
+      "require": "./dist/batch/index.cjs"
+    },
+    "./dictation": {
+      "types": "./dist/dictation/index.d.ts",
+      "import": "./dist/dictation/index.js",
+      "require": "./dist/dictation/index.cjs"
+    },
+    "./capture": {
+      "types": "./dist/capture/index.d.ts",
+      "import": "./dist/capture/index.js",
+      "require": "./dist/capture/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/mic/index.ts src/vad/index.ts src/batch/index.ts src/dictation/index.ts src/capture/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
