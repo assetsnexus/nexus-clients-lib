@@ -228,6 +228,10 @@ import {
   sttLanguageForApi as toSttLanguageForApi,
   sttLanguageSelectOptions,
 } from './voice-utils/sttLanguageOptions.js'
+import {
+  dictationCopy,
+  sttFailureMessage,
+} from './voice-utils/dictationCopy'
 
 const DEFAULT_VOICE_INPUT_LABELS = {
   title: 'Voice input',
@@ -329,6 +333,14 @@ export default {
   computed: {
     L() {
       return { ...DEFAULT_VOICE_INPUT_LABELS, ...(this.labels || {}) }
+    },
+    /**
+     * Only the host-provided label overrides, for the shared dictation copy.
+     * Passing the merged `L` would let the generic built-in defaults
+     * ("Transcription failed") shadow the shared actionable wording.
+     */
+    dictationLabels() {
+      return this.labels || {}
     },
     contactAgentId() {
       return this.inferenceAgentId || this.agentId || null
@@ -749,7 +761,10 @@ export default {
           },
           onError: (error) => {
             if (!this.previewText && !this.livePartial) {
-              this.errorMessage = error || this.L.sttFailed
+              // The live socket reports a raw string; keep it in the console and
+              // show the shared actionable copy instead.
+              if (error) console.warn('anx.chat.dictation live stt error', error)
+              this.errorMessage = sttFailureMessage(error, this.dictationLabels)
             }
           },
         })
@@ -854,11 +869,15 @@ export default {
     },
     async afterStop(mimeType) {
       this.state = 'transcribing'
+      const blob = new Blob(this.chunks, { type: mimeType })
+      if (blob.size < STT_MIN_BLOB_BYTES) {
+        // Too-short press: keep the shared, actionable "hold longer" copy rather
+        // than a raw recorder string.
+        this.errorMessage = dictationCopy('too-short', this.dictationLabels)
+        this.state = 'error'
+        return
+      }
       try {
-        const blob = new Blob(this.chunks, { type: mimeType })
-        if (blob.size < STT_MIN_BLOB_BYTES) {
-          throw new Error(this.L.tooShort)
-        }
         this.audioBlob = blob
         this.previewUrl = URL.createObjectURL(blob)
 
@@ -874,13 +893,14 @@ export default {
             if (stt.text) text = stt.text
             this.$emit('stt-model', this.localModelId)
             if (!stt.text && !text) {
-              this.errorMessage = this.L.sttFailed
+              this.errorMessage = dictationCopy('no-transcript', this.dictationLabels)
             }
           } catch (err) {
             if (!text) {
-              this.errorMessage = err instanceof Error
-                ? err.message
-                : this.L.sttFailed
+              // Keep the raw server detail in the console; the UI shows the
+              // shared, actionable copy instead of the raw transcriber string.
+              console.warn('anx.chat.dictation transcribe failed', err)
+              this.errorMessage = sttFailureMessage(err, this.dictationLabels)
             }
           }
         } else if (this.localModelId) {
@@ -890,7 +910,9 @@ export default {
         this.livePartial = ''
         this.state = 'preview'
       } catch (err) {
-        this.errorMessage = err instanceof Error ? err.message : this.L.sttFailed
+        // Never surface the raw `err.message`; the shared policy owns the copy.
+        console.warn('anx.chat.dictation finish failed', err)
+        this.errorMessage = sttFailureMessage(err, this.dictationLabels)
         this.state = 'error'
       }
     },

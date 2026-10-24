@@ -86,6 +86,21 @@ export {
   type VoiceModeState,
 } from './voice-mode.js';
 export {
+  MIN_CAPTURE_MS,
+  DictationFailure,
+  decideDictationCapture,
+  dictationFailureMessage,
+  micFailureCode,
+  micFailureMessage,
+  recognitionFailureCode,
+  transcriptionFailureCode,
+  transcriptionFailureMessage,
+  type DictationCaptureDecision,
+  type DictationCaptureInput,
+  type DictationFailureCode,
+  type DictationRail,
+} from './dictation-outcome.js';
+export {
   createWakeController,
   type WakeController,
   type WakeControllerDeps,

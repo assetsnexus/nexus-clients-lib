@@ -16,3 +16,5 @@
 - `conceptSlugs` is carried on `ClientToolIndexEntry` / `ChatToolDescriptor`, copied in `register` / `registerDescriptor`, emitted by `indexEntries()`, and folded into the local index fingerprint.
 ## 0.1.6
 - Hydrate striped client-tool args from the persisted pause row: inference's client-facing sanitizer strips `client_tool_request.arguments` to `{}` for any tool name it cannot place in `page.*` or its builtin whitelist, so an approved write handler ran with `{}`. The real args are read back from the persisted `pendingPause.arguments` row before the handler or the approval card sees them.
+## 0.1.7
+- Shared hold-to-talk dictation policy: `decideDictationCapture`, `dictationFailureMessage`, `DictationFailure`, `MIN_CAPTURE_MS`, and the failure-code mappers (`micFailureCode` / `recognitionFailureCode` / `transcriptionFailureCode`) plus the sanitizing `micFailureMessage` / `transcriptionFailureMessage`. One source of truth for the actionable copy across the React composer and the Vue 2 portal overlay, so a raw transcriber/server error string is never shown to the user (the caller logs it).

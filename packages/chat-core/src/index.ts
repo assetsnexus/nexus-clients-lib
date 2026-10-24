@@ -411,6 +411,23 @@ export {
   modelSupportsSttStream,
 } from './voice/stt-models-picker.js';
 export {
+  MIN_CAPTURE_MS,
+  DictationFailure,
+  decideDictationCapture,
+  dictationFailureMessage,
+  micFailureCode,
+  micFailureMessage,
+  recognitionFailureCode,
+  transcriptionFailureCode,
+  transcriptionFailureMessage,
+} from './voice/dictation-outcome.js';
+export type {
+  DictationCaptureDecision,
+  DictationCaptureInput,
+  DictationFailureCode,
+  DictationRail,
+} from './voice/dictation-outcome.js';
+export {
   createSpeakTurnController,
   getContactTts,
   setContactTts,
