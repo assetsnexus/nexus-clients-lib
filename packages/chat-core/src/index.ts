@@ -144,6 +144,7 @@ import {
   guardLockedAgentChannel,
   resolveLockedAgentSendTarget,
 } from './session/locked-agent-send.js';
+import { conversationBelongsToContact, conversationIdFromRow } from './session/contact-threads.js';
 import {
   listAvailableChatModels,
   type ModelsAvailableCatalog,
@@ -2854,6 +2855,49 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     }
   };
 
+  /**
+   * Last-resort resume for a contact whose thread cannot be *created*.
+   *
+   * Scans every readable conversation row for the contact (active first, then
+   * archived) and reopens the most recent one. Used when
+   * `anx.communicate.conversations.create` is denied — typically a companion
+   * window opened against an agent the viewer does not own — so both surfaces
+   * stay on one session instead of failing with "conversations.create failed".
+   * Returns null when the contact genuinely has no thread to resume.
+   */
+  const resumeExistingConversation = async (
+    contactId: string,
+    contact: ChatContact | undefined,
+  ): Promise<{ conversationId: string; agentId?: string } | null> => {
+    let rows: Awaited<ReturnType<typeof contactThreads.listConversations>> = [];
+    try {
+      rows = await contactThreads.listConversations({ contactId });
+    } catch {
+      return null;
+    }
+    const matches = rows.filter((row) =>
+      conversationBelongsToContact(row, contactId, contact),
+    );
+    if (!matches.length) return null;
+    const conversationId = conversationIdFromRow(matches[0]);
+    if (!conversationId) return null;
+    // Reopen so the thread is addressable/streamable again; a failed reopen still
+    // leaves a readable conversation id, which is better than a hard error.
+    await contactThreads.reopenConversation(conversationId).catch(() => undefined);
+    store.setState({
+      conversationId,
+      selectedAgentId: contact?.id ?? contactId,
+    });
+    patchCurrentPanel({
+      contactId: contact?.id ?? contactId,
+      contactType: contact?.type || 'agent',
+      conversationId,
+      roomId: null,
+      roomPurpose: 'conversation',
+    });
+    return { conversationId, agentId: contact?.agentId ?? undefined };
+  };
+
   const openContact = async (
     contactId: string,
     openOpts?: { title?: string; forceNew?: boolean },
@@ -2880,26 +2924,34 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     // and surface "conversations.create failed". The backend is authoritative
     // for who may resume which thread, so listing is best-effort: an empty or
     // forbidden list falls through to create exactly as before.
-    if (contact && !openOpts?.forceNew) {
+    //
+    // The lookup deliberately runs even when the contact is not in the store yet
+    // (a cold companion open, or a contact list that failed to load): resuming by
+    // id alone is exactly the case that used to reach `conversations.create` and
+    // fail. A bare `{ id }` ref is enough for the row matcher, which also checks
+    // `agentId` / VE id / peer id / contact id.
+    if (!openOpts?.forceNew) {
+      const resumeRef = contact ?? ({ id: contactId } as Partial<ChatContact> & { id: string });
       try {
-        const open = await contactThreads.openLatest(contact, {
+        const open = await contactThreads.openLatest(resumeRef, {
           title: openOpts?.title,
         });
         if (open.conversationId) {
+          const resolvedId = contact?.id ?? contactId;
           store.setState({
             conversationId: open.conversationId,
-            selectedAgentId: contact.id,
+            selectedAgentId: resolvedId,
           });
           patchCurrentPanel({
-            contactId: contact.id,
-            contactType: contact.type || 'agent',
+            contactId: resolvedId,
+            contactType: contact?.type || 'agent',
             conversationId: open.conversationId,
             roomId: null,
             roomPurpose: 'conversation',
           });
           return {
             conversationId: open.conversationId,
-            agentId: contact.agentId ?? undefined,
+            agentId: contact?.agentId ?? undefined,
           };
         }
       } catch {
@@ -2921,6 +2973,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           authRequestId: result.authRequestId ?? null,
           command: 'anx.communicate.conversations.create',
         });
+      }
+      // A create that the backend refuses (typically an agent the viewer does not
+      // own: "not owner, no org match") must not dead-end the companion window.
+      // Fall back to resuming *any* readable thread for the contact — including an
+      // archived one, reopened to active — so the window binds to the same session
+      // as the chat view instead of surfacing "conversations.create failed".
+      if (!openOpts?.forceNew) {
+        const resumed = await resumeExistingConversation(contactId, contact ?? undefined).catch(
+          () => null,
+        );
+        if (resumed) return resumed;
       }
       throw commandFailureError(result, 'conversations.create failed');
     }

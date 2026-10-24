@@ -472,6 +472,88 @@ describe('chat-core', () => {
     expect(sent.some((e) => e.command === 'anx.communicate.conversations.create')).toBe(true);
   });
 
+  it('openContact resumes an existing thread by id when the contact is not loaded yet', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sent.push({ command, payload });
+          if (command === 'anx.communicate.conversations.list') {
+            return {
+              ok: true,
+              data: {
+                conversations: [
+                  {
+                    conversationId: 'shared-thread',
+                    virtualEmployeeId: 've-1',
+                    status: 'active',
+                    lastActivityAt: '2026-01-02T00:00:00.000Z',
+                  },
+                ],
+              },
+            };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return { ok: true, data: { conversationId: 'wrong-new-thread' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    // Deliberately skip loadContacts: a cold companion open has no contact row yet.
+    const opened = await chat.openContact('ve-1');
+    expect(opened.conversationId).toBe('shared-thread');
+    expect(sent.some((e) => e.command === 'anx.communicate.conversations.create')).toBe(false);
+  });
+
+  it('openContact falls back to an archived thread when create is denied', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sent.push({ command, payload });
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [{ employeeId: 've-1', name: 'Helper' }] };
+          }
+          if (command === 'anx.communicate.conversations.list') {
+            // Active list is empty; the contact only has an archived thread.
+            const status = payload?.status;
+            return {
+              ok: true,
+              data: {
+                conversations:
+                  status === 'active'
+                    ? []
+                    : [
+                        {
+                          conversationId: 'archived-thread',
+                          virtualEmployeeId: 've-1',
+                          status: 'archived',
+                          lastActivityAt: '2026-01-02T00:00:00.000Z',
+                        },
+                      ],
+              },
+            };
+          }
+          if (command === 'anx.communicate.conversations.create') {
+            return {
+              ok: false,
+              code: 'FORBIDDEN',
+              message: 'conversations.create denied: not owner, no org match',
+            };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const opened = await chat.openContact('ve-1');
+    // The denied create must not surface as "conversations.create failed"; the
+    // window binds to the one readable thread instead.
+    expect(opened.conversationId).toBe('archived-thread');
+    expect(chat.getState().conversationId).toBe('archived-thread');
+  });
+
   it('openContact falls back to create when the reuse list is empty', async () => {
     const sent: Array<{ command: string }> = [];
     const chat = createNexusChat({

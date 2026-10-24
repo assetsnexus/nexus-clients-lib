@@ -173,6 +173,56 @@ describe('createContactThreadApi', () => {
     ]);
   });
 
+  it('openLatest with createIfMissing:false never creates a conversation', async () => {
+    const sent: Array<{ command: string }> = [];
+    const api = createContactThreadApi({
+      send: async (command) => {
+        sent.push({ command });
+        if (command === 'anx.communicate.conversations.list') {
+          return { ok: true, data: { conversations: [] } };
+        }
+        return { ok: true, data: {} };
+      },
+    });
+
+    const result = await api.openLatest(
+      { id: 've-1', name: 'Ada', type: 'agent', virtualEmployeeId: 've-1' },
+      { createIfMissing: false },
+    );
+    // A pure lookup: the companion must never fork a thread here.
+    expect(result).toEqual({ conversationId: '', created: false });
+    expect(sent.some((e) => e.command === 'anx.communicate.conversations.create')).toBe(false);
+  });
+
+  it('openLatest with createIfMissing:false still returns an existing thread', async () => {
+    const api = createContactThreadApi({
+      send: async (command) => {
+        if (command === 'anx.communicate.conversations.list') {
+          return {
+            ok: true,
+            data: {
+              conversations: [
+                {
+                  conversationId: 'shared-thread',
+                  virtualEmployeeId: 've-1',
+                  status: 'active',
+                  lastActivityAt: '2026-01-02T00:00:00.000Z',
+                },
+              ],
+            },
+          };
+        }
+        return { ok: true, data: {} };
+      },
+    });
+
+    const result = await api.openLatest(
+      { id: 've-1', name: 'Ada', type: 'agent', virtualEmployeeId: 've-1' },
+      { createIfMissing: false },
+    );
+    expect(result).toEqual({ conversationId: 'shared-thread', created: false });
+  });
+
   it('resetConversation archives current then creates a new conversation', async () => {
     const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
     const api = createContactThreadApi({

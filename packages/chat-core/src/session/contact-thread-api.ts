@@ -209,9 +209,19 @@ export function createContactThreadApi(
       assertCommandOk(result, 'anx.communicate.conversations.delete');
     },
 
+    /**
+     * Resume the latest active thread for a contact.
+     *
+     * `createIfMissing: false` makes this a *pure lookup*: it returns an empty
+     * `conversationId` when the contact has no active thread instead of minting
+     * one. Callers that must resume an existing session without ever triggering
+     * `anx.communicate.conversations.create` (companion windows opening against an
+     * agent the viewer may not own) use that so a denied create cannot surface as
+     * "conversations.create failed" from the reuse path.
+     */
     async openLatest(
       contact: ContactRef,
-      opts?: { title?: string },
+      opts?: { title?: string; createIfMissing?: boolean },
     ): Promise<{ conversationId: string; created: boolean; messages?: unknown[] }> {
       assertLockedContact(contact);
       const rows = await listConversationRows(client, {
@@ -224,6 +234,9 @@ export function createContactThreadApi(
       const latest = pickLatestOpenConversation(forContact, contact.id, contact);
       if (latest) {
         return { conversationId: conversationIdFromRow(latest), created: false };
+      }
+      if (opts?.createIfMissing === false) {
+        return { conversationId: '', created: false };
       }
       const conversationId = await createConversationForContact(client, contact, {
         ...opts,
