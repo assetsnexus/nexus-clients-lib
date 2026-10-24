@@ -75,6 +75,14 @@ export type VoiceLayoutProps = {
    * misleading "Wake off" chip. Defaults to `false` (indicator shown).
    */
   hideWakeIndicator?: boolean;
+  /**
+   * Whether this surface may capture the microphone (start/keep a live call).
+   * Exactly one surface may own speech-to-text at a time; a host with several
+   * windows open (e.g. the desktop's companion windows) passes `false` to a
+   * demoted window so it renders its avatar in parallel but never opens a
+   * second, competing capture. Defaults to `true` (a normal single surface).
+   */
+  captureEnabled?: boolean;
 };
 
 const presenceStore = createPresenceStore('nexus-chat-react');
@@ -99,6 +107,7 @@ export function VoiceLayout({
   splitAxis = 'vertical',
   initialLayout = 'split',
   hideWakeIndicator = false,
+  captureEnabled = true,
 }: VoiceLayoutProps) {
   const voiceMode = useMemo(
     () => createVoiceModeState({ layout: initialLayout, splitRatio: 0.45 }),
@@ -240,6 +249,10 @@ export function VoiceLayout({
   const [notice, setNotice] = useState<string | null>(null);
 
   const startCall = useCallback(async () => {
+    if (!captureEnabled) {
+      setNotice('Another window owns the microphone right now. Say its wake word or focus it, then try again.');
+      return;
+    }
     if (!contact || (contact.type !== 'agent' && contact.type !== 'asset_agent')) {
       setNotice('Open an agent conversation before starting a call.');
       return;
@@ -302,14 +315,27 @@ export function VoiceLayout({
         void speak.speak(text);
       }
     }
-  }, [chat, client, contact, emitPlayback, onVoiceActive, turns, voiceMode]);
+  }, [chat, client, contact, emitPlayback, onVoiceActive, turns, voiceMode, captureEnabled]);
 
   const autoStarted = useRef(false);
   useEffect(() => {
     if (!autoStart || autoStarted.current) return;
+    // A surface that does not own capture must never auto-open a competing mic.
+    if (!captureEnabled) return;
     autoStarted.current = true;
     void startCall();
-  }, [autoStart, startCall]);
+  }, [autoStart, startCall, captureEnabled]);
+
+  // Losing capture ownership demotes this surface to display-only: end any live
+  // call so the newly-elected owner is the single microphone.
+  useEffect(() => {
+    if (captureEnabled) return;
+    const callSid = surface.callSid;
+    if (!callSid) return;
+    const agentId = contact?.agentId || contact?.id || '';
+    if (!agentId) return;
+    void chat.endCall({ agentId, callSid });
+  }, [captureEnabled, chat, contact?.agentId, contact?.id, surface.callSid]);
 
   useEffect(() => {
     const onMsg = (event: MessageEvent) => {
@@ -444,6 +470,11 @@ export function VoiceLayout({
         type="button"
         className="nexus-chat__btn nexus-chat__btn--primary"
         disabled={surface.status === 'live' || surface.status === 'connecting'}
+        title={
+          captureEnabled
+            ? undefined
+            : 'Another window owns the microphone. Focus it (or say its wake word) to take over.'
+        }
         onClick={() => void startCall()}
       >
         {surface.status === 'live'
