@@ -68,6 +68,13 @@ export type VoiceLayoutProps = {
   splitAxis?: 'vertical' | 'horizontal';
   /** Initial layout; `split` by default (matches the portal chat). */
   initialLayout?: VoiceLayoutMode;
+  /**
+   * Hide the `WakeMicIndicator` chip. The wake engine is owned by a single
+   * surface (the desktop main window), so hosts that embed this layout without a
+   * wake engine (e.g. the immersive companion window) pass `true` to avoid a
+   * misleading "Wake off" chip. Defaults to `false` (indicator shown).
+   */
+  hideWakeIndicator?: boolean;
 };
 
 const presenceStore = createPresenceStore('nexus-chat-react');
@@ -91,12 +98,21 @@ export function VoiceLayout({
   onAvatarHost,
   splitAxis = 'vertical',
   initialLayout = 'split',
+  hideWakeIndicator = false,
 }: VoiceLayoutProps) {
   const voiceMode = useMemo(
     () => createVoiceModeState({ layout: initialLayout, splitRatio: 0.45 }),
     [initialLayout],
   );
   const [modeState, setModeState] = useState(voiceMode.get());
+  /**
+   * Fallback view state for hosts that omit `view`/`onView` (e.g. the immersive
+   * companion window): the Background/Transcript/Avatar buttons must not become
+   * no-ops, and the active highlight must reflect the real pane.
+   */
+  const [internalView, setInternalView] = useState<'background' | 'transcript' | 'avatar'>(
+    initialLayout === 'transcript' ? 'transcript' : 'avatar',
+  );
   const dragging = useRef(false);
   const [surface, setSurface] = useState(() => chat.getVoiceSurface());
   const [playbackStream, setPlaybackStream] = useState<MediaStream | null>(null);
@@ -349,6 +365,19 @@ export function VoiceLayout({
 
   const setLayout = (layout: VoiceLayoutMode) => voiceMode.set({ layout });
 
+  // The host `view` wins when provided; otherwise the internal fallback drives
+  // both the rendered pane and the button highlight.
+  const activeView = view ?? internalView;
+  const handleView = (next: 'background' | 'transcript' | 'avatar') => {
+    setInternalView(next);
+    onView?.(next);
+    if (next === 'transcript') setLayout('transcript');
+    else if (next === 'avatar') setLayout('avatar');
+    // 'background' keeps the host's own layout decision; for a bare host it
+    // behaves like 'avatar' so the stage stays visible rather than vanishing.
+    else if (!onView) setLayout('avatar');
+  };
+
   const showAvatar = modeState.layout === 'avatar' || modeState.layout === 'split';
 
   const avatarPane = (
@@ -375,9 +404,17 @@ export function VoiceLayout({
     </div>
   );
 
+  // A call counts as reachable when its surface is connecting or up; Mute/Pause
+  // only ever act on a live session, so they must not pretend to work otherwise.
+  const callLive =
+    surface.status === 'live' || surface.status === 'paused' || surface.status === 'connecting';
+  const lastAssistantTurn = [...turns].reverse().find((t) => t.role === 'assistant' && t.text?.trim());
+  const canSpeakManager = typeof chat.createSpeakTurn === 'function';
+  const canSpeak = Boolean(lastAssistantTurn?.text) && canSpeakManager;
+
   const controls = (
     <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-      {wakeSnapshot ? (
+      {!hideWakeIndicator && wakeSnapshot ? (
         <WakeMicIndicator
           snapshot={wakeSnapshot}
           onOptIn={() => {
@@ -396,33 +433,40 @@ export function VoiceLayout({
         <button
           key={id}
           type="button"
-          className={`nexus-chat__btn${(view || 'avatar') === id ? ' nexus-chat__btn--primary' : ''}`}
-          onClick={() => {
-            if (id === 'background') onView?.('background');
-            if (id === 'transcript') {
-              onView?.('transcript');
-              setLayout('transcript');
-            }
-            if (id === 'avatar') {
-              onView?.('avatar');
-              setLayout('avatar');
-            }
-          }}
+          className={`nexus-chat__btn${activeView === id ? ' nexus-chat__btn--primary' : ''}`}
+          aria-pressed={activeView === id}
+          onClick={() => handleView(id)}
         >
           {label}
         </button>
       ))}
-      <button type="button" className="nexus-chat__btn nexus-chat__btn--primary" onClick={() => void startCall()}>
-        {surface.status === 'live' ? 'Connected' : 'Start call'}
+      <button
+        type="button"
+        className="nexus-chat__btn nexus-chat__btn--primary"
+        disabled={surface.status === 'live' || surface.status === 'connecting'}
+        onClick={() => void startCall()}
+      >
+        {surface.status === 'live'
+          ? 'Connected'
+          : surface.status === 'connecting'
+            ? 'Calling…'
+            : 'Start call'}
       </button>
+      {/* `aria-disabled` (not native `disabled`) so clicking still explains why
+          nothing can be spoken instead of swallowing the click silently. */}
       <button
         type="button"
         className="nexus-chat__btn"
+        aria-disabled={!canSpeak}
+        style={canSpeak ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}
         onClick={() => {
           const agentId = contact?.agentId || contact?.id || '';
           const conversationId = chat.getState().conversationId;
-          const lastAssistant = [...turns].reverse().find((t) => t.role === 'assistant' && t.text?.trim());
-          if (!lastAssistant?.text || typeof chat.createSpeakTurn !== 'function') return;
+          if (!lastAssistantTurn?.text || typeof chat.createSpeakTurn !== 'function') {
+            setNotice('Nothing to speak yet — send or receive a reply first.');
+            return;
+          }
+          setNotice(null);
           const speak = chat.createSpeakTurn({
             agentId,
             virtualAgentId: contact?.virtualEmployeeId || null,
@@ -435,15 +479,48 @@ export function VoiceLayout({
               });
             },
           });
-          void speak.speak(lastAssistant.text);
+          void speak.speak(lastAssistantTurn.text);
         }}
       >
         Speak (TTS)
       </button>
-      <button type="button" className="nexus-chat__btn" onClick={() => chat.toggleMute()}>
+      {/*
+        Mute/Pause use `aria-disabled` rather than the native `disabled`
+        attribute: a native-disabled button swallows the click, so the user gets
+        no explanation. Keeping it focusable lets the handler say *why* nothing
+        happened (no silent no-op) while the styling/semantics still read as
+        disabled — and they keep working exactly as today once a call is live.
+      */}
+      <button
+        type="button"
+        className="nexus-chat__btn"
+        aria-disabled={!callLive}
+        style={callLive ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}
+        onClick={() => {
+          if (!callLive) {
+            setNotice('No live call to mute.');
+            return;
+          }
+          setNotice(null);
+          chat.toggleMute();
+        }}
+      >
         {surface.muted ? 'Unmute' : 'Mute'}
       </button>
-      <button type="button" className="nexus-chat__btn" onClick={() => chat.pauseOrResumeCall()}>
+      <button
+        type="button"
+        className="nexus-chat__btn"
+        aria-disabled={!callLive}
+        style={callLive ? undefined : { opacity: 0.5, cursor: 'not-allowed' }}
+        onClick={() => {
+          if (!callLive) {
+            setNotice('No live call to pause.');
+            return;
+          }
+          setNotice(null);
+          chat.pauseOrResumeCall();
+        }}
+      >
         {surface.paused ? 'Resume' : 'Pause'}
       </button>
       {surface.callSid ? (
