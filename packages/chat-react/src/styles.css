@@ -2134,23 +2134,48 @@
   min-height: 22px;
   flex: 0 0 22px;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--nx-chat-text) 28%, transparent);
+  /* An active chip is a real, filled surface: accent-tinted background, accent
+     border, and full-strength foreground. The portal uses a solid #f4f4f4 chip;
+     in the dark theme the equivalent "on" state is the accent tint. */
+  border: 1px solid color-mix(in srgb, var(--nx-chat-accent) 55%, var(--nx-chat-border));
   border-radius: 4px;
-  background: color-mix(in srgb, var(--nx-chat-text) 6%, transparent);
-  color: var(--nx-chat-muted);
+  background: color-mix(in srgb, var(--nx-chat-accent) 22%, var(--nx-chat-surface));
+  color: var(--nx-chat-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   cursor: pointer;
+  font-weight: 600;
+  transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.nexus-chat__identity-chip:hover {
+  background: color-mix(in srgb, var(--nx-chat-accent) 30%, var(--nx-chat-surface));
 }
 
 .nexus-chat__identity-chip--private {
   border-radius: 50%;
 }
 
+/* Hidden identity: desaturated and dimmed, but still readable as a chip. */
 .nexus-chat__identity-chip.is-hidden {
   opacity: 0.45;
+  filter: grayscale(0.85);
+  border-color: color-mix(in srgb, var(--nx-chat-text) 24%, transparent);
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
+  color: var(--nx-chat-muted);
+}
+
+/* Expired identity: portal `is-error` border, so the chip reads as needing sign-in. */
+.nexus-chat__identity-chip.is-error {
+  border-color: #d9534f;
+  background: color-mix(in srgb, #d9534f 20%, var(--nx-chat-surface));
+  color: #f2b8b5;
+}
+
+.nexus-chat__identity-chip.is-error.is-hidden {
+  opacity: 0.6;
 }
 
 .nexus-chat__identity-logo {
@@ -2164,6 +2189,14 @@
   background: transparent;
   color: inherit;
   font-size: 10px;
+}
+
+.nexus-chat__identity-initials {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .nexus-chat__identity-logo img {
@@ -2223,6 +2256,17 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Sidebar entry-point panel (Contacts directory / Rooms) under the list.
+   Portal `#sidebar-main` always keeps `session-list` mounted; these are extra
+   entry points, so they get their own scroll region rather than replacing it. */
+.nexus-chat__sidebar-entry {
+  flex: 0 0 auto;
+  max-height: 42%;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--nx-chat-border);
 }
 
 .nexus-chat__session-row {
@@ -3162,4 +3206,269 @@
 .nexus-chat__chip--warn {
   border-color: color-mix(in srgb, #d29922 55%, var(--nx-chat-border, #2a2f3d));
   color: #e3b341;
+}
+
+/* ---------------------------------------------------------------------------
+   New-conversation surfaces (sidebar `+` menu).
+   Portal parity: `ContactPickerOverlay.vue` (Message agent / Direct message)
+   and `CreateRoomDialog.vue` (New group). Dark theme, existing tokens only.
+--------------------------------------------------------------------------- */
+
+.nexus-chat__picker {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.nexus-chat__picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.nexus-chat__picker-panel {
+  position: relative;
+  margin-top: 8vh;
+  width: min(380px, 92vw);
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--nx-chat-border);
+  border-radius: var(--nx-chat-radius);
+  background: var(--nx-chat-surface);
+  color: var(--nx-chat-text);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.nexus-chat__picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--nx-chat-border);
+}
+
+.nexus-chat__picker-close {
+  border: 0;
+  background: transparent;
+  color: var(--nx-chat-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.nexus-chat__picker-close:hover {
+  color: var(--nx-chat-text);
+}
+
+.nexus-chat__picker-body {
+  padding: 8px 10px 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.nexus-chat__picker-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.nexus-chat__picker-tab {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--nx-chat-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.nexus-chat__picker-tab.is-active {
+  background: color-mix(in srgb, var(--nx-chat-accent) 20%, transparent);
+  color: var(--nx-chat-text);
+  font-weight: 600;
+}
+
+.nexus-chat__picker-field {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.nexus-chat__picker-field > span {
+  display: block;
+  font-size: 11px;
+  color: var(--nx-chat-muted);
+  margin-bottom: 3px;
+}
+
+.nexus-chat__picker-field input,
+.nexus-chat__picker-field select,
+.nexus-chat__picker-search {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--nx-chat-border);
+  border-radius: var(--nx-chat-radius);
+  background: color-mix(in srgb, var(--nx-chat-text) 6%, transparent);
+  color: var(--nx-chat-text);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.nexus-chat__picker-search {
+  margin-bottom: 8px;
+}
+
+.nexus-chat__picker-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--nx-chat-muted);
+}
+
+.nexus-chat__picker-error {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #f2b8b5;
+}
+
+.nexus-chat__picker-list,
+.nexus-chat__picker-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nexus-chat__picker-group-label {
+  padding: 6px 4px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--nx-chat-muted);
+}
+
+.nexus-chat__picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 6px;
+  border: 0;
+  border-radius: var(--nx-chat-radius);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.nexus-chat__picker-row:hover {
+  background: color-mix(in srgb, var(--nx-chat-accent) 14%, transparent);
+}
+
+.nexus-chat__picker-row:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.nexus-chat__picker-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--nx-chat-accent) 40%, var(--nx-chat-surface));
+  color: var(--nx-chat-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+.nexus-chat__picker-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.nexus-chat__picker-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nexus-chat__picker-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--nx-chat-accent) 45%, transparent);
+  color: var(--nx-chat-accent);
+}
+
+.nexus-chat__picker-empty {
+  padding: 8px 4px;
+  font-size: 12px;
+  color: var(--nx-chat-muted);
+}
+
+.nexus-chat__picker-fieldset {
+  border: 1px solid var(--nx-chat-border);
+  border-radius: var(--nx-chat-radius);
+  padding: 6px 8px 8px;
+  margin: 0 0 8px;
+}
+
+.nexus-chat__picker-fieldset legend {
+  font-size: 11px;
+  color: var(--nx-chat-muted);
+  padding: 0 4px;
+}
+
+.nexus-chat__picker-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.nexus-chat__picker-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.nexus-chat__picker-invite {
+  text-align: center;
+}
+
+.nexus-chat__picker-invite code {
+  display: block;
+  margin: 6px 0;
+  padding: 6px;
+  border-radius: var(--nx-chat-radius);
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.nexus-chat__picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
 }

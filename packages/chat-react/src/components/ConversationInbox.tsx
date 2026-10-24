@@ -2,14 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { conversationHighlightsAgent } from '@nexus/chat-core';
 import {
+  conversationInitials,
   inboxPresenceStatus,
   inboxPresenceTitle,
   inboxScopeBadge,
+  identityNeedsSignIn,
+  identityStatusOf,
   isSubagentRow,
   latestInboxPerContact,
   matchesKindFilter,
   nestedSubagentsFor,
   partitionSubagentRows,
+  type IdentityStatus,
   type InboxRow,
   type KindFilter,
 } from '../inbox/inboxRows.js';
@@ -21,12 +25,10 @@ import {
 } from '../inbox/rowActions.js';
 import {
   IconArchive,
-  IconBriefcase,
   IconFilter,
   IconKebab,
   IconPlus,
   IconSearch,
-  IconUser,
 } from './icons.js';
 
 const FILTERS: Array<{ id: KindFilter; label: string }> = [
@@ -43,20 +45,27 @@ export type NewConversationKind = 'new-agent' | 'new-dm' | 'new-group';
 // Re-exported so existing consumers can keep importing the action type from here.
 export type { InboxRowAction } from '../inbox/rowActions.js';
 
-function initials(title: string): string {
-  const parts = title.trim().split(/\s+/).slice(0, 2);
-  return parts.map((part) => part[0]?.toUpperCase() || '').join('') || '?';
+/** Logo shown on an identity chip: org logo for a business identity, avatar for a private one. */
+function identityChipLogo(identity: ChatIdentitySession): string | null {
+  const src = identity.orgId ? identity.orgLogo : identity.avatarUrl;
+  return typeof src === 'string' && src.trim() ? src : null;
 }
 
-/** Identity chip title: the org/person label, with a sign-in hint on expiry. */
-function identityButtonTitle(identity: ChatIdentitySession, hidden: boolean): string {
+/**
+ * Identity chip title: the org/person label, with a sign-in hint on expiry
+ * (portal `identityButtonTitle`).
+ */
+function identityButtonTitle(identity: ChatIdentitySession, hidden: boolean, status: IdentityStatus): string {
   const name = identity.label || (identity.orgId ? 'Organization' : 'Private');
+  if (identityNeedsSignIn(status)) return `${name} · sign in again`;
   return hidden ? `${name} · hidden` : name;
 }
 
 export type ConversationInboxProps = {
   identities: ChatIdentitySession[];
   hiddenKeys: string[];
+  /** Per-identity sign-in health keyed by identity key (portal `identityStatus`). */
+  identityStatus?: Record<string, IdentityStatus> | null;
   rows: InboxRow[];
   loading: boolean;
   error: string | null;
@@ -311,14 +320,16 @@ export function ConversationInbox(props: ConversationInboxProps) {
         <div className="nexus-chat__identity-row" role="toolbar" aria-label="Identities">
           {props.identities.map((identity) => {
             const hidden = props.hiddenKeys.includes(identity.key);
-            const src = identity.orgId ? identity.orgLogo : identity.avatarUrl;
+            const status = identityStatusOf(identity, props.identityStatus);
+            const signIn = identityNeedsSignIn(status);
+            const src = identityChipLogo(identity);
             return (
               <button
                 key={identity.key}
                 type="button"
-                className={`nexus-chat__identity-chip${identity.orgId ? '' : ' nexus-chat__identity-chip--private'}${hidden ? ' is-hidden' : ''}`}
-                title={identityButtonTitle(identity, hidden)}
-                aria-label={identityButtonTitle(identity, hidden)}
+                className={`nexus-chat__identity-chip${identity.orgId ? '' : ' nexus-chat__identity-chip--private'}${hidden ? ' is-hidden' : ''}${signIn ? ' is-error' : ''}`}
+                title={identityButtonTitle(identity, hidden, status)}
+                aria-label={identityButtonTitle(identity, hidden, status)}
                 aria-pressed={!hidden}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -330,11 +341,17 @@ export function ConversationInbox(props: ConversationInboxProps) {
                     src={src}
                     alt=""
                     className="nexus-chat__identity-logo"
-                    fallback={initials(identity.label)}
+                    fallback={
+                      <span className="nexus-chat__identity-initials">
+                        {conversationInitials(identity.label)}
+                      </span>
+                    }
                   />
                 ) : (
                   <span className="nexus-chat__identity-logo">
-                    {identity.orgId ? <IconBriefcase size={12} /> : <IconUser size={12} />}
+                    <span className="nexus-chat__identity-initials">
+                      {conversationInitials(identity.label)}
+                    </span>
                   </span>
                 )}
               </button>
@@ -422,11 +439,11 @@ export function ConversationInbox(props: ConversationInboxProps) {
                       <CachedAvatarImage
                         src={row.avatarUrl}
                         alt=""
-                        fallback={initials(row.avatarName || row.title)}
+                        fallback={conversationInitials(row.avatarName || row.title)}
                       />
                     ) : (
                       <span className="nexus-chat__session-initials">
-                        {initials(row.avatarName || row.title)}
+                        {conversationInitials(row.avatarName || row.title)}
                       </span>
                     )}
                   </span>

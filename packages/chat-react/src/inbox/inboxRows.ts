@@ -26,12 +26,16 @@ export type InboxRow = {
   /** Org id of the identity that listed the row (null = private identity). */
   identityOrgId: string | null;
   conversationId: string;
+  /** Room id when the row is a room conversation (portal session `roomId`). */
+  roomId: string | null;
   contactId: string | null;
   /** Region virtual employee id when the list row included one. */
   virtualEmployeeId: string | null;
   agentId: string | null;
   title: string;
   summary: string;
+  /** Region `messageCount`: 0 means the thread is known to be empty. */
+  messageCount: number;
   avatarUrl: string | null;
   /** Name the avatar initials follow: the agent/contact, never the room title. */
   avatarName: string;
@@ -239,11 +243,13 @@ export function conversationToRow(
     orgId: textOf(raw, ['orgId', 'agentOrgId']) || null,
     identityOrgId: identity.orgId ?? null,
     conversationId,
+    roomId: textOf(raw, ['roomId']) || null,
     contactId: textOf(raw, ['contactId', 'agentId', 'peerId']) || null,
     virtualEmployeeId: textOf(raw, ['virtualEmployeeId', 'anxVeId']) || null,
     agentId: textOf(raw, ['agentId']) || null,
     title,
     summary: conversationSubtitleOf(raw, title),
+    messageCount: numberOr(raw, ['messageCount']),
     avatarUrl: inboxAvatarFromRow(raw),
     avatarName: textOf(raw, ['agentName']) || partnerNameOf(raw) || title,
     agentName: textOf(raw, ['agentName']) || null,
@@ -298,6 +304,19 @@ function asPresence(value: unknown): InboxPresence | null {
  * Presence dot for a row, mirroring the portal `SessionList.presenceStatus`:
  * a disabled agent is gray, an asset row reports its asset-node state, and a
  * plain row follows the shared activity connection.
+ *
+ * `contactStatus === 'available'` short-circuits to `online`: the region list
+ * already tells us the agent is reachable, and the shared activity socket is a
+ * best-effort subscription (a host that has not opened it, or one whose socket
+ * dropped, must not paint a live agent gray). The portal reaches the same
+ * conclusion because its activity subscriber reports a live conversation stream
+ * as `connected`; here the row itself carries the fact.
+ *
+ * `connection` accepts **both** vocabularies on purpose: the raw
+ * `ActivityConnectionStatus` (`connected`) and the derived
+ * `SessionListPresence` (`online`) that `useOutgoingQueue` already returns.
+ * The chat host passes the derived value, so matching only `connected` used to
+ * fall through to `offline` even while the socket was live.
  */
 export function inboxPresenceStatus(
   row: Pick<InboxRow, 'contactStatus' | 'assetPresence'>,
@@ -305,8 +324,9 @@ export function inboxPresenceStatus(
 ): InboxPresence {
   if (row.contactStatus === 'disabled') return 'disabled';
   if (row.assetPresence) return row.assetPresence;
+  if (row.contactStatus === 'available') return 'online';
   if (connection === 'error') return 'error';
-  if (connection === 'connected') return 'online';
+  if (connection === 'connected' || connection === 'online') return 'online';
   if (connection === 'connecting') return 'connecting';
   return 'offline';
 }
@@ -434,6 +454,33 @@ export function identityRowLogo(identity: {
 }): string | null {
   if (!identity.orgId) return identity.avatarUrl || null;
   return identity.orgLogo || null;
+}
+
+/**
+ * Per-identity sign-in health (portal `SessionList.identityStatus`).
+ *
+ * `expired` / `error` mark a chip whose token needs re-authentication. The
+ * desktop host has no membership-level status feed, so the map is optional and
+ * anything it does not mention is `ok`. An identity the host flagged itself
+ * (`expired` / `status`) is honored without the map.
+ */
+export type IdentityStatus = 'ok' | 'expired' | 'error';
+
+export function identityStatusOf(
+  identity: { key: string; expired?: boolean; status?: string | null },
+  statusMap?: Record<string, IdentityStatus> | null,
+): IdentityStatus {
+  const mapped = statusMap?.[identity.key];
+  if (mapped === 'expired' || mapped === 'error') return mapped;
+  if (identity.expired) return 'expired';
+  if (identity.status === 'error') return 'error';
+  if (identity.status === 'expired') return 'expired';
+  return 'ok';
+}
+
+/** True when an identity chip should read as needing sign-in again. */
+export function identityNeedsSignIn(status: IdentityStatus): boolean {
+  return status === 'expired' || status === 'error';
 }
 
 /** Keep inbox rows that belong to the locked virtual employee. */

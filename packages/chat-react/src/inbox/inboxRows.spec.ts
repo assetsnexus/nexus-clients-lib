@@ -305,6 +305,56 @@ describe('inbox rows', () => {
       expect(inboxPresenceTitle('offline')).toBe('Realtime offline');
     });
 
+    describe('inboxPresenceStatus semantics', () => {
+      const row = (over: Partial<InboxRow> = {}) =>
+        ({ contactStatus: null, assetPresence: null, ...over }) as Pick<
+          InboxRow,
+          'contactStatus' | 'assetPresence'
+        >;
+
+      it('renders disabled for an owner-disabled agent even when connected', () => {
+        expect(inboxPresenceStatus(row({ contactStatus: 'disabled' }), 'connected')).toBe('disabled');
+        expect(inboxPresenceStatus(row({ contactStatus: 'disabled' }), 'disconnected')).toBe('disabled');
+      });
+
+      it('passes asset presence through untouched', () => {
+        expect(inboxPresenceStatus(row({ assetPresence: 'edge-online' }), 'disconnected')).toBe('edge-online');
+        expect(inboxPresenceStatus(row({ assetPresence: 'both-offline' }), 'connected')).toBe('both-offline');
+        expect(inboxPresenceStatus(row({ assetPresence: 'registry-offline-edge-online' }), 'error')).toBe(
+          'registry-offline-edge-online',
+        );
+      });
+
+      it('reports online when the activity channel is connected', () => {
+        expect(inboxPresenceStatus(row(), 'connected')).toBe('online');
+      });
+
+      it('reports online for the derived SessionListPresence value the host passes', () => {
+        // `useOutgoingQueue` returns `sessionListPresence(...)`, i.e. `online`,
+        // not the raw `ActivityConnectionStatus` `connected`. Matching only the
+        // raw vocabulary painted every row gray while the socket was live.
+        expect(inboxPresenceStatus(row(), 'online')).toBe('online');
+      });
+
+      it('treats an available contact as online even with a disconnected activity channel', () => {
+        // Chosen semantics: the region list already says the agent is
+        // reachable, and the shared activity socket is best-effort (a host that
+        // never opened it, or one whose socket dropped, must not gray a live
+        // agent). `available` therefore outranks `disconnected`.
+        expect(inboxPresenceStatus(row({ contactStatus: 'available' }), 'disconnected')).toBe('online');
+        expect(inboxPresenceStatus(row({ contactStatus: 'available' }), 'connecting')).toBe('online');
+        expect(inboxPresenceStatus(row({ contactStatus: 'available' }), 'error')).toBe('online');
+        // ...but a disabled agent still wins over `available`.
+        expect(inboxPresenceStatus(row({ contactStatus: 'disabled' }), 'disconnected')).toBe('disabled');
+      });
+
+      it('falls back to the connection state for a contact with no status', () => {
+        expect(inboxPresenceStatus(row({ contactStatus: 'away' }), 'connecting')).toBe('connecting');
+        expect(inboxPresenceStatus(row({ contactStatus: 'away' }), 'error')).toBe('error');
+        expect(inboxPresenceStatus(row({ contactStatus: 'away' }), 'disconnected')).toBe('offline');
+      });
+    });
+
     it('derives the ownership badge from the agent scope and org, not the identity', () => {
       const platform = rowOf({ conversationId: 'c1', agentId: 'a', scope: 'global' });
       expect(inboxScopeBadge(platform)?.tone).toBe('platform');

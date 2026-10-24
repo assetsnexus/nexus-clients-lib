@@ -106,6 +106,9 @@ import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
 import type { ChatIdentitySession } from '../bridge/host-bridge.js';
 import { ConversationInbox, type InboxRowAction, type NewConversationKind } from './ConversationInbox.js';
+import { ContactPickerOverlay, type ContactPickerSelection } from '../inbox/ContactPickerOverlay.js';
+import { CreateRoomDialog, type CreateRoomSubmit } from '../inbox/CreateRoomDialog.js';
+import { startAgentThread, startDirectMessage, createGroupRoom, dmResumeIndex } from '../inbox/startConversation.js';
 import { filterInboxRowsForLockedAgent } from '../inbox/inboxRows.js';
 import { readAutoVoice, writeAutoVoice } from '../chrome/auto-voice.js';
 import { applyTextScaleToElement, readTextScaleDelta, writeTextScaleDelta } from '../chrome/text-scale.js';
@@ -125,7 +128,7 @@ import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { loadIdentityInbox, sendWithClient } from '../inbox/loadIdentityInbox.js';
 import type { InboxRow } from '../inbox/inboxRows.js';
 import { ownerContactIdForRow } from '../inbox/inboxRows.js';
-import { loadConversationHistory } from '../utils/openContactFlow.js';
+import { loadThreadHistory } from '../inbox/loadThreadHistory.js';
 import '../styles.css';
 
 export type NexusChatAppProps = {
@@ -513,7 +516,22 @@ export function NexusChatApp({
   // Server-paused one-click card (Plan-write approval / mode switch / gated
   // client tool). `getPendingPause` mirrors `state.pendingPause`.
   const pendingPause = state.pendingPause ?? null;
-  const [sidebarTab, setSidebarTab] = useState<'contacts' | 'rooms'>('contacts');
+  /**
+   * Sidebar entry-point panel under the conversation list (portal
+   * `#sidebar-main` keeps `session-list` always mounted; the directory and the
+   * rooms panel are *entry points*, not replacements for the list).
+   * `'none'` = list only.
+   */
+  const [sidebarTab, setSidebarTab] = useState<'none' | 'contacts' | 'rooms'>('none');
+  /** New-conversation surfaces (portal `contactPickerOpen` / `agentPickerOpen` / `createRoomOpen`). */
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
+  const [contactPickerOpen, setContactPickerOpen] = useState(false);
+  const [createRoomOpen, setCreateRoomOpen] = useState(false);
+  const [newConversationSaving, setNewConversationSaving] = useState(false);
+  const [newConversationError, setNewConversationError] = useState<string | null>(null);
+  const [roomInvite, setRoomInvite] = useState<{ token: string; expiresAt: string } | null>(null);
+  /** Contact ids with an existing DM room, so the DM picker can offer "Resume". */
+  const [dmResumableIds, setDmResumableIds] = useState<string[]>([]);
   const [sheetContactId, setSheetContactId] = useState<string | null>(null);
   const [route, setRoute] = useState<'chat' | 'scene' | 'admin'>('chat');
   const [voiceOpen, setVoiceOpen] = useState(false);
@@ -525,6 +543,19 @@ export function NexusChatApp({
   const [inboxLoading, setInboxLoading] = useState(false);
   const [hiddenIdentityKeys, setHiddenIdentityKeys] = useState<string[]>([]);
   const [activeInboxId, setActiveInboxId] = useState<string | null>(null);
+  /**
+   * Title/avatar of the row the user just opened. The region returns
+   * `title: null` for most agent DMs (the name comes from `agentName`), and the
+   * contact store may not have the row's VE/agent id yet — this keeps the
+   * header bound to the row the user clicked instead of a generic fallback.
+   */
+  const [selectedThread, setSelectedThread] = useState<{
+    title: string;
+    avatarUrl: string | null;
+    contactId: string | null;
+    conversationId: string | null;
+    roomId: string | null;
+  } | null>(null);
   /** Quickbar state: the Archive link swaps the list to archived threads. */
   const [inboxArchived, setInboxArchived] = useState(false);
   /** Composer preferences shared across panels and persisted to storage. */
@@ -625,6 +656,66 @@ export function NexusChatApp({
   const sheetContact = findChatContact(state.contacts, sheetContactId || '') || null;
   const conversationId = panel?.conversationId || state.conversationId;
   /**
+   * Presentation source for the header while a row is opening. The region
+   * returns `title: null` for most agent DMs (the name lives on `agentName`)
+   * and the contact store may not have the row's VE/agent id yet, so without
+   * this the header falls back to a generic "Nexus Chat" for a thread the user
+   * clearly just clicked. The row the user opened wins until the contact
+   * resolves.
+   */
+  const threadContact = useMemo(() => {
+    if (!selectedThread) return null;
+    const isAgent = Boolean(selectedThread.contactId);
+    return {
+      id: selectedThread.contactId || selectedThread.conversationId || '',
+      name: selectedThread.title,
+      type: (selectedThread.roomId ? 'group' : isAgent ? 'agent' : 'user') as
+        | 'agent'
+        | 'user'
+        | 'group',
+      avatarUrl: selectedThread.avatarUrl,
+      agentId: null,
+    };
+  }, [selectedThread]);
+  /**
+   * True while the row the user clicked is the panel's current target. A row
+   * opened from the list is the authority on its own title/avatar: the panel's
+   * `contactId` can still point at the *previous* agent (a room open does not
+   * clear it), and `findChatContact` would then hand the header the wrong name.
+   */
+  const rowTargetActive = useMemo(() => {
+    if (!selectedThread) return false;
+    const openConversation = panel?.conversationId || state.conversationId || '';
+    const openRoom = panel?.roomId || '';
+    if (!openConversation && !openRoom) return false;
+    if (selectedThread.conversationId && selectedThread.conversationId === openConversation) return true;
+    if (selectedThread.roomId && selectedThread.roomId === openRoom) return true;
+    return false;
+  }, [panel?.conversationId, panel?.roomId, selectedThread, state.conversationId]);
+  const headerContact = rowTargetActive
+    ? // The row's title wins; fall back to the resolved contact for a picture the
+      // row did not carry (portal `sessionAvatarUrl` precedence is the reverse,
+      // but the row is the only source that is guaranteed to be the open thread).
+      { ...threadContact, avatarUrl: threadContact?.avatarUrl || contact?.avatarUrl || null }
+    : contact || threadContact;
+  // Drop the row-derived header once the panel moves to another conversation
+  // (contact directory, deep link, companion popout) so a stale title cannot
+  // outlive the thread it described. The row's own open is in flight while the
+  // history/stream-init resolve, so a target that has not landed yet is not a
+  // mismatch — only a *different* landed target clears the binding.
+  useEffect(() => {
+    if (!selectedThread) return;
+    const openConversation = panel?.conversationId || state.conversationId || '';
+    const openRoom = panel?.roomId || '';
+    if (!openConversation && !openRoom) return;
+    if (rowTargetActive) return;
+    // A room row opens by roomId; a conversation row by conversationId. Only
+    // clear when the other kind of target actually took over the panel.
+    if (selectedThread.roomId && !openConversation) return;
+    if (selectedThread.conversationId && !openRoom) return;
+    setSelectedThread(null);
+  }, [panel?.conversationId, panel?.roomId, rowTargetActive, selectedThread, state.conversationId]);
+  /**
    * Row to mark in the sidebar. A row opened through the list sets
    * `activeInboxId`; a conversation opened elsewhere (contact directory,
    * companion popout, host deep link) only sets `conversationId`, so fall back
@@ -637,9 +728,9 @@ export function NexusChatApp({
   }, [activeInboxId, conversationId, visibleInbox]);
   const presentation = lockedEmbedPresentation({
     lockedAgent,
-    contactName: displayNameProp || contact?.name,
-    contactSelected: Boolean(contact),
-    serverAvatarUrl: contact?.avatarUrl,
+    contactName: displayNameProp || headerContact?.name,
+    contactSelected: Boolean(headerContact),
+    serverAvatarUrl: headerContact?.avatarUrl,
     hostAvatarUrl: avatarUrlProp,
     fallback: nexusUnavailable,
   });
@@ -862,6 +953,7 @@ export function NexusChatApp({
 
   useEffect(() => {
     if (!chrome.showContactsTab && chrome.showRoomsTab) setSidebarTab('rooms');
+    if (!chrome.showContactsTab && !chrome.showRoomsTab) setSidebarTab('none');
   }, [chrome.showContactsTab, chrome.showRoomsTab]);
 
   const openInboxRow = useCallback(
@@ -895,16 +987,39 @@ export function NexusChatApp({
         });
       }
       setActiveInboxId(row.id);
-      if (!row.conversationId || !client) return;
-      // Region list rows report `contactId: null` for agent DMs — the owner shows
-      // up as `virtualEmployeeId` (VE id) and/or the sidecar `agentId`. Resolve
-      // the owning contact (id, VE id, alias, agent id) before opening so the
-      // panel binds and host affordances (call / companion mode) stay available.
+      if (chrome.showConversationDrawer) setDrawerOpen(false);
+      // Bind the panel to the row's agent FIRST so the header/title, call and
+      // companion affordances resolve even while history is still loading — a
+      // slow or empty `messages.list` must never leave the click looking dead.
+      // The row itself is the title/avatar source of truth (portal parity: a
+      // leftover contact-store picture for the previous agent must not win).
       const ownerContactId = ownerContactIdForRow(row, (id) =>
         findChatContact(chat.getState().contacts, id),
       );
+      setSelectedThread({
+        title: row.title,
+        avatarUrl: row.avatarUrl,
+        contactId: ownerContactId ?? row.contactId ?? null,
+        conversationId: row.conversationId || null,
+        roomId: row.roomId,
+      });
+      if (row.roomId && !row.conversationId) {
+        chat.rehydrateTurns([], { roomId: row.roomId, detachStream: true });
+        try {
+          await chat.streamInit({ roomId: row.roomId });
+        } catch (error) {
+          setListError(error instanceof Error ? error.message : 'Could not open the room');
+        }
+        return;
+      }
+      if (!row.conversationId || !client) return;
       try {
-        await loadConversationHistory(client, chat, row.conversationId);
+        await loadThreadHistory({
+          chat,
+          client,
+          conversationId: row.conversationId,
+          expectsContent: row.messageCount > 0 || Boolean(row.summary),
+        });
         await chat.streamInit({ conversationId: row.conversationId, contactId: ownerContactId });
       } catch (error) {
         setListError(error instanceof Error ? error.message : 'Could not open conversation');
@@ -983,19 +1098,99 @@ export function NexusChatApp({
   );
 
   /**
-   * New-conversation menu. "Message agent" and "Direct message" both open the
-   * contacts directory (they differ only in what the directory emphasises), and
-   * a group starts from the rooms tab.
+   * New-conversation menu (portal `pickNew`). Each entry opens its own surface
+   * rather than only switching sidebar tabs:
+   *   - "Message agent"  → agent picker overlay (always a NEW thread)
+   *   - "Direct message" → DM/contact picker overlay (creates a `dm` room)
+   *   - "New group"      → create-room dialog
    */
   const handleNewConversation = useCallback(
     (kind: NewConversationKind) => {
+      setNewConversationError(null);
+      setRoomInvite(null);
       if (kind === 'new-group') {
-        if (chrome.showRoomsTab) setSidebarTab('rooms');
+        if (!chrome.showRoomsTab) return;
+        setCreateRoomOpen(true);
         return;
       }
-      setSidebarTab('contacts');
+      if (!chrome.showContactsTab) return;
+      if (kind === 'new-agent') {
+        setAgentPickerOpen(true);
+        return;
+      }
+      setContactPickerOpen(true);
+      // Label the people the user can resume a thread with; a failed index just
+      // means every row reads as a new conversation.
+      void dmResumeIndex(chat).then(setDmResumableIds).catch(() => setDmResumableIds([]));
     },
-    [chrome.showRoomsTab],
+    [chat, chrome.showContactsTab, chrome.showRoomsTab],
+  );
+
+  /** "Message agent" selection: always start a fresh thread with the agent. */
+  const handleAgentPickerSelect = useCallback(
+    async (selection: ContactPickerSelection) => {
+      setNewConversationSaving(true);
+      setNewConversationError(null);
+      try {
+        await startAgentThread(chat, selection.contact, { title: selection.name });
+        setAgentPickerOpen(false);
+        setActiveInboxId(null);
+        await reloadLists();
+      } catch (error) {
+        setNewConversationError(error instanceof Error ? error.message : 'Could not start the conversation');
+      } finally {
+        setNewConversationSaving(false);
+      }
+    },
+    [chat, reloadLists],
+  );
+
+  /**
+   * "Direct message" selection: resume the existing DM thread when there is one
+   * (so history is kept) and create the `dm` room otherwise. The picker's
+   * "Start a new conversation" checkbox forces a fresh thread (`forceNew`),
+   * matching the agent picker.
+   */
+  const handleContactPickerSelect = useCallback(
+    async (selection: ContactPickerSelection) => {
+      setNewConversationSaving(true);
+      setNewConversationError(null);
+      try {
+        await startDirectMessage(chat, selection.contact, {
+          title: selection.name,
+          forceNew: selection.forceNew,
+        });
+        setContactPickerOpen(false);
+        setActiveInboxId(null);
+        await reloadLists();
+      } catch (error) {
+        setNewConversationError(error instanceof Error ? error.message : 'Could not start the direct message');
+      } finally {
+        setNewConversationSaving(false);
+      }
+    },
+    [chat, reloadLists],
+  );
+
+  /** "New group" submit: create the room, then show an invite code or open it. */
+  const handleCreateRoomSubmit = useCallback(
+    async (payload: CreateRoomSubmit) => {
+      setNewConversationSaving(true);
+      setNewConversationError(null);
+      try {
+        const { roomId, inviteCode } = await createGroupRoom(chat, payload);
+        setActiveInboxId(null);
+        await reloadLists();
+        if (inviteCode) setRoomInvite({ token: inviteCode, expiresAt: '' });
+        else setCreateRoomOpen(false);
+        void roomId;
+      } catch (error) {
+        setNewConversationError(error instanceof Error ? error.message : 'Could not create the room');
+      } finally {
+        setNewConversationSaving(false);
+      }
+    },
+    [chat, reloadLists],
   );
 
   useEffect(() => {
@@ -1578,66 +1773,75 @@ export function NexusChatApp({
         <div className="nexus-chat__shell">
           {chrome.showSidebar && !collapsed && !listCollapsed ? (
             <aside className="nexus-chat__sidebar">
-              <div className="nexus-chat__tabs">
-                {chrome.showContactsTab ? (
-                  <button
-                    type="button"
-                    className={`nexus-chat__tab${sidebarTab === 'contacts' ? ' nexus-chat__tab--active' : ''}`}
-                    onClick={() => setSidebarTab('contacts')}
-                  >
-                    Contacts
-                  </button>
-                ) : null}
-                {chrome.showRoomsTab ? (
-                  <button
-                    type="button"
-                    className={`nexus-chat__tab${sidebarTab === 'rooms' ? ' nexus-chat__tab--active' : ''}`}
-                    onClick={() => setSidebarTab('rooms')}
-                  >
-                    Rooms
-                  </button>
-                ) : null}
-              </div>
-              {chrome.showContactsTab && sidebarTab !== 'rooms' ? (
-                <>
-                  <ConversationInbox
-                    identities={identities}
-                    hiddenKeys={hiddenIdentityKeys}
-                    rows={visibleInbox}
-                    loading={inboxLoading}
-                    error={listError}
-                    activeRowId={activeInboxRowId}
-                    highlightAgentId={chrome.highlightAgentId}
-                    activityConnectionStatus={outgoing.presence}
-                    pendingApprovalConversationIds={pendingApprovalConversationIds}
-                    archivedActive={inboxArchived}
-                    onToggleIdentity={(key) =>
-                      setHiddenIdentityKeys((prev) =>
-                        prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
-                      )
-                    }
-                    onOpen={(row) => void openInboxRow(row)}
-                    onRetry={() => void reloadLists()}
-                    onOpenArchived={() => setInboxArchived((prev) => !prev)}
-                    onNewConversation={handleNewConversation}
-                    onRowAction={(action, row) => void handleRowAction(action, row)}
-                  />
-                  {chrome.showNewDm ? (
-                    <ContactList
-                      chat={chat}
-                      contacts={state.contacts}
-                      conversationRows={conversationRows}
-                      activeContactId={activeContactId}
-                      highlightAgentId={chrome.highlightAgentId}
-                      slots={slots}
-                      onActionSheet={
-                        chrome.showContactSheet ? (id) => setSheetContactId(id) : undefined
+              {chrome.showContactsTab || chrome.showRoomsTab ? (
+                <div className="nexus-chat__tabs">
+                  {chrome.showContactsTab ? (
+                    <button
+                      type="button"
+                      className={`nexus-chat__tab${sidebarTab === 'contacts' ? ' nexus-chat__tab--active' : ''}`}
+                      aria-pressed={sidebarTab === 'contacts'}
+                      onClick={() =>
+                        setSidebarTab((tab) => (tab === 'contacts' ? 'none' : 'contacts'))
                       }
-                    />
+                    >
+                      Contacts
+                    </button>
                   ) : null}
-                </>
-              ) : chrome.showRoomsTab ? (
-                <RoomsPanel chat={chat} />
+                  {chrome.showRoomsTab ? (
+                    <button
+                      type="button"
+                      className={`nexus-chat__tab${sidebarTab === 'rooms' ? ' nexus-chat__tab--active' : ''}`}
+                      aria-pressed={sidebarTab === 'rooms'}
+                      onClick={() => setSidebarTab((tab) => (tab === 'rooms' ? 'none' : 'rooms'))}
+                    >
+                      Rooms
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              <ConversationInbox
+                identities={identities}
+                hiddenKeys={hiddenIdentityKeys}
+                rows={visibleInbox}
+                loading={inboxLoading}
+                error={listError}
+                activeRowId={activeInboxRowId}
+                highlightAgentId={chrome.highlightAgentId}
+                activityConnectionStatus={outgoing.presence}
+                pendingApprovalConversationIds={pendingApprovalConversationIds}
+                archivedActive={inboxArchived}
+                onToggleIdentity={(key) =>
+                  setHiddenIdentityKeys((prev) =>
+                    prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+                  )
+                }
+                onOpen={(row) => void openInboxRow(row)}
+                onRetry={() => void reloadLists()}
+                onOpenArchived={() => setInboxArchived((prev) => !prev)}
+                onNewConversation={handleNewConversation}
+                onRowAction={(action, row) => void handleRowAction(action, row)}
+              />
+              {/* Entry points below the list (portal `#sidebar-main`): the
+                  directory starts a NEW DM, the rooms panel resumes a room. */}
+              {sidebarTab === 'contacts' && chrome.showNewDm ? (
+                <div className="nexus-chat__sidebar-entry" aria-label="Contacts">
+                  <ContactList
+                    chat={chat}
+                    contacts={state.contacts}
+                    conversationRows={conversationRows}
+                    activeContactId={activeContactId}
+                    highlightAgentId={chrome.highlightAgentId}
+                    slots={slots}
+                    onActionSheet={
+                      chrome.showContactSheet ? (id) => setSheetContactId(id) : undefined
+                    }
+                  />
+                </div>
+              ) : null}
+              {sidebarTab === 'rooms' && chrome.showRoomsTab ? (
+                <div className="nexus-chat__sidebar-entry" aria-label="Rooms">
+                  <RoomsPanel chat={chat} />
+                </div>
               ) : null}
             </aside>
           ) : null}
@@ -1956,6 +2160,48 @@ export function NexusChatApp({
         client={client}
         isAdmin={isAdmin}
         currentUserId={currentUserId}
+      />
+
+      {/* New-conversation surfaces (portal host mounts both pickers + the
+          create-room dialog as siblings of the panel). */}
+      <ContactPickerOverlay
+        open={agentPickerOpen}
+        mode="agent"
+        contacts={state.contacts}
+        allowName
+        saving={newConversationSaving}
+        error={newConversationError}
+        onClose={() => setAgentPickerOpen(false)}
+        onSelect={(selection) => void handleAgentPickerSelect(selection)}
+      />
+      <ContactPickerOverlay
+        open={contactPickerOpen}
+        mode="dm"
+        contacts={state.contacts}
+        allowName
+        resumableContactIds={dmResumableIds}
+        saving={newConversationSaving}
+        error={newConversationError}
+        onClose={() => setContactPickerOpen(false)}
+        onSelect={(selection) => void handleContactPickerSelect(selection)}
+      />
+      <CreateRoomDialog
+        open={createRoomOpen}
+        contacts={state.contacts}
+        saving={newConversationSaving}
+        error={newConversationError}
+        inviteToken={roomInvite?.token}
+        inviteExpiresAt={roomInvite?.expiresAt}
+        onCancel={() => {
+          setCreateRoomOpen(false);
+          setRoomInvite(null);
+          setNewConversationError(null);
+        }}
+        onDone={() => {
+          setCreateRoomOpen(false);
+          setRoomInvite(null);
+        }}
+        onSubmit={(payload) => void handleCreateRoomSubmit(payload)}
       />
     </div>
   );
