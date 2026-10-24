@@ -1849,14 +1849,39 @@ export function NexusChatApp({
 
           <main className="nexus-chat__main">
             {voiceOpen && voiceView === 'background' ? (
-              <div className="nexus-chat__callbar" role="status">
+              /*
+               * `Background / Transcript / Avatar` view switcher. `role="status"`
+               * was wrong: it made the bar an ARIA live region, and a live region
+               * must not own focusable controls (every view change would
+               * re-announce the whole bar, and the buttons read as passive status
+               * text rather than toggles). `role="group"` + `aria-label` is the
+               * correct container for a labelled set of toggle buttons, and it
+               * matches the VoiceLayout control row (`role="group"`,
+               * "Voice controls"). All three views are rendered so the user can
+               * both see which view is active (`aria-pressed` + `.is-on`) and
+               * switch back to `Background`, which previously had no control.
+               */
+              <div className="nexus-chat__callbar" role="group" aria-label="Call controls">
                 <span>{presentation.title}</span>
-                <button type="button" className="nexus-chat__btn" onClick={() => setVoiceView('transcript')}>
-                  Transcript
-                </button>
-                <button type="button" className="nexus-chat__btn" onClick={() => setVoiceView('avatar')}>
-                  Avatar
-                </button>
+                {(
+                  [
+                    ['background', 'Background'],
+                    ['transcript', 'Transcript'],
+                    ['avatar', 'Avatar'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`nexus-chat__icon-btn nexus-chat__icon-btn--text${voiceView === id ? ' is-on' : ''}`}
+                    aria-pressed={voiceView === id}
+                    aria-label={label}
+                    title={label}
+                    onClick={() => setVoiceView(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             ) : null}
             {sessionError ? (

@@ -2997,10 +2997,11 @@
 }
 
 /*
- * Compact every view toggle in the bar, whether it still uses the legacy
- * `nexus-chat__btn` (36px) or the compact `.nexus-chat__icon-btn--text`
- * primitive the bar is being migrated to. `min-height: 0` defeats the global
- * `.nexus-chat__btn { min-height: 36px; }` rule, so the whole bar is one row.
+ * Keep every control in the bar on one 26px row. Belt-and-braces with the
+ * `.nexus-chat__icon-btn--text` sizing above: `height` + `min-height: 0` defeat
+ * both the global `.nexus-chat__btn { min-height: 36px; }` rule and the 30px
+ * default of the icon-btn primitive, so a defensive legacy button could never
+ * wrap the bar onto a second line.
  */
 .nexus-chat__callbar button {
   height: 26px;
@@ -3009,12 +3010,6 @@
   border-radius: 8px;
   font-size: 12px;
   line-height: 1;
-}
-
-.nexus-chat__callbar .nexus-chat__view-toggle {
-  height: 26px;
-  padding: 0 9px;
-  font-size: 12px;
 }
 
 .nexus-chat__header-avatar {
