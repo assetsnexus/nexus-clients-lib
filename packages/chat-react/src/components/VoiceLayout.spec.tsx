@@ -10,7 +10,7 @@
  *    no assistant turn, and surface an explanatory notice instead.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { ChatContact, ChatTurn, NexusChat } from '@nexus/chat-core';
 import { VoiceLayout } from './VoiceLayout.js';
@@ -226,6 +226,81 @@ describe('VoiceLayout hideWakeIndicator', () => {
     const chat = makeFakeChat();
     const { container } = mount({ chat, hideWakeIndicator: true });
     expect(container.querySelector('[data-nexus-surface="wake-mic"]')).toBeNull();
+  });
+});
+
+describe('VoiceLayout host callbacks never drive a render loop', () => {
+  /**
+   * Host that mirrors the reported voice state into React state, exactly like the
+   * companion window (`onVoiceState={(s) => setVoiceStatus({...})}`). It uses
+   * inline arrows so their identity changes every render.
+   */
+  function mountMirroringHost(chat: NexusChat): { container: HTMLElement; renders: () => number } {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    let renders = 0;
+
+    function Host(): React.ReactElement {
+      const [, setVoiceStatus] = useState({ active: false, status: 'idle' });
+      renders += 1;
+      return (
+        <VoiceLayout
+          chat={chat}
+          contact={AGENT_CONTACT}
+          turns={[]}
+          initialLayout="avatar"
+          // Inline arrows: new identity every render (the trigger).
+          onVoiceState={(state) => setVoiceStatus({ active: state.active, status: state.status })}
+          onVoiceActive={() => undefined}
+        />
+      );
+    }
+
+    act(() => {
+      root.render(<Host />);
+    });
+    mounted.push({
+      container,
+      root,
+      unmount: () => {
+        act(() => root.unmount());
+        container.remove();
+      },
+    });
+    return { container, renders: () => renders };
+  }
+
+  /**
+   * Regression: `onVoiceState`/`onVoiceActive` used to sit in the reporting
+   * effect's dependency array. With inline-arrow hosts the effect re-ran on every
+   * render, the host stored a fresh object literal in state (React never bails
+   * out on a new object), and the window span forever — "Maximum update depth
+   * exceeded" (~159 errors / 6s idle in the live companion), with the 3D avatar
+   * stuck and every control janky. The callbacks are now refs and emission is
+   * change-gated.
+   */
+  it('does not loop when the host stores the payload in state', () => {
+    const chat = makeFakeChat();
+    const { renders } = mountMirroringHost(chat);
+    // A bounded, small render count proves it settled instead of looping
+    // (the buggy version renders without bound / throws the React warning).
+    expect(renders()).toBeLessThan(10);
+  });
+
+  it('still reports a real voice-state transition to the host', () => {
+    const chat = makeFakeChat();
+    const onVoiceState = vi.fn();
+    mount({ chat, onVoiceState });
+
+    const before = onVoiceState.mock.calls.length;
+    act(() => {
+      chat.setSurface({ status: 'live', callSid: 'CA1', muted: false });
+    });
+    expect(onVoiceState.mock.calls.length).toBeGreaterThan(before);
+    expect(onVoiceState).toHaveBeenLastCalledWith(
+      expect.objectContaining({ active: true, status: 'live' }),
+    );
   });
 });
 

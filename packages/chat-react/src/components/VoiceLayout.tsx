@@ -354,20 +354,35 @@ export function VoiceLayout({
     return () => window.removeEventListener('message', onMsg);
   }, [chat, contact, onView, onVoiceActive, surface.callSid]);
 
+  // Report voice state to the host. The callbacks are held in refs (not effect
+  // deps) because hosts commonly pass inline arrows — `onVoiceState={(s) =>
+  // setVoiceStatus(s)}`. Depending on their identity would re-run this effect on
+  // every render, and a host that stores the payload in state (a fresh object
+  // literal every time, so React never bails out) would re-render forever
+  // ("Maximum update depth exceeded"). Emission is also change-gated: the
+  // callback is a change notification, not a per-render heartbeat, so a host can
+  // set state from it without risking a feedback loop.
+  const onVoiceStateRef = useRef(onVoiceState);
+  onVoiceStateRef.current = onVoiceState;
+  const onVoiceActiveRef = useRef(onVoiceActive);
+  onVoiceActiveRef.current = onVoiceActive;
+  const lastVoiceReport = useRef<string | null>(null);
+
   useEffect(() => {
     const live = surface.status === 'live' || surface.status === 'connecting';
-    onVoiceState?.({
-      active: live,
-      muted: Boolean(surface.muted),
-      status: surface.status,
-      errorMessage: notice || surface.errorMessage || null,
-    });
-    onVoiceActive?.(live);
+    const errorMessage = notice || surface.errorMessage || null;
+    const muted = Boolean(surface.muted);
+    const signature = `${live}|${muted}|${surface.status}|${errorMessage ?? ''}`;
+    if (signature !== lastVoiceReport.current) {
+      lastVoiceReport.current = signature;
+      onVoiceStateRef.current?.({ active: live, muted, status: surface.status, errorMessage });
+      onVoiceActiveRef.current?.(live);
+    }
     const current = voiceMode.get();
     if (current.active !== live) {
       voiceMode.set({ active: live });
     }
-  }, [notice, onVoiceActive, onVoiceState, surface.errorMessage, surface.muted, surface.status, voiceMode]);
+  }, [notice, surface.errorMessage, surface.muted, surface.status, voiceMode]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
