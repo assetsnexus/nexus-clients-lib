@@ -88,6 +88,8 @@ export function probePhoneStt(timeoutMs = 1500): Promise<boolean> {
 export function startWebRecognition(lang: string): {
   stop: () => string;
   abort: () => void;
+  /** Last recogniser error (e.g. `network`, `audio-capture`), or null. */
+  error: () => string | null;
 } {
   const host = hostWindow();
   const Ctor = host.SpeechRecognition || host.webkitSpeechRecognition;
@@ -97,6 +99,7 @@ export function startWebRecognition(lang: string): {
   rec.continuous = true;
   rec.interimResults = true;
   let said = '';
+  let lastError: string | null = null;
   rec.onresult = (event) => {
     const parts: string[] = [];
     const results = event.results;
@@ -108,6 +111,10 @@ export function startWebRecognition(lang: string): {
     if (parts.length) said = parts.join(' ').trim();
   };
   rec.onerror = (event) => {
+    // Keep the last real error so the composer can report *why* the hold came
+    // back empty instead of a generic "nothing was recognised". `aborted` is our
+    // own cancel, not a failure.
+    if (event?.error && event.error !== 'aborted') lastError = event.error;
     if (event?.error && event.error !== 'aborted' && event.error !== 'no-speech') {
       console.warn('anx.chat.dictation web speech error', event.error);
     }
@@ -129,6 +136,7 @@ export function startWebRecognition(lang: string): {
         /* already stopped */
       }
     },
+    error: () => lastError,
   };
 }
 

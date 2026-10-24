@@ -15,7 +15,6 @@ import {
   transcribeOrNull,
   uploadOptsForChatFileDestination,
 } from '@nexus/chat-core';
-import { holdSttCommands } from '../dictation/holdStt.js';
 import type { ChatSlots } from '../slots.js';
 import { appendComposerDraft } from '../utils/composerDraft.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
@@ -39,6 +38,11 @@ import {
 } from '../dictation/phoneStt.js';
 import { blobToInlineAudio, startMicCapture } from '../dictation/recordAudio.js';
 import {
+  decideDictationCapture,
+  DictationFailure,
+  transcriptionFailureCode,
+} from '../dictation/dictationOutcome.js';
+import {
   IconMic,
   IconPaperclip,
   IconPhone,
@@ -49,6 +53,12 @@ import {
 } from './icons.js';
 import { reasoningEffortLabel } from '../chrome/reasoning-slider.js';
 import { spokenTurnKey } from '../chrome/auto-voice.js';
+
+/** Error text for the composer banner, preserving the failure copy when present. */
+function errorMessageOf(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return error == null ? '' : String(error);
+}
 
 export type ComposerProps = {
   chat: NexusChat;
@@ -305,97 +315,134 @@ export function Composer({
                 rec.abort();
                 return;
               }
-              appendTranscript(rec.stop());
+              const said = rec.stop();
+              appendTranscript(said);
+              // A recogniser error (mic blocked, service unreachable, nothing
+              // heard) is only known once the hold has ended.
+              const decision = decideDictationCapture({
+                liveText: said,
+                blobBytes: 0,
+                captureMs: 0,
+                rail: 'phone',
+                hasSpeechModel: false,
+                recognitionError: rec.error(),
+              });
+              if (decision.action === 'fail') throw new DictationFailure(decision.code);
             },
           };
         } else {
-        const requestId = `stt_${Date.now()}`;
-        const pending = startNativeRecognition(requestId);
-        pending.catch((error) => {
-          console.warn('anx.chat.dictation native speech ended', error);
-        });
-        sessionRef.current = {
-          cancel: () => cancelNativeRecognition(requestId),
-          finish: async (commit) => {
-            if (!commit) {
-              cancelNativeRecognition(requestId);
-              return;
-            }
-            stopNativeRecognition(requestId);
-            appendTranscript(await pending);
-          },
-        };
+          const requestId = `stt_${Date.now()}`;
+          const pending = startNativeRecognition(requestId);
+          pending.catch((error) => {
+            console.warn('anx.chat.dictation native speech ended', error);
+          });
+          sessionRef.current = {
+            cancel: () => cancelNativeRecognition(requestId),
+            finish: async (commit) => {
+              if (!commit) {
+                cancelNativeRecognition(requestId);
+                return;
+              }
+              stopNativeRecognition(requestId);
+              const said = await pending;
+              appendTranscript(said);
+              const decision = decideDictationCapture({
+                liveText: said,
+                blobBytes: 0,
+                captureMs: 0,
+                rail: 'phone',
+                hasSpeechModel: false,
+              });
+              if (decision.action === 'fail') throw new DictationFailure(decision.code);
+            },
+          };
         }
       } else if (dictationMethod === 'phone') {
-        throw new Error(dictationNote || 'Speech recognition is not available on this device.');
+        throw new DictationFailure('speech-unavailable', { message: dictationNote });
       } else {
-      let liveText = '';
-      let liveSocket: { send: (frame: ArrayBuffer) => void; close: () => void } | null = null;
-      if (sttLive && commandClient && sttModelId && dictationMethod !== 'direct') {
-        const session = await createLiveSttSession(commandClient, { modelId: sttModelId });
-        const endpoint = Array.isArray(session.endpoints) ? session.endpoints[0] : null;
-        if (session.token && endpoint) {
-          liveSocket = connectLiveSttWebSocket({
-            wsUrl: endpoint,
-            token: session.token,
-            modelId: session.modelId || sttModelId,
-            onPartial: (text) => {
-              liveText = text;
-            },
-            onFinal: (text) => {
-              liveText = `${liveText} ${text}`.trim();
-            },
-          });
+        let liveText = '';
+        let liveSocket: { send: (frame: ArrayBuffer) => void; close: () => void } | null = null;
+        if (sttLive && commandClient && sttModelId && dictationMethod !== 'direct') {
+          const session = await createLiveSttSession(commandClient, { modelId: sttModelId });
+          const endpoint = Array.isArray(session.endpoints) ? session.endpoints[0] : null;
+          if (session.token && endpoint) {
+            liveSocket = connectLiveSttWebSocket({
+              wsUrl: endpoint,
+              token: session.token,
+              modelId: session.modelId || sttModelId,
+              onPartial: (text) => {
+                liveText = text;
+              },
+              onFinal: (text) => {
+                liveText = `${liveText} ${text}`.trim();
+              },
+            });
+          }
         }
-      }
-      const capture = await startMicCapture({
-        onChunk: liveSocket ? (frame) => liveSocket?.send(frame) : undefined,
-      });
-      sessionRef.current = {
-        cancel: () => {
-          capture.cancel();
-          liveSocket?.close();
-        },
-        finish: async (commit) => {
-          if (!commit) {
+        const capture = await startMicCapture({
+          onChunk: liveSocket ? (frame) => liveSocket?.send(frame) : undefined,
+        });
+        sessionRef.current = {
+          cancel: () => {
             capture.cancel();
             liveSocket?.close();
-            return;
-          }
-          const blob = await capture.stop();
-          liveSocket?.close();
-          if (!blob.size && !liveText.trim()) throw new Error('The recording was empty.');
-          if (dictationMethod === 'direct') {
-            const audio = await blobToInlineAudio(blob, 'voice-message.webm');
-            const result = await chat.sendMessage('Voice message', {
-              conversationId: conversationId || undefined,
-              contactId: contactId || undefined,
-              attachments: [audio],
-              ...(modelOverride ? { modelOverride } : {}),
-              ...(reasoningEffort ? { reasoningEffort } : {}),
-              bypassFallback: true,
+          },
+          finish: async (commit) => {
+            if (!commit) {
+              capture.cancel();
+              liveSocket?.close();
+              return;
+            }
+            const captureMs = capture.elapsedMs();
+            const blob = await capture.stop();
+            liveSocket?.close();
+            const decision = decideDictationCapture({
+              liveText,
+              blobBytes: blob.size,
+              captureMs,
+              rail: dictationMethod === 'direct' ? 'direct' : 'model',
+              hasSpeechModel: Boolean(commandClient && sttModelId),
             });
-            if (!result.ok) throw new Error(result.message || 'Could not send the recording.');
-            return;
-          }
-          if (!commandClient || !sttModelId) {
-            throw new Error(dictationNote || 'No speech model is available on this subscription.');
-          }
-          setHoldPhase('working');
-          const said = liveText.trim();
-          const commands = holdSttCommands({ live: Boolean(liveSocket), hasLiveText: Boolean(said) });
-          if (said) {
-            appendTranscript(said);
-            return;
-          }
-          if (!commands.includes('anx.inference.stt.create')) {
-            throw new Error('The speech model returned no transcript.');
-          }
-          const transcribed = await transcribeOrNull(commandClient, { modelId: sttModelId, audioBlob: blob });
-          if (!transcribed.text) throw new Error('The speech model returned no transcript.');
-          appendTranscript(transcribed.text);
-        },
-      };
+            if (decision.action === 'fail') {
+              throw new DictationFailure(
+                decision.code,
+                decision.code === 'no-speech-model' ? { message: dictationNote } : {},
+              );
+            }
+            if (decision.action === 'insert') {
+              appendTranscript(decision.text);
+              return;
+            }
+            if (decision.action === 'send-audio') {
+              const audio = await blobToInlineAudio(blob, 'voice-message.webm');
+              const result = await chat.sendMessage('Voice message', {
+                conversationId: conversationId || undefined,
+                contactId: contactId || undefined,
+                attachments: [audio],
+                ...(modelOverride ? { modelOverride } : {}),
+                ...(reasoningEffort ? { reasoningEffort } : {}),
+                bypassFallback: true,
+              });
+              if (!result.ok) throw new Error(result.message || 'Could not send the recording.');
+              return;
+            }
+            setHoldPhase('working');
+            let transcribed: Awaited<ReturnType<typeof transcribeOrNull>>;
+            try {
+              transcribed = await transcribeOrNull(commandClient!, {
+                modelId: sttModelId!,
+                audioBlob: blob,
+              });
+            } catch (error) {
+              // Keep the server detail in the console; show the user actionable copy.
+              const detail = errorMessageOf(error);
+              console.warn('anx.chat.dictation transcribe failed', detail);
+              throw new DictationFailure(transcriptionFailureCode(error));
+            }
+            if (!transcribed.text?.trim()) throw new DictationFailure('no-transcript');
+            appendTranscript(transcribed.text);
+          },
+        };
       }
       const early = releasedRef.current;
       if (early && sessionRef.current) {
@@ -407,7 +454,7 @@ export function Composer({
     } catch (error) {
       sessionRef.current = null;
       setHoldPhase('idle');
-      const message = error instanceof Error ? error.message : 'Could not start the microphone.';
+      const message = errorMessageOf(error) || 'Could not start the microphone.';
       console.warn('anx.chat.dictation start failed', message);
       setActionError(message);
     }
@@ -421,6 +468,7 @@ export function Composer({
     dictationNote,
     grantMissing,
     modelOverride,
+    reasoningEffort,
     sttLive,
     sttModelId,
   ]);
@@ -448,7 +496,15 @@ export function Composer({
   const onHoldPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    // Capture keeps the release on this button even if the pointer drifts off it.
+    // A synthetic pointer (and some assistive input) has no active pointer to
+    // capture, and the browser throws — that must not abort the recording before
+    // it starts, so it is best-effort.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      /* no active pointer to capture; the pointermove/up handlers still fire */
+    }
     void beginHold();
   };
 
