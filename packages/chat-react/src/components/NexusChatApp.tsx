@@ -893,7 +893,24 @@ export function NexusChatApp({
     if (!chrome.showConversationList) return;
     const listLock = chrome.conversationList === 'drawer' ? lockedAgent : null;
     setListError(null);
-    if (identities.length && client) {
+    const fanOut = Boolean(identities.length && client);
+    // The agent/contact directory is the one list every sidebar surface reads
+    // (avatar merge, contact list, DM/agent pickers). `loadContacts` unions the
+    // owned catalog (`virtual-employees.list`) with the global public-facing one
+    // (`virtual-employees.list-public` — Veyla/Varic, returned to ANY
+    // authenticated caller) and the region scopes both to the identity of each
+    // request. It used to run ONLY on the single-identity branch, so a host that
+    // passes `identities` (desktop, webview, portal) never populated the
+    // directory and global public agents were invisible. Always load it first.
+    try {
+      await chat.loadContacts();
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'Could not load contacts');
+      // Single-identity hosts abort the list, matching prior behaviour; a
+      // multi-identity host still renders the conversation rows it can.
+      if (!fanOut) return;
+    }
+    if (fanOut) {
       setInboxLoading(true);
       try {
         const loaded = await loadIdentityInbox({
@@ -915,12 +932,6 @@ export function NexusChatApp({
     }
     setInboxLoading(true);
     try {
-      try {
-        await chat.loadContacts();
-      } catch (error) {
-        setListError(error instanceof Error ? error.message : 'Could not load contacts');
-        return;
-      }
       try {
         const rows = await chat.listConversations({
           status: inboxArchived ? 'archived' : 'active',
