@@ -45,6 +45,13 @@ export type ClientToolRegistration = {
 export type ClientToolFunctionSchema = {
   name: string;
   description: string;
+  /**
+   * Declared access. Carried on the bound schema so the server keeps its own
+   * `read`-vs-`write` classification after a `bind_client_tool` round-trip —
+   * without it a `read` discoverable tool is treated as `write` and pauses for
+   * approval in Plan mode. Optional: absent means `write` (the safe default).
+   */
+  access?: ChatClientToolAccess;
   parameters: {
     type: string;
     properties?: Record<string, unknown>;
@@ -141,6 +148,23 @@ export class ClientToolRegistry {
     return this.tools.has(normalizeName(name));
   }
 
+  /**
+   * Resolve an entry by exact name, or by wire form (dots ↔ underscores).
+   * Mirrors `isIndexedClientTool`, so a name that passes the index gate always
+   * resolves to the same tool here instead of returning null.
+   */
+  private resolveEntry(name: string) {
+    const n = normalizeName(name);
+    if (!n) return undefined;
+    const exact = this.tools.get(n);
+    if (exact) return exact;
+    const wire = n.replace(/\./g, '_');
+    for (const [key, entry] of this.tools.entries()) {
+      if (key.replace(/\./g, '_') === wire) return entry;
+    }
+    return undefined;
+  }
+
   get(name: string): ClientToolRegistration | undefined {
     return this.tools.get(normalizeName(name));
   }
@@ -197,11 +221,14 @@ export class ClientToolRegistry {
    * null when the name is unknown / not registered.
    */
   schemaFor(name: string): ClientToolFunctionSchema | null {
-    const entry = this.tools.get(normalizeName(name));
+    const entry = this.resolveEntry(name);
     if (!entry) return null;
     return {
       name: entry.descriptor.name,
       description: entry.descriptor.description || `Client tool ${entry.descriptor.name}`,
+      // Preserve the declared access across the bind round-trip so a `read`
+      // discoverable tool does not become a plan-mode write after binding.
+      access: clientToolAccessOf(entry.descriptor),
       parameters: {
         type: 'object',
         properties: {},
