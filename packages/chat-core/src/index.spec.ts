@@ -806,6 +806,129 @@ describe('chat-core', () => {
     expect(hit?.name).toBe('Nexus');
   });
 
+  it('merges the owned and global-public catalogs by agent id (owned wins)', async () => {
+    const sent: string[] = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          sent.push(command);
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            // Rune is an org-scoped agent the caller owns (configurable).
+            return {
+              ok: true,
+              data: [{ employeeId: 've-rune', name: 'Rune', scope: 'org', orgId: 'org-1' }],
+            };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            // The region returns the same org agent again plus the global rows.
+            // `list-public` is the ONLY catalog that carries global agents
+            // (Veyla/Varic for every authenticated caller; Nox for staff only).
+            return {
+              ok: true,
+              data: [
+                { employeeId: 've-rune', name: 'Rune (public copy)', scope: 'org', orgId: 'org-1' },
+                { employeeId: 've-veyla', name: 'Veyla', scope: 'global', isPublicFacing: true },
+                { employeeId: 've-varic', name: 'Varic', scope: 'global', isPublicFacing: true },
+                // Staff-only by region config. The client is not an audience
+                // gate: it must pass the row through, never re-filter it.
+                { employeeId: 've-nox', name: 'Nox', scope: 'global', isPublicFacing: false },
+              ],
+            };
+          }
+          if (command === 'anx.communicate.contacts.asset-agents.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+
+    // Both catalogs are requested — the union is the whole fix.
+    expect(sent).toContain('anx.ai-agents.virtual-employees.list');
+    expect(sent).toContain('anx.ai-agents.virtual-employees.list-public');
+
+    const contacts = chat.getState().contacts;
+    const byId = new Map(contacts.map((c) => [c.id, c]));
+
+    // Dedupe by agent id: the org listing wins, no duplicate row ships.
+    expect(contacts.filter((c) => c.id === 've-rune')).toHaveLength(1);
+    expect(byId.get('ve-rune')?.canConfigure).toBe(true);
+    expect(byId.get('ve-rune')?.name).toBe('Rune');
+
+    // Global public-facing agents surface to a normal authenticated caller.
+    expect(byId.get('ve-veyla')).toMatchObject({ type: 'agent', scope: 'global', canConfigure: false });
+    expect(byId.get('ve-varic')).toMatchObject({ type: 'agent', scope: 'global', canConfigure: false });
+
+    // Staff-only global rows arrive only when the region decides the caller is
+    // staff; the client keeps them (it cannot and must not re-derive staff).
+    expect(byId.get('ve-nox')).toMatchObject({ type: 'agent', scope: 'global', canConfigure: false });
+  });
+
+  it('keeps org-scoped agents unchanged when list-public is empty', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [{ id: 'user-alice', name: 'Alice', type: 'user' }] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return {
+              ok: true,
+              data: [{ employeeId: 've-rune', name: 'Rune', scope: 'org', orgId: 'org-1' }],
+            };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            return { ok: true, data: [] };
+          }
+          if (command === 'anx.communicate.contacts.asset-agents.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const contacts = chat.getState().contacts;
+    expect(contacts.find((c) => c.id === 've-rune')).toMatchObject({
+      type: 'agent',
+      scope: 'org',
+      canConfigure: true,
+    });
+    expect(contacts.find((c) => c.id === 'user-alice')).toMatchObject({ type: 'user' });
+  });
+
+  it('surfaces a global-public agent whose display name is absent without showing its id', async () => {
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return { ok: true, data: [] };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            // No name/title/publicRole: `mapVeAgents` must use a neutral
+            // literal, never the raw employee id.
+            return { ok: true, data: [{ employeeId: 've-nameless', scope: 'global' }] };
+          }
+          if (command === 'anx.communicate.contacts.asset-agents.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+    const hit = chat.getState().contacts.find((c) => c.id === 've-nameless');
+    expect(hit?.name).toBe('Agent');
+    expect(hit?.name).not.toBe('ve-nameless');
+  });
+
   it('binds /ai-agents/ve HTTP media paths immediately without media.get', async () => {
     const sent: string[] = [];
     const chat = createNexusChat({
