@@ -59,6 +59,33 @@ describe('ClientToolRegistry access preservation', () => {
     expect(schema).toMatchObject({ name: 'app.xcamp.suggestion.show', access: 'read' });
   });
 
+  it('resolves a wire-form name in `has` and `get`', () => {
+    // Regression: the server names a discoverable tool by its wire spelling on
+    // the `client_tool_request`, but the host registered the dotted name. The
+    // exact-match `has`/`get` missed it, so the pause found no handler and the
+    // suggestion card never rendered even though the tool "succeeded".
+    const registry = makeRegistry();
+    expect(registry.has('app_xcamp_suggestion_show')).toBe(true);
+    expect(registry.get('app_xcamp_suggestion_show')?.descriptor.name).toBe(
+      'app.xcamp.suggestion.show',
+    );
+    expect(registry.has('app_xcamp_nope')).toBe(false);
+    expect(registry.get('app_xcamp_nope')).toBeUndefined();
+  });
+
+  it('carries access on the pinned schema too', () => {
+    // A pinned `read` tool must not become a plan-mode write for lack of an
+    // `access` field on the `browserFunctionCalls` entry.
+    const registry = new ClientToolRegistry();
+    registry.register({
+      name: 'app.xcamp.pinned.read',
+      description: 'pinned read tool',
+      access: 'read',
+      handler: () => ({ ok: true }),
+    });
+    expect(registry.pinnedSchemas()[0]).toMatchObject({ access: 'read' });
+  });
+
   it('returns null for an unknown tool', () => {
     expect(makeRegistry().schemaFor('app.xcamp.nope')).toBeNull();
     expect(makeRegistry().bindResult('app.xcamp.nope')).toBeNull();

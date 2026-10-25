@@ -325,7 +325,11 @@
   overflow: auto;
   padding: 8px;
   border-radius: 6px;
-  background: #0a0c10;
+  /* Derived from the active text token, not a fixed dark literal: the host
+     theme controls `--nx-chat-text` (the app passes its light/dark glass text),
+     so a hardcoded #0a0c10 block renders black-on-black in a light theme. */
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
+  color: var(--nx-chat-text);
 }
 
 .nexus-chat-markdown-table-wrap {
@@ -449,7 +453,10 @@
   line-height: 1.4;
   padding: 6px 8px;
   border-radius: 6px;
-  background: #0a0c10;
+  /* Was a hardcoded #0a0c10 with `color: var(--nx-chat-text)` — in a light
+     theme `--nx-chat-text` is dark ink, so the JSON body rendered black on
+     black. Both foreground and background now follow the host surface token. */
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
   color: var(--nx-chat-text);
 }
 
@@ -1584,7 +1591,10 @@
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
-  background: #0a0c10;
+  /* Same rule as the tool-result/json blocks: derive the plate from the active
+     text token so a light host does not render dark-on-dark. */
+  background: color-mix(in srgb, var(--nx-chat-text) 8%, transparent);
+  color: var(--nx-chat-text);
   padding: 8px;
   border-radius: 6px;
   max-height: 100%;
@@ -1737,13 +1747,18 @@
 }
 
 .nexus-chat__context-panel {
-  background: #1a1d27;
-  color: #e8eaef;
-  border: 1px solid #3a4154;
+  /* Theme-driven, so the popup is readable on both a dark chat surface and a
+     light host (the app passes light glass tokens). Was a hardcoded dark
+     literal (#1a1d27 on #e8eaef), which went dark-on-dark in the light theme. */
+  background: var(--nx-chat-surface);
+  color: var(--nx-chat-text);
+  border: 1px solid var(--nx-chat-border);
 }
 
 .nexus-chat__context-panel .nexus-chat__donut-ring {
-  stroke: rgba(255, 255, 255, 0.22);
+  /* Neutral track derived from the panel's own foreground, so it is visible on
+     light and dark alike — was a fixed rgba(255,255,255,.22) white ring. */
+  stroke: color-mix(in srgb, var(--nx-chat-text) 22%, transparent);
 }
 
 .nexus-chat__context-cost {

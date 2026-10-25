@@ -141,6 +141,14 @@ export type NexusChatAppProps = {
   collapsed?: boolean;
   className?: string;
   /**
+   * Hand the resolved `NexusChat` controller to the host once it exists (either
+   * the `chat` prop or the internally-built controller). Lets a host render
+   * chrome that needs to read live panel state — tool runs, turns, usage —
+   * without forcing it to build the controller itself. Called on every
+   * identity change of the controller and `null`-safe to ignore.
+   */
+  onChatReady?: (chat: NexusChat) => void;
+  /**
    * `column` is one thread and composer. Context, cost, and model selection
    * stay behind a collapsed Advanced control. No contact chrome.
    */
@@ -331,11 +339,14 @@ export function NexusChatApp({
   nexusLogin = null,
   permissionSummary = null,
   workingOnLedger,
+  onChatReady,
 }: NexusChatAppProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const onErrorRef = useRef(onError);
   const sessionErrorRef = useRef<(message: string | null) => void>(() => {});
   onErrorRef.current = onError;
+  const onChatReadyRef = useRef(onChatReady);
+  onChatReadyRef.current = onChatReady;
   const draftSetterRef = useRef<((text: string) => void) | null>(null);
   const pendingDraftRef = useRef('');
   const features = useMemo(
@@ -472,6 +483,13 @@ export function NexusChatApp({
   useEffect(() => {
     chat.setHostPageContext(pageContext ?? null);
   }, [chat, pageContext]);
+
+  // Publish the resolved controller to the host so sibling chrome (e.g. a Hub
+  // Companion aside reading live tool runs) can subscribe to panel state
+  // without building the controller itself.
+  useEffect(() => {
+    onChatReadyRef.current?.(chat);
+  }, [chat]);
 
   // Swap page tools on a route change without rebuilding the controller.
   useEffect(() => {

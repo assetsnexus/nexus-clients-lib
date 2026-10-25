@@ -79,6 +79,34 @@ export function clientToolAvailabilityOf(descriptor: {
 }
 
 /**
+ * Resolve a registration out of a plain map by exact name **or** wire form.
+ *
+ * Dots and underscores are the same separator: the wire names a tool by its
+ * `bind_client_tool` spelling (`app_xcamp_suggestion_show`) while the registry
+ * holds the dotted host spelling (`app.xcamp.suggestion.show`), so an
+ * exact-string lookup silently misses and the handler never runs.
+ *
+ * This mirrors `ClientToolRegistry.resolveEntry` for callers that hold the
+ * registry's `map()` rather than the registry itself (notably
+ * `selectClientToolHandler`), so a `client_tool_request` that arrives in wire
+ * form resolves to the same handler an exact-name lookup would.
+ */
+export function resolveClientToolEntry<T>(
+  name: unknown,
+  registered: Map<string, T>,
+): T | undefined {
+  const n = normalizeName(name);
+  if (!n) return undefined;
+  const exact = registered.get(n);
+  if (exact) return exact;
+  const wire = n.replace(/\./g, '_');
+  for (const [key, entry] of registered.entries()) {
+    if (key.replace(/\./g, '_') === wire) return entry;
+  }
+  return undefined;
+}
+
+/**
  * Trim + de-dupe concept slugs, dropping anything that is not a non-empty
  * string. Returns undefined when nothing valid remains, so an empty list never
  * rides the index payload (mirrors the server-side normalisation).
@@ -145,7 +173,13 @@ export class ClientToolRegistry {
   }
 
   has(name: string): boolean {
-    return this.tools.has(normalizeName(name));
+    return (
+      this.tools.has(normalizeName(name)) ||
+      // A wire-form name (`app_xcamp_suggestion_show`) must resolve to the tool
+      // registered under its dotted host name, or the pause that names it in
+      // wire form reports "no handler" and the tool silently never runs.
+      this.resolveEntry(name) !== undefined
+    );
   }
 
   /**
@@ -154,19 +188,14 @@ export class ClientToolRegistry {
    * resolves to the same tool here instead of returning null.
    */
   private resolveEntry(name: string) {
-    const n = normalizeName(name);
-    if (!n) return undefined;
-    const exact = this.tools.get(n);
-    if (exact) return exact;
-    const wire = n.replace(/\./g, '_');
-    for (const [key, entry] of this.tools.entries()) {
-      if (key.replace(/\./g, '_') === wire) return entry;
-    }
-    return undefined;
+    return resolveClientToolEntry(name, this.tools);
   }
 
   get(name: string): ClientToolRegistration | undefined {
-    return this.tools.get(normalizeName(name));
+    // Form-insensitive for the same reason as `has`: the wire may name a
+    // discoverable tool by its underscore spelling after its `bind_client_tool`
+    // round-trip, and the descriptor (access, parameters) must still be found.
+    return this.resolveEntry(name);
   }
 
   get size(): number {
@@ -190,6 +219,10 @@ export class ClientToolRegistry {
       out.push({
         name: descriptor.name,
         description: descriptor.description || `Client tool ${descriptor.name}`,
+        // Carry the declared access here too, for the same reason the bind
+        // result does: without it the server treats a `read` pinned tool as
+        // `write` and wrongly pauses it for approval in Plan mode.
+        access: clientToolAccessOf(descriptor),
         parameters: {
           type: 'object',
           properties: {},

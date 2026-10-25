@@ -122,6 +122,10 @@ describe('chat-core', () => {
     ]);
     expect(selectClientToolHandler('app.cart.get', registered, pageTools)).toBeTypeOf('function');
     expect(selectClientToolHandler('nope', registered, pageTools)).toBeUndefined();
+    // A wire-form name resolves to the same registered (dotted) tool: the
+    // `client_tool_request` names a discoverable tool with underscores, and an
+    // exact map lookup silently missed it, so the handler never ran.
+    expect(selectClientToolHandler('app_cart_get', registered, pageTools)).toBeTypeOf('function');
   });
 
   it('exposes setPageTools so a host can swap the open screen', () => {

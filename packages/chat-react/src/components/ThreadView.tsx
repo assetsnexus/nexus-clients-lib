@@ -1,9 +1,17 @@
-import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import type { ChatTurn, IoDescriptor, NexusChat } from '@nexus/chat-core';
 import { isPostedFromVoice, isVoiceBubble } from '@nexus/chat-core';
 import { CHAT_MARKDOWN_ROOT_CLASS, renderChatMarkdown } from '../markdown.js';
 import { ToolTimeline } from './ToolTimeline.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
+
+/**
+ * How close to the bottom (in px) the thread must be for a new turn to keep
+ * following the conversation. Past this the reader has scrolled up on purpose
+ * and we leave the viewport alone until they come back down. Same "stick to
+ * bottom while near the bottom" convention the portal uses.
+ */
+export const THREAD_STICK_TO_BOTTOM_PX = 80;
 
 export type ThreadViewProps = {
   turns: ChatTurn[];
@@ -52,11 +60,60 @@ export function ThreadView({
   conversationId,
   onOpenFile,
 }: ThreadViewProps) {
+  const threadRef = useRef<HTMLDivElement>(null);
+  // Whether the reader is "at" the bottom. Starts true so a freshly-opened
+  // conversation (or the first render) lands at the bottom, then follows the
+  // reader's own scrolling.
+  const stickRef = useRef(true);
+  // The conversation whose turns are currently rendered, so a *switch* can be
+  // told apart from an append within the same conversation.
+  const conversationRef = useRef<string | null>(conversationId ?? null);
+
+  useLayoutEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const switched = conversationRef.current !== (conversationId ?? null);
+    conversationRef.current = conversationId ?? null;
+    // Jump on open/switch, and whenever the reader is already at the bottom;
+    // never yank the viewport away from someone reading further up.
+    if (switched || stickRef.current) {
+      el.scrollTop = el.scrollHeight;
+      stickRef.current = true;
+    }
+  }, [turns, streaming, conversationId]);
+
+  // Follow streamed growth (an assistant turn with no new array identity yet,
+  // e.g. tool cards appended inside a turn) too, once per frame.
+  useEffect(() => {
+    const el = threadRef.current;
+    if (!el || !streaming || !stickRef.current) return;
+    let raf = 0;
+    const follow = () => {
+      if (threadRef.current && stickRef.current) {
+        threadRef.current.scrollTop = threadRef.current.scrollHeight;
+        raf = requestAnimationFrame(follow);
+      }
+    };
+    raf = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(raf);
+  }, [streaming]);
+
   if (!turns.length && !streaming) {
     return <div className="nexus-chat__empty">{empty ?? 'Select a contact to start chatting.'}</div>;
   }
   return (
-    <div className="nexus-chat__thread" role="log" aria-live="polite">
+    <div
+      ref={threadRef}
+      className="nexus-chat__thread"
+      role="log"
+      aria-live="polite"
+      onScroll={() => {
+        const el = threadRef.current;
+        if (!el) return;
+        stickRef.current =
+          el.scrollHeight - el.scrollTop - el.clientHeight <= THREAD_STICK_TO_BOTTOM_PX;
+      }}
+    >
       {turns.map((turn) => {
         const isUser = turn.role === 'user';
         const isStreamingBubble =

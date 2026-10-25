@@ -163,6 +163,7 @@ import {
   localClientToolIndexFingerprint,
   normalizePendingPauseKind,
   parsePendingPauseCard,
+  resolveClientToolEntry,
   type ClientToolIndexEntry,
   type PendingPauseCard,
   type PendingPauseKind,
@@ -628,6 +629,7 @@ export {
   clientToolAvailabilityOf,
   isIndexedClientTool,
   localClientToolIndexFingerprint,
+  resolveClientToolEntry,
 } from './tools/index.js';
 export type {
   ScheduleCheckBackResult,
@@ -1300,7 +1302,12 @@ export function selectClientToolHandler(
   registered: Map<string, { descriptor: ChatToolDescriptor; handler: (args: unknown) => unknown }>,
   pageTools: PageToolSource | null | undefined,
 ): ((args: Record<string, unknown>, context: PageToolExecuteContext) => unknown) | undefined {
-  const entry = registered.get(name);
+  // Form-insensitive: a discoverable tool is named by its wire spelling
+  // (`app_xcamp_suggestion_show`) on the `client_tool_request`, but the host
+  // registered it under the dotted name (`app.xcamp.suggestion.show`). An exact
+  // `Map.get` missed it, the pause found no handler, and the tool never ran —
+  // so a registered tool that passes the wire form must still win here.
+  const entry = resolveClientToolEntry(name, registered);
   if (entry) return (args) => entry.handler(args);
   if (pageTools?.canExecute?.(name)) return (args, context) => pageTools.execute(name, args, context);
   return undefined;
