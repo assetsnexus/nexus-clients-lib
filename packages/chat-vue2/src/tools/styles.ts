@@ -1,3 +1,86 @@
+/**
+ * Shared custom scrollbar for the Vue chat surfaces (conversation / contacts /
+ * rooms list, thread, mention menu, approvals, pickers, modals).
+ *
+ * Same treatment as `@nexus/chat-react` (`packages/chat-react/src/styles.css`):
+ * a thin, rounded, quiet-at-rest thumb that firms up on hover, themed through
+ * the `--nx-scrollbar-*` tokens. Those tokens fall back to the `--nx-chat-*`
+ * palette when a host defines it (React embed) and to the portal's light
+ * Paper-Dashboard colors otherwise, so there are no hardcoded colors and light
+ * and dark hosts both stay correct.
+ *
+ * Lives in this injected stylesheet (not the scoped SFC blocks) because the
+ * containers are spread across several components and the portal consumes the
+ * package — one copy keeps the surfaces from drifting apart. The rules hang off
+ * the panel root with a descendant wildcard (mirroring `@nexus/chat-react`) so
+ * scoped-SFC class hashes and future containers are covered for free;
+ * `.nx-scroll` opts in anything rendered outside the panel.
+ *
+ * The two branches are `@supports`-gated on purpose: Chromium >= 121 lets the
+ * standard `scrollbar-width` / `scrollbar-color` properties win over
+ * `::-webkit-scrollbar`, so setting them unconditionally would silently replace
+ * the custom bar with a native thin one in the desktop app / portal.
+ */
+const SCROLLBAR_SURFACES = ':is(.nexus-chat-panel *, .nx-scroll)';
+
+export const SCROLLBAR_CSS = `
+${SCROLLBAR_SURFACES} {
+  --nx-scrollbar-size: 10px;
+  --nx-scrollbar-radius: 999px;
+  --nx-scrollbar-thumb: var(
+    --nx-chat-scrollbar-thumb,
+    color-mix(in srgb, var(--nx-chat-muted, #a49e93) 45%, transparent)
+  );
+  --nx-scrollbar-thumb-hover: var(
+    --nx-chat-scrollbar-thumb-hover,
+    color-mix(in srgb, var(--nx-chat-accent, #51cbce) 60%, var(--nx-chat-muted, #a49e93))
+  );
+  --nx-scrollbar-track: transparent;
+  --nx-scrollbar-corner: transparent;
+}
+
+/* Firefox / engines without the WebKit pseudo-elements. */
+@supports not selector(::-webkit-scrollbar) {
+  ${SCROLLBAR_SURFACES} {
+    scrollbar-width: thin;
+    scrollbar-color: var(--nx-scrollbar-thumb) var(--nx-scrollbar-track);
+  }
+  ${SCROLLBAR_SURFACES}:hover {
+    scrollbar-color: var(--nx-scrollbar-thumb-hover) var(--nx-scrollbar-track);
+  }
+}
+
+/* Chromium / Electron / Safari. */
+@supports selector(::-webkit-scrollbar) {
+  ${SCROLLBAR_SURFACES}::-webkit-scrollbar {
+    width: var(--nx-scrollbar-size);
+    height: var(--nx-scrollbar-size);
+  }
+  ${SCROLLBAR_SURFACES}::-webkit-scrollbar-track { background: var(--nx-scrollbar-track); }
+  ${SCROLLBAR_SURFACES}::-webkit-scrollbar-corner { background: var(--nx-scrollbar-corner); }
+  ${SCROLLBAR_SURFACES}::-webkit-scrollbar-thumb {
+    background: var(--nx-scrollbar-thumb);
+    border-radius: var(--nx-scrollbar-radius);
+    /* Transparent border + padding-box clip floats the thumb as a pill inside
+       the gutter instead of filling it edge-to-edge like a raw OS bar. */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ${SCROLLBAR_SURFACES}:hover::-webkit-scrollbar-thumb { background: var(--nx-scrollbar-thumb-hover); }
+}
+
+/* Reserve the gutter on the vertical list/panel surfaces so a bar appearing or
+   disappearing cannot reflow the list. */
+:is(
+  .nexus-chat-panel__messages,
+  .nexus-chat-panel__sidebar,
+  .nexus-chat-panel__approvals,
+  .nx-scroll
+) {
+  scrollbar-gutter: stable;
+}
+`;
+
 /** Inject once into the document for package tool widgets (Vue hosts without SFC CSS). */
 export const TOOL_WIDGET_CSS = `
 .nexus-tool-timeline { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
@@ -726,10 +809,11 @@ export const TOOL_WIDGET_CSS = `
 .nexus-chat-markdown pre { font-size: 11px; overflow-x: auto; }
 .nexus-chat-markdown code { font-size: 11px; }
 .nexus-chat-markdown-table-wrap { overflow-x: auto; max-width: 100%; }
+${SCROLLBAR_CSS}
 `;
 
 let injectedVersion: string | null = null;
-const STYLE_VERSION = 'ask-choice-readable-v1';
+const STYLE_VERSION = 'ask-choice-readable-v2-scrollbars';
 
 export function ensureToolWidgetStyles(): void {
   if (typeof document === 'undefined') return;

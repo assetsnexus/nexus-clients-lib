@@ -3564,3 +3564,114 @@
   gap: 6px;
   margin-top: 8px;
 }
+
+/* ---------------------------------------------------------------------------
+   Custom scrollbars
+   One themed treatment for every scrolling surface in the chat UI:
+   conversation/inbox list, contacts list, rooms list, the thread, pickers,
+   overlays, sheets, code blocks and the model menus.
+
+   The rules hang off the chat root (`.nexus-chat`) with a descendant wildcard,
+   so every scroll container — today's and any added later — is covered without
+   a hand-maintained selector list that could drift. Anything rendered outside
+   that root opts in with the `.nx-scroll` utility class (the Vue packages hang
+   the same rules off their own `.nexus-chat-panel` root; portal dialogs use
+   `.nx-scroll`).
+
+   Chromium/Electron — the desktop app, the app webview and the portal — paints
+   the `::-webkit-scrollbar-*` pseudo-elements; Firefox (and any engine without
+   them) gets the standard `scrollbar-width` / `scrollbar-color` fallback. All
+   colours derive from the `--nx-chat-*` tokens through the `--nx-scrollbar-*`
+   override hooks, so light and dark hosts and accent overrides carry over
+   instead of hardcoding colours. Thin, rounded, quiet at rest and a touch more
+   prominent while the pointer is over the list.
+   --------------------------------------------------------------------------- */
+
+/* Standard properties, for engines without the WebKit scrollbar pseudo-elements
+   (Firefox). Chromium would ignore this branch anyway, but gating it keeps the
+   two code paths from fighting over the same bar. */
+@supports not selector(::-webkit-scrollbar) {
+  :is(.nexus-chat *, .nx-scroll) {
+    scrollbar-width: thin;
+    scrollbar-color: var(
+        --nx-scrollbar-thumb,
+        color-mix(in srgb, var(--nx-chat-muted, #8b919e) 45%, transparent)
+      )
+      var(--nx-scrollbar-track, transparent);
+  }
+
+  :is(.nexus-chat *, .nx-scroll):hover {
+    scrollbar-color: var(
+        --nx-scrollbar-thumb-hover,
+        color-mix(in srgb, var(--nx-chat-accent, #5b8def) 60%, var(--nx-chat-muted, #8b919e))
+      )
+      var(--nx-scrollbar-track, transparent);
+  }
+}
+
+/* WebKit path: Chromium / Electron (desktop app, app webview) and Safari. */
+@supports selector(::-webkit-scrollbar) {
+  :is(.nexus-chat *, .nx-scroll)::-webkit-scrollbar {
+    width: var(--nx-scrollbar-size, 10px);
+    height: var(--nx-scrollbar-size, 10px);
+  }
+
+  :is(.nexus-chat *, .nx-scroll)::-webkit-scrollbar-track {
+    background: var(--nx-scrollbar-track, transparent);
+  }
+
+  :is(.nexus-chat *, .nx-scroll)::-webkit-scrollbar-corner {
+    background: var(--nx-scrollbar-corner, transparent);
+  }
+
+  :is(.nexus-chat *, .nx-scroll)::-webkit-scrollbar-thumb {
+    background: var(
+      --nx-scrollbar-thumb,
+      color-mix(in srgb, var(--nx-chat-muted, #8b919e) 45%, transparent)
+    );
+    border-radius: var(--nx-scrollbar-radius, 999px);
+    /* Transparent border + `padding-box` clip floats the thumb as a pill inside
+       the gutter instead of filling it edge-to-edge like a raw OS bar. */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  /* Slightly more prominent whenever the pointer is anywhere over the scroll
+     container, not only over the thumb itself. */
+  :is(.nexus-chat *, .nx-scroll):hover::-webkit-scrollbar-thumb {
+    background: var(
+      --nx-scrollbar-thumb-hover,
+      color-mix(in srgb, var(--nx-chat-accent, #5b8def) 60%, var(--nx-chat-muted, #8b919e))
+    );
+  }
+}
+
+/* Reserve the scrollbar gutter on the vertical list/panel surfaces so a bar
+   appearing or disappearing cannot reflow the list. Horizontal strips are
+   deliberately excluded — a phantom gutter under a sideways row is pure noise,
+   and the composer textarea should not gain one either. */
+:is(
+  .nexus-chat__list,
+  .nexus-chat__inbox-list,
+  .nexus-chat__sidebar-entry,
+  .nexus-chat__thread,
+  .nexus-chat__column-thread,
+  .nexus-chat__voice-pane,
+  .nexus-chat__viewer-body,
+  .nexus-chat__viewer-sheet,
+  .nexus-chat__admin-page,
+  .nexus-chat__sheet,
+  .nexus-chat__workspace-popup,
+  .nexus-chat__config-sheet,
+  .nexus-chat__context-panel,
+  .nexus-chat__picker-body,
+  .nexus-chat__picker-checklist,
+  .nexus-chat__mention-menu,
+  .nexus-chat__subagents-overlay,
+  .nexus-chat__session-nest,
+  .nexus-chat__model-list,
+  .nexus-chat-model-picker-list,
+  .nx-scroll
+) {
+  scrollbar-gutter: stable;
+}
