@@ -4987,6 +4987,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       try {
         closeSocket();
         let acceptStreamTokens = false;
+        // Order matters: `stream-init` MINTS the token into the resolver and the
+        // handshake CONSUMES it (`singleUse: true` on the gateway). The paused
+        // turn's token was already spent when its socket opened, so connecting
+        // first re-presented a used jti and the gateway answered
+        // `ALREADY_USED` — the resumed turn's output had no live socket and the
+        // host never saw the injected client-tool request. Mint first, then
+        // connect, exactly as `send` / `attachLiveGeneration` already do.
+        await streamInit({ conversationId });
+
         const wsConnected = await streamResolver
           .connectWebSocket({
             onMessage: (ev) => {
@@ -5138,7 +5147,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           })
           .catch(() => false);
 
-        await streamInit({ conversationId });
+        // `stream-init` already ran above, before the socket was opened — see the
+        // ordering note there. Re-running it here would replace the resolver's
+        // token with one nobody consumed while the live socket kept the spent one.
 
         const result = (await opts.client.send('anx.communicate.client-tool.result', {
           conversationId,
