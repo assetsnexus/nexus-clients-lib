@@ -707,6 +707,8 @@ import {
   workingOnRunsFromTurns,
   permissionSummaryIsEmpty,
   buildPermissionSummary,
+  resolveConversationLabel,
+  UNTITLED_CONVERSATION_LABEL,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
 import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, WorkingOnStrip, PermissionSummaryCard, PendingPauseCardWidget } from '../tools';
@@ -990,7 +992,10 @@ export default {
         (row) => row && (row.conversationId === parentId || row.id === parentId),
       );
       if (!hit) return null;
-      return hit.title || hit.participantLabel || hit.customName || hit.name || null;
+      // Shared precedence so a parent row never surfaces a raw conversation id
+      // as its name (the region resolves `displayTitle` for exactly that).
+      const label = resolveConversationLabel(hit);
+      return label === UNTITLED_CONVERSATION_LABEL ? null : label;
     },
     panelFromChat() {
       if (!this.chat) return null;
@@ -1056,18 +1061,18 @@ export default {
       );
       const panelName = this.resolvedPanel.name || this.resolvedPanel.contactName;
       const contactName = this.contactRecord && this.contactRecord.name;
-      // Prefer a human name over an id/UUID that was mistakenly stored as panel.name.
-      const panelLooksLikeId =
-        panelName &&
-        (panelName === this.resolvedPanel.contactId ||
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(panelName)));
-      return (
-        (room && room.title) ||
-        contactName ||
-        (!panelLooksLikeId && panelName) ||
-        contactName ||
-        'Chat'
-      );
+      // Shared precedence — region `displayTitle`, then the room title, then the
+      // contact/agent name, then a stored panel name, then a neutral literal. A
+      // raw id/UUID is never a label, so the panel's own id and any internal-id
+      // shape fall through to 'Chat'.
+      const label = resolveConversationLabel({
+        displayTitle: this.resolvedPanel.displayTitle,
+        title: (room && room.title) || this.resolvedPanel.title,
+        name: contactName || panelName,
+        agentName: this.resolvedPanel.agentName,
+        conversationId: this.resolvedPanel.contactId,
+      });
+      return label === UNTITLED_CONVERSATION_LABEL ? 'Chat' : label;
     },
     contactAvatarUrl() {
       return resolveConversationAvatarUrl(this.contactRecord, this.resolvedPanel);

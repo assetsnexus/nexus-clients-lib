@@ -367,7 +367,13 @@
 </template>
 
 <script>
-import { collectSubAgentRuns, visibleSubAgentStripRuns, formatTurnSenderLine } from '@nexus/chat-core';
+import {
+  collectSubAgentRuns,
+  visibleSubAgentStripRuns,
+  formatTurnSenderLine,
+  resolveConversationLabel,
+  UNTITLED_CONVERSATION_LABEL,
+} from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
 import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, PendingPauseCardWidget } from '../tools';
 import GroupRoomLeaveSection from './GroupRoomLeaveSection.vue';
@@ -504,7 +510,10 @@ export default {
         (row) => row && (row.conversationId === parentId || row.id === parentId),
       );
       if (!hit) return null;
-      return hit.title || hit.participantLabel || hit.customName || hit.name || null;
+      // Shared precedence so a parent row never surfaces a raw conversation id
+      // as its name (the region resolves `displayTitle` for exactly that).
+      const label = resolveConversationLabel(hit);
+      return label === UNTITLED_CONVERSATION_LABEL ? null : label;
     },
     panelFromChat() {
       if (!this.chat) return null;
@@ -543,12 +552,18 @@ export default {
       const room = (this.rooms || []).find(
         (entry) => entry.id === this.resolvedPanel.roomId || entry.id === this.resolvedPanel.contactId,
       );
-      return (
-        (room && room.title) ||
-        (this.contactRecord && this.contactRecord.name) ||
-        this.resolvedPanel.contactId ||
-        'Chat'
-      );
+      // Shared precedence: the resolved room title, the contact name, the
+      // region's `displayTitle`, then a neutral literal. A raw id is never a
+      // label (the region resolves `displayTitle` instead of exposing
+      // `1792316062792-nm26u6zve`), so the id falls through to 'Chat'.
+      const label = resolveConversationLabel({
+        displayTitle: this.resolvedPanel.displayTitle,
+        title: (room && room.title) || this.resolvedPanel.title,
+        name: this.contactRecord && this.contactRecord.name,
+        agentName: this.resolvedPanel.agentName,
+        conversationId: this.resolvedPanel.contactId,
+      });
+      return label === UNTITLED_CONVERSATION_LABEL ? 'Chat' : label;
     },
     activeRoom() {
       const roomId = this.resolvedPanel.roomId;

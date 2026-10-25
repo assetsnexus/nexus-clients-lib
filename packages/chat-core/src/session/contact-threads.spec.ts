@@ -69,6 +69,21 @@ describe('historyForContact', () => {
     ];
     expect(historyForContact(rows, 've-1').map((h) => h.conversationId)).toEqual(['b', 'c', 'a']);
   });
+
+  it('surfaces the region-resolved displayTitle + agentName on each row', () => {
+    const rows = [
+      {
+        conversationId: 'c1',
+        virtualEmployeeId: 've-1',
+        title: null,
+        displayTitle: 'Rune',
+        agentName: 'Rune',
+        lastActivityAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
+    const [row] = historyForContact(rows, 've-1');
+    expect(row).toMatchObject({ displayTitle: 'Rune', agentName: 'Rune', conversationId: 'c1' });
+  });
 });
 
 describe('createContactThreadApi', () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ChatRoomDetail, ChatRoomSummary, NexusChat } from '@nexus/chat-core';
+import { resolveConversationLabel, type ChatRoomDetail, type ChatRoomSummary, type NexusChat } from '@nexus/chat-core';
 
 export function RoomsPanel({ chat }: { chat: NexusChat }) {
   const [rooms, setRooms] = useState<ChatRoomSummary[]>([]);
@@ -58,7 +58,9 @@ export function RoomsPanel({ chat }: { chat: NexusChat }) {
           onClick={() => void loadDetail(room)}
         >
           <div className="nexus-chat__contact-meta">
-            <div className="nexus-chat__contact-name">{room.name || room.title || room.id}</div>
+            <div className="nexus-chat__contact-name">
+              {resolveConversationLabel(room as unknown as Record<string, unknown>)}
+            </div>
             <div style={{ fontSize: 12, color: 'var(--nx-chat-muted)' }}>
               {room.type || 'group'} · {room.participantCount ?? '?'} members
             </div>

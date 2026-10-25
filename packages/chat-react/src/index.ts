@@ -258,3 +258,11 @@ export type {
   PlanCard,
   PlanTodoItem,
 } from '@nexus/chat-core';
+// Single label-precedence rule for conversation/room/contact rows, so hosts and
+// the inbox never render a raw `conversationId` where a name belongs.
+export {
+  conversationTitleOf,
+  UNTITLED_CONVERSATION_LABEL,
+  type InboxRow,
+  type ConversationRowView,
+} from './inbox/inboxRows.js';

@@ -309,6 +309,12 @@ export type {
   ConversationHistoryItem,
   ConversationRow,
 } from './session/contact-threads.js';
+export {
+  resolveConversationLabel,
+  conversationPartnerNameOf,
+  looksLikeInternalId,
+  UNTITLED_CONVERSATION_LABEL,
+} from './session/conversation-label.js';
 export { createContactThreadApi } from './session/contact-thread-api.js';
 export type { ContactThreadApi, CommandClientLike } from './session/contact-thread-api.js';
 export {

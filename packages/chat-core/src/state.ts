@@ -163,6 +163,15 @@ export type PanelState = {
   contactId: string;
   contactType: 'agent' | 'user' | 'group' | 'asset_agent';
   conversationId: string | null;
+  /**
+   * Region-resolved human-readable label for the open row (never a raw id).
+   * Prefer this over `contactId` when the panel has not resolved a contact yet.
+   */
+  displayTitle?: string | null;
+  /** Agent/participant name the region resolved for the open row, when known. */
+  agentName?: string | null;
+  /** Stored room/thread title when the row was ever named. */
+  title?: string | null;
   roomId?: string | null;
   roomPurpose?: 'conversation' | 'room';
   turns: ChatTurn[];

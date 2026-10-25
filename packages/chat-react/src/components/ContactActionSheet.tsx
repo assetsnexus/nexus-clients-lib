@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ChatContact, CommandClient, NexusChat } from '@nexus/chat-core';
 import { loadConversationHistory, openContactThread } from '../utils/openContactFlow.js';
+import { conversationTitleOf } from '../inbox/inboxRows.js';
 
 export type ContactActionSheetProps = {
   contact: ChatContact | null;
@@ -11,7 +12,10 @@ export type ContactActionSheetProps = {
 
 type HistoryRow = {
   conversationId: string;
+  /** Region-resolved label; never a raw id. */
+  displayTitle?: string | null;
   title?: string | null;
+  agentName?: string | null;
   lastActivityAt?: string | null;
   status?: string | null;
 };
@@ -29,7 +33,9 @@ export function ContactActionSheet({ contact, chat, client, onClose }: ContactAc
           setHistory(
             rows.map((r) => ({
               conversationId: r.conversationId,
+              displayTitle: r.displayTitle,
               title: r.title,
+              agentName: r.agentName,
               lastActivityAt: r.lastActivityAt,
               status: r.status,
             })),
@@ -117,7 +123,7 @@ export function ContactActionSheet({ contact, chat, client, onClose }: ContactAc
                     }
                   }}
                 >
-                  Open {h.title || h.conversationId}
+                  Open {conversationTitleOf(h)}
                   {h.status && h.status !== 'active' ? ` (${h.status})` : ''}
                 </button>
               </li>

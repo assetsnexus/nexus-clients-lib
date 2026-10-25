@@ -36,8 +36,40 @@ describe('past conversation rows', () => {
       now,
       'en',
     );
-    expect(views[0]?.title).toBe('Hello there');
+    expect(views[0]?.title).toBe('Chi');
     expect(views[0]?.summary).toBe('');
+  });
+
+  it('prefers the region displayTitle and never renders a raw conversation id', () => {
+    const CONVERSATION_ID = '1792316062792-nm26u6zve';
+    const views = pastConversationViews(
+      [
+        { conversationId: CONVERSATION_ID, displayTitle: 'Support thread', title: 'Old title' },
+        { conversationId: 'untitled' },
+      ],
+      now,
+      'en',
+    );
+    expect(views.find((v) => v.id === CONVERSATION_ID)?.title).toBe('Support thread');
+    expect(views.find((v) => v.id === 'untitled')?.title).toBe('Untitled conversation');
+    expect(views.map((v) => v.title)).not.toContain(CONVERSATION_ID);
+  });
+
+  it('keeps a last-message preview as the summary for a named row', () => {
+    const views = pastConversationViews(
+      [
+        {
+          conversationId: 'named',
+          displayTitle: 'Support thread',
+          oneLineSummary: 'Waiting on you',
+          lastMessageAt: '2026-10-15T08:00:00.000Z',
+        },
+      ],
+      now,
+      'en',
+    );
+    expect(views[0]?.title).toBe('Support thread');
+    expect(views[0]?.summary).toBe('Waiting on you');
   });
 
   it('formats a same-day time and an older date', () => {

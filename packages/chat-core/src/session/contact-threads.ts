@@ -16,13 +16,38 @@ export type ContactThreadIndexEntry = {
 export type ConversationHistoryItem = {
   conversationId: string;
   title?: string | null;
+  /**
+   * Region-resolved row label. Prefer this over `title`: it is guaranteed to be
+   * a human-readable name (stored title, then agent name, then a neutral
+   * literal) and is never a bare conversation id.
+   */
+  displayTitle?: string | null;
+  /** Agent/participant name when the region resolved one for the row. */
+  agentName?: string | null;
   status?: string | null;
   lastActivityAt?: string | null;
   oneLineSummary?: string | null;
   unreadCount?: number;
 };
 
-export type ConversationRow = Record<string, unknown>;
+/**
+ * One conversation row from `anx.communicate.conversations.list` / `.get`.
+ *
+ * Left open (`Record<string, unknown>`) because the region row carries many
+ * optional fields, but the label-related fields are declared so consumers can
+ * read them without a cast. Prefer {@link ConversationHistoryItem.displayTitle}
+ * over `title` for anything a person sees: the region resolves `displayTitle`
+ * to a human-readable name and never to a bare `conversationId`.
+ */
+export type ConversationRow = Record<string, unknown> & {
+  conversationId?: string;
+  /** Region-resolved label; never a raw id. */
+  displayTitle?: string | null;
+  /** Stored room/thread title, when the thread was ever named. */
+  title?: string | null;
+  /** Agent/participant name the region resolved for the row, when known. */
+  agentName?: string | null;
+};
 
 function norm(value: unknown): string {
   return value == null ? '' : String(value).trim();
@@ -136,6 +161,8 @@ export function historyForContact(
   return matching.map((row) => ({
     conversationId: conversationIdFromRow(row),
     title: typeof row.title === 'string' ? row.title : null,
+    displayTitle: typeof row.displayTitle === 'string' ? row.displayTitle : null,
+    agentName: typeof row.agentName === 'string' ? row.agentName : null,
     status: row.status != null ? String(row.status) : null,
     lastActivityAt: parseActivityAt(row),
     oneLineSummary: typeof row.oneLineSummary === 'string' ? row.oneLineSummary : null,

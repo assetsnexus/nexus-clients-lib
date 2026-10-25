@@ -1,4 +1,5 @@
 import type { ConversationRow } from '@nexus/chat-core';
+import { resolveConversationLabel } from '@nexus/chat-core';
 
 export type PastConversationView = {
   id: string;
@@ -30,7 +31,17 @@ function activityIso(row: ConversationRow): string | null {
   return null;
 }
 
-/** Conversation title only. An agent name is not a title. */
+/**
+ * Conversation title, reusing the shared label precedence so a raw id is never
+ * shown. An agent name is not a title: prefer the region's `displayTitle` or the
+ * stored `title`, and hand any remaining name/last-message fallback to
+ * `pastConversationViews` as a summary rather than a title.
+ */
+export function pastConversationDisplayTitle(row: ConversationRow): string {
+  return text(row.displayTitle) || text(row.title);
+}
+
+/** Stored title only. Kept for callers that need the raw named-thread label. */
 export function pastConversationTitle(row: ConversationRow): string {
   return text(row.title);
 }
@@ -71,12 +82,16 @@ export function pastConversationViews(
     const id = rowId(row);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    const title = pastConversationTitle(row);
+    // Shared precedence: displayTitle → stored title → agent name → neutral
+    // literal. Never the raw conversation id. A labeled row also shows the last
+    // message as its subtitle, so the label stays a name rather than a preview.
+    const label = resolveConversationLabel(row as Record<string, unknown>);
+    const named = Boolean(text(row.displayTitle) || text(row.title));
     const timeIso = activityIso(row);
     views.push({
       id,
-      title: title || pastConversationSummary(row, '') || 'Conversation',
-      summary: title ? pastConversationSummary(row, title) : '',
+      title: label,
+      summary: named ? pastConversationSummary(row, label) : '',
       timeIso,
       timeLabel: timeIso ? formatPastConversationTime(timeIso, now, locale) : '',
     });

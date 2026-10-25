@@ -42,6 +42,18 @@ describe('mapConversationListItem', () => {
     });
   });
 
+  it('carries the region-resolved displayTitle + agentName', () => {
+    const summary = mapConversationListItem({
+      conversationId: 'c-display',
+      title: null,
+      displayTitle: 'Rune',
+      agentName: 'Rune',
+    });
+    expect(summary).toMatchObject({ displayTitle: 'Rune', agentName: 'Rune', conversationId: 'c-display' });
+    // A row with neither field leaves both null rather than synthesizing a title.
+    expect(mapConversationListItem({ conversationId: 'c-bare' })?.displayTitle).toBeNull();
+  });
+
   it('accepts backend dual-field aliases (streaming / activeSubagentCount / agentRunId)', () => {
     const summary = mapConversationListItem({
       id: 'c-backend',

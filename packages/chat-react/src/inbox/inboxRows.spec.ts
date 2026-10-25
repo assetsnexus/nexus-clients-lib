@@ -164,6 +164,61 @@ describe('inbox rows', () => {
     expect(conversationInitials('')).toBe('?');
   });
 
+  describe('displayTitle precedence (region-resolved row label)', () => {
+    it('prefers displayTitle over the stored title and agent name', () => {
+      expect(
+        conversationRowView({
+          conversationId: 'c1',
+          displayTitle: 'Support thread',
+          title: 'Old title',
+          agentName: 'Xcamp',
+        }).title,
+      ).toBe('Support thread');
+    });
+
+    it('uses the stored title when there is no displayTitle', () => {
+      expect(conversationRowView({ conversationId: 'c2', title: 'Project kickoff', agentName: 'Xcamp' }).title).toBe(
+        'Project kickoff',
+      );
+    });
+
+    it('uses the agent name next, then the neutral literal', () => {
+      expect(conversationRowView({ conversationId: 'c3', title: null, agentName: 'Rune' }).title).toBe('Rune');
+      expect(conversationRowView({ conversationId: 'c4' }).title).toBe('Untitled conversation');
+    });
+
+    it('never renders a raw conversationId as the label', () => {
+      const CONVERSATION_ID = '1792316062792-nm26u6zve';
+      const view = conversationRowView({ conversationId: CONVERSATION_ID, title: null });
+      expect(view.title).toBe('Untitled conversation');
+      expect(view.title).not.toContain(CONVERSATION_ID);
+      // ...even when the id was mistakenly stored as the title.
+      expect(conversationRowView({ conversationId: 'c9', title: CONVERSATION_ID }).title).toBe(
+        'Untitled conversation',
+      );
+    });
+
+    it('carries displayTitle + agentName onto the inbox row', () => {
+      const row = conversationToRow(
+        { conversationId: 'c1', displayTitle: 'Rune', agentName: 'Rune', agentId: 'ag1' },
+        { key: 'k', label: 'P', logo: null },
+      )!;
+      expect(row.title).toBe('Rune');
+      expect(row.agentName).toBe('Rune');
+      expect(row.conversationId).toBe('c1');
+    });
+
+    it('adds displayTitle to the single-identity adapter rows', () => {
+      const rows = inboxRowsFromConversationRows([
+        { conversationId: 'c1', displayTitle: 'Support thread', agentId: 'ag1' },
+        { conversationId: '1792316062792-nm26u6zve' },
+      ]);
+      const byId = new Map(rows.map((row) => [row.conversationId, row]));
+      expect(byId.get('c1')?.title).toBe('Support thread');
+      expect(byId.get('1792316062792-nm26u6zve')?.title).toBe('Untitled conversation');
+    });
+  });
+
   describe('ownerContactIdForRow', () => {
     const resolve = (map: Record<string, string>) => (id: string) =>
       map[id] ? { id: map[id] } : null;

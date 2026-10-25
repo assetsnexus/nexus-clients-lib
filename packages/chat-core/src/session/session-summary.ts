@@ -10,6 +10,13 @@ export type ConversationRole = 'parent' | 'subagent' | 'room' | string;
 export type ChatSessionSummary = {
   conversationId: string;
   title?: string | null;
+  /**
+   * Region-resolved row label. Prefer over `title`: it is always a
+   * human-readable name and is never a bare conversation id.
+   */
+  displayTitle?: string | null;
+  /** Agent/participant name the region resolved for the row, when known. */
+  agentName?: string | null;
   generationInProgress: boolean;
   isStreaming: boolean;
   unreadCount: number;
@@ -38,6 +45,8 @@ export function mapConversationListItem(
   return {
     conversationId,
     title: typeof row.title === 'string' ? row.title : null,
+    displayTitle: typeof row.displayTitle === 'string' ? row.displayTitle : null,
+    agentName: typeof row.agentName === 'string' ? row.agentName : null,
     generationInProgress,
     isStreaming: generationInProgress,
     unreadCount: Number(row.unreadCount || 0) || 0,

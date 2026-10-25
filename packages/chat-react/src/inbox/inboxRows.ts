@@ -1,3 +1,9 @@
+import {
+  UNTITLED_CONVERSATION_LABEL as CORE_UNTITLED_CONVERSATION_LABEL,
+  conversationPartnerNameOf,
+  resolveConversationLabel,
+} from '@nexus/chat-core';
+
 export type InboxKind = 'human' | 'agent' | 'group' | 'room';
 export type KindFilter = 'all' | 'humans' | 'agents' | 'groups' | 'pinned';
 
@@ -120,32 +126,27 @@ function timeOf(raw: Record<string, unknown>): number {
 }
 
 /** Shown when a thread has no stored title and no agent nickname (portal parity). */
-export const UNTITLED_CONVERSATION_LABEL = 'Untitled conversation';
+export const UNTITLED_CONVERSATION_LABEL = CORE_UNTITLED_CONVERSATION_LABEL;
 
-/** Partner/participant names, which may arrive as `participantNames` or a single label. */
-function partnerNameOf(raw: Record<string, unknown>): string {
-  const single = textOf(raw, ['participantLabel', 'contactName']);
-  if (single) return single;
-  const names = raw.participantNames;
-  if (Array.isArray(names)) {
-    return names.map((n) => (typeof n === 'string' ? n.trim() : '')).filter(Boolean).join(', ');
-  }
-  return '';
-}
+/** Partner/participant names; re-exported from the shared core rule. */
+const partnerNameOf = conversationPartnerNameOf;
 
 /**
  * Row label, mirroring the portal session list (`conversationListTitle`): the
- * stored room title, then the agent nickname, then the partner/participant
- * name. The region returns `title: null` for most agent DMs, so a mapper that
- * reads only `title`/`name` degrades every row to a generic placeholder.
+ * region-resolved `displayTitle`, then the stored room title, then the agent
+ * nickname, then the partner/participant name.
+ *
+ * Thin wrapper over {@link resolveConversationLabel} in `@nexus/chat-core` — the
+ * **single source of truth for the label precedence**. Other surfaces
+ * (`ContactActionSheet`, past conversations, the Vue panels) reuse the same
+ * helper rather than re-deriving it. The region returns `title: null` for most
+ * agent DMs, so a mapper that reads only `title`/`name` degrades every row to a
+ * generic placeholder — and one that falls back to `conversationId` renders an
+ * internal id (`1792316062792-nm26u6zve`) where a person's name belongs. The raw
+ * `conversationId` is **never** a label.
  */
 export function conversationTitleOf(raw: Record<string, unknown>): string {
-  return (
-    textOf(raw, ['title', 'name', 'customName', 'displayName']) ||
-    textOf(raw, ['agentName']) ||
-    partnerNameOf(raw) ||
-    UNTITLED_CONVERSATION_LABEL
-  );
+  return resolveConversationLabel(raw);
 }
 
 /** One-line row subtitle; never repeats the title. */
