@@ -423,6 +423,27 @@ describe('inbox rows', () => {
       expect(inboxScopeBadge({ ...orgRow, kind: 'human' })).toBeNull();
     });
 
+    it("badges the caller's own user-scoped agent 'Private' in an org context", () => {
+      // A `scope:'user', orgId:null` agent listed under a business identity is
+      // attributed personal/private, never the org it was listed under.
+      const selene = rowOf({ conversationId: 'c-selene', agentId: 've-selene', agentName: 'Selene', scope: 'user' });
+      expect(selene.identityOrgId).toBe('org-1');
+      expect(selene.orgId).toBeNull();
+      expect(inboxScopeBadge(selene, 'Acme')).toMatchObject({ tone: 'private', text: 'Private' });
+    });
+
+    it("never fabricates org attribution for a user-scoped row missing orgId", () => {
+      const selene = rowOf({ conversationId: 'c-selene', agentId: 've-selene', scope: 'user' });
+      // No client-side fallback copies the listing identity's org onto the row.
+      expect(selene.orgId).toBeNull();
+      expect(conversationToRow({ conversationId: 'x', agentId: 'a', scope: 'user' }, identity)?.orgId).toBeNull();
+      // And a row the region did not send simply does not exist: the directory
+      // is not invented client-side from identity metadata.
+      expect(
+        [selene].filter((r) => r.agentId === 've-someone-elses-private-agent'),
+      ).toHaveLength(0);
+    });
+
     it('picks the org logo for a business identity, the avatar for a private one', () => {
       expect(identityRowLogo({ orgId: 'org-1', orgLogo: 'logo.png', avatarUrl: 'me.png' })).toBe('logo.png');
       expect(identityRowLogo({ orgId: null, orgLogo: 'logo.png', avatarUrl: 'me.png' })).toBe('me.png');

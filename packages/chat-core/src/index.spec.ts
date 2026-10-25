@@ -901,6 +901,59 @@ describe('chat-core', () => {
     expect(contacts.find((c) => c.id === 'user-alice')).toMatchObject({ type: 'user' });
   });
 
+  it("keeps the caller's own user-scoped agent (orgId:null) listed in an org context", async () => {
+    // The region returns the caller's own `scope:'user', orgId:null` rows in
+    // `virtual-employees.list` when their session has an orgId (so a private
+    // agent stays reachable while acting in an org). The client must NOT assume
+    // every directory row carries the listing identity's orgId and drop or
+    // re-attribute the rows where it does not: a `scope:'user'` row with no org
+    // is retained, owner-scoped (canConfigure), and keeps its own (absent) org —
+    // it is never fabricated onto the org it was listed under.
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string) => {
+          if (command === 'anx.communicate.contacts.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list') {
+            return {
+              ok: true,
+              data: [
+                { employeeId: 've-rune', name: 'Rune', scope: 'org', orgId: 'org-1' },
+                // Selene: the caller's own private agent, no org of its own.
+                { employeeId: 've-selene', name: 'Selene', scope: 'user', orgId: null },
+              ],
+            };
+          }
+          if (command === 'anx.ai-agents.virtual-employees.list-public') {
+            return {
+              ok: true,
+              data: [{ employeeId: 've-veyla', name: 'Veyla', scope: 'global', isPublicFacing: true }],
+            };
+          }
+          if (command === 'anx.communicate.contacts.asset-agents.list') {
+            return { ok: true, data: { contacts: [] } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+    });
+    await chat.loadContacts();
+
+    const contacts = chat.getState().contacts;
+    // Retained, owner-scoped, attributed to the agent's own (absent) org.
+    expect(contacts.find((c) => c.id === 've-selene')).toMatchObject({
+      type: 'agent',
+      scope: 'user',
+      orgId: null,
+      canConfigure: true,
+    });
+    // The org row keeps its own org; the global row stays global with no org —
+    // the private row did not leak org attribution onto them, and vice versa.
+    expect(contacts.find((c) => c.id === 've-rune')).toMatchObject({ scope: 'org', orgId: 'org-1' });
+    expect(contacts.find((c) => c.id === 've-veyla')).toMatchObject({ scope: 'global', orgId: null });
+  });
+
   it('surfaces a global-public agent whose display name is absent without showing its id', async () => {
     const chat = createNexusChat({
       client: {

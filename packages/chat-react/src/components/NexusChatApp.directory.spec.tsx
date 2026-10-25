@@ -87,15 +87,19 @@ function makeClient(sent: string[]): CommandClient {
             ok: true,
             data: [
               { employeeId: 've-rune', name: 'Rune', scope: 'org', orgId: 'org-1' },
-              { employeeId: 've-rune', name: 'Rune (dupe)', scope: 'org', orgId: 'org-1' },
+              // The caller's OWN private agent: the region now returns it in an
+              // org-context list with `orgId:null`. It must survive to the
+              // directory, not be dropped for lacking the listing identity's org.
+              { employeeId: 've-selene', name: 'Selene', scope: 'user', orgId: null },
             ],
           };
         case 'anx.ai-agents.virtual-employees.list-public':
           return {
             ok: true,
             data: [
-              // Duplicate of an owned row: the owned listing must win.
-              { employeeId: 've-rune', name: 'Rune', scope: 'org', orgId: 'org-1' },
+              // Duplicate of an owned row: the owned listing must win, so the
+              // directory keeps `Rune` (not this public copy) and one row only.
+              { employeeId: 've-rune', name: 'Rune (public copy)', scope: 'org', orgId: 'org-1' },
               { employeeId: 've-veyla', name: 'Veyla', scope: 'global', isPublicFacing: true },
               { employeeId: 've-varic', name: 'Varic', scope: 'global', isPublicFacing: true },
               // Staff-only global: the region is the audience gate and only sends
@@ -208,5 +212,34 @@ describe('contact directory loading with identities', () => {
     await mountApp({ client: makeClient(sent) });
 
     expect(sent).toContain('anx.ai-agents.virtual-employees.list-public');
+  });
+
+  it("renders the caller's own private agent (scope:'user', orgId:null) in an org context", async () => {
+    const sent: string[] = [];
+    const mounted = await mountApp({ client: makeClient(sent), identities: IDENTITIES });
+
+    // Open the Contacts directory, which reads the merged contact store.
+    await act(async () => {
+      const tab = Array.from(mounted.container.querySelectorAll('button.nexus-chat__tab')).find((b) =>
+        /contact/i.test(b.textContent || ''),
+      );
+      (tab as HTMLButtonElement | undefined)?.click();
+    });
+    await flush();
+
+    const names = Array.from(
+      mounted.container.querySelectorAll('.nexus-chat__contact .nexus-chat__contact-name'),
+    ).map((n) => n.textContent?.trim());
+
+    // The private agent is rendered alongside the org and global agents — the
+    // client does not require every directory row to carry the identity's org.
+    expect(names).toContain('Selene');
+    expect(names).toContain('Rune');
+    expect(names).toContain('Veyla');
+    expect(names).toContain('Varic');
+    // Dedupe holds: the duplicate org row did not add a second Rune.
+    expect(names.filter((n) => n === 'Rune')).toHaveLength(1);
+    // A raw internal id is never a label.
+    expect(names.some((n) => n === 've-selene')).toBe(false);
   });
 });

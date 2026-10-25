@@ -26,6 +26,17 @@ describe('picker contacts', () => {
     expect(isOrgAgentContact({ ...ownAsset, orgId: 'org-1' })).toBe(false);
   });
 
+  it("keeps the caller's own user-scoped agent (orgId:null) in the own-agents group", () => {
+    // A `scope:'user', orgId:null` agent listed while acting in an org is
+    // personal, so it belongs with "Own agents" — not "Org agents" — and it is
+    // never dropped from the picker pool.
+    const selene = contact({ id: 'a-selene', name: 'Selene', type: 'agent', scope: 'user', orgId: null });
+    expect(isOrgAgentContact(selene)).toBe(false);
+    const groups = pickerGroups([ownAgent, selene, orgAgent], 'agent');
+    expect(groups.find((g) => g.id === 'own_agents')!.contacts.map((c) => c.id)).toEqual(['a-own', 'a-selene']);
+    expect(groups.find((g) => g.id === 'org_agents')!.contacts.map((c) => c.id)).toEqual(['a-org']);
+  });
+
   it('offers agents + assets for agent mode and people for dm mode', () => {
     const all = [ownAgent, orgAgent, ownAsset, otherAsset, person];
     expect(pickerPool(all, 'agent').map((c) => c.id)).toEqual(['a-own', 'a-org', 'as-own', 'as-op']);
