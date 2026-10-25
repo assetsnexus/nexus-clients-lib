@@ -17,4 +17,5 @@ export * from './vad/silero.js';
 export * from './batch/recorder.js';
 export * from './dictation/session.js';
 export * from './transcribe/types.js';
+export * from './transcribe/no-speech.js';
 export * from './capture/preview-source.js';
