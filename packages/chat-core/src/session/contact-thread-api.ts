@@ -143,6 +143,51 @@ async function createConversationForContact(
   return conversationId;
 }
 
+/** Forward/backward cursor for `messages.list`. */
+export type MessagesPageCursor = { messageId: string; createdAt: string };
+
+export type MessagesPage = {
+  messages: unknown[];
+  hasMore: boolean;
+  oldest: MessagesPageCursor | null;
+  newest: MessagesPageCursor | null;
+  hasNewer: boolean;
+};
+
+function readCursor(value: unknown): MessagesPageCursor | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as { messageId?: unknown; createdAt?: unknown };
+  if (typeof row.messageId !== 'string' || !row.messageId.trim()) return null;
+  if (typeof row.createdAt !== 'string' || !row.createdAt.trim()) return null;
+  return { messageId: row.messageId.trim(), createdAt: row.createdAt.trim() };
+}
+
+/**
+ * Page of messages. `opts.after` walks forward (delta from the newest turn the
+ * client already holds), `opts.before` walks backward (load older). The two are
+ * mutually exclusive; `after` wins, matching the inference handler.
+ */
+export async function listMessagesPage(
+  client: CommandClientLike,
+  conversationId: string,
+  opts?: { limit?: number; before?: MessagesPageCursor | null; after?: MessagesPageCursor | null },
+): Promise<MessagesPage> {
+  const payload: Record<string, unknown> = { conversationId };
+  if (opts?.limit != null) payload.limit = opts.limit;
+  if (opts?.after) payload.after = opts.after;
+  else if (opts?.before) payload.before = opts.before;
+  const result = await client.send('anx.communicate.conversations.messages.list', payload);
+  assertCommandOk(result, 'anx.communicate.conversations.messages.list');
+  const data = unwrapData(result);
+  return {
+    messages: Array.isArray(data.messages) ? data.messages : [],
+    hasMore: Boolean(data.hasMore),
+    oldest: readCursor(data.oldest),
+    newest: readCursor(data.newest),
+    hasNewer: Boolean(data.hasNewer),
+  };
+}
+
 export function createContactThreadApi(
   client: CommandClientLike,
   options?: {
@@ -175,15 +220,14 @@ export function createContactThreadApi(
 
     async listMessages(
       conversationId: string,
-      opts?: { limit?: number },
+      opts?: {
+        limit?: number;
+        before?: MessagesPageCursor | null;
+        after?: MessagesPageCursor | null;
+      },
     ): Promise<unknown[]> {
-      const result = await client.send('anx.communicate.conversations.messages.list', {
-        conversationId,
-        ...(opts?.limit != null ? { limit: opts.limit } : {}),
-      });
-      assertCommandOk(result, 'anx.communicate.conversations.messages.list');
-      const data = unwrapData(result);
-      return Array.isArray(data.messages) ? data.messages : [];
+      const page = await listMessagesPage(client, conversationId, opts);
+      return page.messages;
     },
 
     async archiveConversation(conversationId: string): Promise<void> {

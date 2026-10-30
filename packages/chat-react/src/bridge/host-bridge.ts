@@ -113,6 +113,19 @@ export type HostClientToolResultMessage = {
   error?: string;
 };
 
+/**
+ * Native shell's reply to a `chatCacheRequest`. `value` is the stored string on
+ * a `get` hit; `keys` lists every key on a `keys` request.
+ */
+export type HostChatCacheResultMessage = {
+  type: 'chatCacheResult';
+  requestId: string;
+  ok: boolean;
+  value?: string | null;
+  keys?: string[];
+  error?: string;
+};
+
 /** Host asks the WebView to fill the composer. Never a send. */
 export const HOST_PREFILL_TEXT_MAX = 4000;
 
@@ -139,6 +152,7 @@ export type HostToSdkMessage =
   | HostPageSitemapMessage
   | HostPageScreenMessage
   | HostClientToolResultMessage
+  | HostChatCacheResultMessage
   | HostVoiceCommandMessage;
 
 export type SdkMinimizeMessage = { type: 'minimize' };
@@ -187,6 +201,22 @@ export type SdkNavigateMessage = {
   path: string;
 };
 
+/**
+ * WebView asks the native shell to read/write the durable chat cache.
+ *
+ * The cache holds conversation-list metadata + short turn previews (never
+ * message bodies). On native it lives in `AsyncStorage` (mirroring the
+ * `anx_command_cache_v1:*` pattern), so the WebView's chat panel can persist
+ * metadata across reloads without a browser IndexedDB hit. One request, one
+ * `chatCacheResult` reply keyed by `requestId`.
+ */
+export type SdkChatCacheRequestMessage =
+  | { type: 'chatCacheRequest'; requestId: string; op: 'get'; key: string }
+  | { type: 'chatCacheRequest'; requestId: string; op: 'set'; key: string; value: string }
+  | { type: 'chatCacheRequest'; requestId: string; op: 'delete'; key: string }
+  | { type: 'chatCacheRequest'; requestId: string; op: 'keys' }
+  | { type: 'chatCacheRequest'; requestId: string; op: 'clear' };
+
 export type SdkToHostMessage =
   | SdkMinimizeMessage
   | SdkUnreadMessage
@@ -198,7 +228,8 @@ export type SdkToHostMessage =
   | SdkVrShellMessage
   | SdkScaRequiredMessage
   | SdkClientToolCallMessage
-  | SdkNavigateMessage;
+  | SdkNavigateMessage
+  | SdkChatCacheRequestMessage;
 
 export type HostBridge = {
   postToHost: (msg: SdkToHostMessage) => void;
@@ -286,6 +317,18 @@ export function parseHostMessage(raw: unknown): HostToSdkMessage | null {
         type: 'clientToolResult',
         requestId,
         result: value.result,
+        error: typeof value.error === 'string' ? value.error : undefined,
+      };
+    }
+    case 'chatCacheResult': {
+      const requestId = typeof value.requestId === 'string' ? value.requestId : '';
+      if (!requestId) return null;
+      return {
+        type: 'chatCacheResult',
+        requestId,
+        ok: value.ok !== false,
+        value: typeof value.value === 'string' ? value.value : value.value === null ? null : undefined,
+        keys: Array.isArray(value.keys) ? value.keys.map(String) : undefined,
         error: typeof value.error === 'string' ? value.error : undefined,
       };
     }
@@ -378,7 +421,7 @@ function writePending(next: HostToSdkMessage[]): void {
 export function stashHostMessage(msg: HostToSdkMessage): void {
   // Results and prefills must not be coalesced by type: concurrent client-tool
   // results and multiple drafts would otherwise drop entries.
-  if (msg.type === 'clientToolResult') return;
+  if (msg.type === 'clientToolResult' || msg.type === 'chatCacheResult') return;
   const pending = readPending();
   // One slot per type. The inject script and each bridge listener both stash,
   // so appending prefills would replay the same draft more than once.

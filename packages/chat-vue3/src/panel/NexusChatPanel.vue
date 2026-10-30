@@ -212,7 +212,18 @@
           @dismiss-run="onDismissSubAgentRun"
         />
 
-        <div ref="messagesEl" class="nexus-chat-panel__messages">
+        <div ref="messagesEl" class="nexus-chat-panel__messages" @scroll="onMessageListScroll">
+          <button
+            v-if="showLoadOlderButton"
+            type="button"
+            class="nexus-load-older"
+            @click="requestOlder"
+          >
+            {{ resolvedLabels.loadEarlier || 'Load earlier messages' }}
+          </button>
+          <div v-else-if="historyLoadingMore" class="nexus-history-more">
+            {{ resolvedLabels.loadingEarlier || 'Loading earlier messages…' }}
+          </div>
           <div class="nexus-muted nexus-messages-label">{{ resolvedLabels.messages }}</div>
           <div
             v-for="turn in resolvedPanel.turns"
@@ -473,6 +484,15 @@ export default {
      * and `chat.answerClientToolPause`.
      */
     pendingPause: { type: Object, default: null },
+    /**
+     * History paging. `pageSize` is advisory (the host requests it).
+     * `loadMore: 'scroll'` fetches when the list nears the top; `'button'` shows
+     * "Load earlier messages" and does not auto-fetch.
+     */
+    history: {
+      type: Object,
+      default: () => ({ pageSize: 20, loadMore: 'scroll' }),
+    },
   },
   data() {
     return {
@@ -484,6 +504,9 @@ export default {
       subchatDelivery: 'queue',
       billingOpen: false,
       dismissedSubAgentIds: [],
+      /** Scroll anchor captured before a load-older so the viewport does not jump. */
+      historyAnchor: null,
+      historyAnchorPending: false,
     };
   },
   computed: {
@@ -533,10 +556,22 @@ export default {
         activeCall: state.activeCall || null,
         queuedMessages: state.queuedMessages || [],
         aiDisclosure: state.aiDisclosure || null,
+        // History paging metadata mirrors chat-core so the scroller and the
+        // panel agree on whether older turns exist and a fetch is in flight.
+        historyHasMore: !!(state.history && state.history.hasMore),
+        historyOldest: (state.history && state.history.oldest) || null,
+        historyLoadingMore: !!(state.history && state.history.loadingMore),
       };
     },
     resolvedPanel() {
       return this.panel || this.panelFromChat || emptyPanel();
+    },
+    historyLoadingMore() {
+      return !!this.resolvedPanel?.historyLoadingMore;
+    },
+    showLoadOlderButton() {
+      const mode = (this.history && this.history.loadMore) || 'scroll';
+      return mode === 'button' && !!this.resolvedPanel?.historyHasMore && !this.resolvedPanel?.historyLoading;
     },
     resolvedContacts() {
       if (this.contacts && this.contacts.length) return this.contacts;
@@ -689,6 +724,20 @@ export default {
     },
   },
   watch: {
+    'resolvedPanel.turns'() {
+      // After an older page lands, keep the message the reader was on in place
+      // by shifting scrollTop by exactly the height the new turns added.
+      if (!this.historyAnchorPending || !this.historyAnchor) return;
+      this.historyAnchorPending = false;
+      const anchor = this.historyAnchor;
+      this.historyAnchor = null;
+      this.$nextTick(() => {
+        const el = this.messageListEl();
+        if (!el) return;
+        const delta = el.scrollHeight - anchor.height;
+        if (delta > 0) el.scrollTop = anchor.top + delta;
+      });
+    },
     'resolvedPanel.conversationId'() {
       this.dismissedSubAgentIds = [];
     },
@@ -722,6 +771,26 @@ export default {
       if (!id) return;
       if (this.dismissedSubAgentIds.includes(id)) return;
       this.dismissedSubAgentIds = [...this.dismissedSubAgentIds, id];
+    },
+    messageListEl() {
+      return this.$refs.messagesEl || null;
+    },
+    /** Scroll-up near the top pulls the previous page (scroll-anchored). */
+    onMessageListScroll() {
+      const el = this.messageListEl();
+      if (!el) return;
+      const mode = (this.history && this.history.loadMore) || 'scroll';
+      if (mode !== 'scroll') return;
+      if (el.scrollTop > 80) return;
+      this.requestOlder();
+    },
+    requestOlder() {
+      const panel = this.resolvedPanel || {};
+      if (panel.historyLoading || panel.historyLoadingMore || !panel.historyHasMore) return;
+      const el = this.messageListEl();
+      if (el) this.historyAnchor = { height: el.scrollHeight, top: el.scrollTop };
+      this.historyAnchorPending = true;
+      this.$emit('load-older', panel);
     },
     setDraft(value) {
       this.draft = value == null ? '' : String(value);
@@ -969,6 +1038,24 @@ export default {
 }
 .nexus-messages-label {
   margin-bottom: 8px;
+}
+.nexus-load-older {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--nexus-muted, #6c757d);
+  background: transparent;
+  border: 1px solid var(--nexus-border, #dee2e6);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.nexus-history-more {
+  margin-bottom: 8px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--nexus-muted, #6c757d);
 }
 .nexus-message-row {
   display: flex;

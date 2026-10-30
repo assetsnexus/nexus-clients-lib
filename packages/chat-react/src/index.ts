@@ -174,6 +174,17 @@ export type {
   ChatIdentitySession,
 } from './bridge/host-bridge.js';
 export { HOST_PREFILL_TEXT_MAX } from './bridge/host-bridge.js';
+export type {
+  HostChatCacheResultMessage,
+  SdkChatCacheRequestMessage,
+} from './bridge/host-bridge.js';
+export { createWebViewChatCacheAdapter } from './webview/chat-cache-adapter.js';
+export type {
+  ChatCacheAdapter as WebViewChatCacheAdapter,
+  ChatCacheTransport as WebViewChatCacheTransport,
+  ChatCacheRequestMessage,
+  ChatCacheResultMessage,
+} from './webview/chat-cache-adapter.js';
 export { createHostPageTools, HOST_GENERIC_PAGE_TOOLS } from './page-tools/host-page-tools.js';
 export type { CreateHostPageToolsInput } from './page-tools/host-page-tools.js';
 

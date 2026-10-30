@@ -6,10 +6,12 @@ type RehydrateCall = { turns: unknown[]; opts: Record<string, unknown> };
 
 function makeChat(input: {
   listMessages?: (conversationId: string, opts?: { limit?: number }) => Promise<unknown[]>;
+  loadThreadHistory?: (conversationId: string, opts?: { limit?: number }) => Promise<{ fromCache: boolean; fetched: number }>;
 }): { chat: NexusChat; rehydrated: RehydrateCall[] } {
   const rehydrated: RehydrateCall[] = [];
   const chat = {
     listMessages: input.listMessages || (async () => []),
+    ...(input.loadThreadHistory ? { loadThreadHistory: input.loadThreadHistory } : {}),
     rehydrateTurns: (turns: unknown[], opts: Record<string, unknown>) => {
       rehydrated.push({ turns, opts });
     },
@@ -21,6 +23,31 @@ const client = (send: (command: string, payload?: Record<string, unknown>) => Pr
   ({ send }) as never;
 
 describe('loadThreadHistory', () => {
+  it('prefers the cache-first lazy path when the controller supports it', async () => {
+    const lazy = vi.fn(async () => ({ fromCache: true, fetched: 2 }));
+    const { chat, rehydrated } = makeChat({
+      loadThreadHistory: lazy,
+      listMessages: async () => {
+        throw new Error('must not be called');
+      },
+    });
+    const result = await loadThreadHistory({ chat, conversationId: 'c1' });
+    expect(result).toEqual({ turnCount: 2, via: 'cache', fromCache: true });
+    expect(lazy).toHaveBeenCalledWith('c1', { limit: undefined });
+    // The lazy path rehydrates internally; the fallback must not double-write.
+    expect(rehydrated).toHaveLength(0);
+  });
+
+  it('falls back to the message list when the lazy path returns nothing', async () => {
+    const { chat, rehydrated } = makeChat({
+      loadThreadHistory: async () => ({ fromCache: false, fetched: 0 }),
+      listMessages: async () => [{ id: 'm1', role: 'user', content: 'Hi' }],
+    });
+    const result = await loadThreadHistory({ chat, conversationId: 'c1' });
+    expect(result).toEqual({ turnCount: 1, via: 'list' });
+    expect(rehydrated[0].turns).toHaveLength(1);
+  });
+
   it('rehydrates turns straight from the message list', async () => {
     const { chat, rehydrated } = makeChat({
       listMessages: async () => [

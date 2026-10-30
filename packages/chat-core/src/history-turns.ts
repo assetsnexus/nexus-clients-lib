@@ -8,6 +8,29 @@ export function mergePrependedTurns<T extends { id: string }>(existing: T[], inc
 }
 
 /**
+ * Upsert by id: an incoming turn with an existing id **replaces** it in place
+ * (so a cached preview gains its full body), and a new id is appended in the
+ * order received. Used by the forward delta, where the fetch may re-include
+ * the newest cached turn to refresh its body.
+ */
+export function mergeAppendedTurns<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  if (!incoming.length) return existing;
+  const index = new Map(existing.map((turn, i) => [turn.id, i]));
+  const next = [...existing];
+  for (const turn of incoming) {
+    if (!turn?.id) continue;
+    const at = index.get(turn.id);
+    if (at == null) {
+      index.set(turn.id, next.length);
+      next.push(turn);
+    } else {
+      next[at] = turn;
+    }
+  }
+  return next;
+}
+
+/**
  * Room sends only grow an assistant bubble when someone will answer.
  * A missing plan keeps the bubble so older servers still stream.
  */

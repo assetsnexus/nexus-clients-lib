@@ -673,6 +673,10 @@ export function NexusChatApp({
       : null);
   const sheetContact = findChatContact(state.contacts, sheetContactId || '') || null;
   const conversationId = panel?.conversationId || state.conversationId;
+  const historyState = state.history;
+  const loadOlder = useCallback(() => {
+    void chat.loadOlderHistory({ conversationId: conversationId || undefined });
+  }, [chat, conversationId]);
   /**
    * Presentation source for the header while a row is opening. The region
    * returns `title: null` for most agent DMs (the name lives on `agentName`)
@@ -1625,6 +1629,9 @@ export function NexusChatApp({
               chat={chat}
               conversationId={conversationId}
               onOpenFile={openFile}
+              historyHasMore={historyState?.hasMore}
+              historyLoadingMore={historyState?.loadingMore}
+              onLoadOlder={loadOlder}
             />
             <FileViewer
               tabs={viewerTabs}
@@ -2010,6 +2017,9 @@ export function NexusChatApp({
                   chat={chat}
                   conversationId={conversationId}
                   onOpenFile={openFile}
+                  historyHasMore={historyState?.hasMore}
+                  historyLoadingMore={historyState?.loadingMore}
+                  onLoadOlder={loadOlder}
                 />
               ) : null}
               <FileViewer

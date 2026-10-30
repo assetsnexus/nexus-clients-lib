@@ -3,13 +3,18 @@ import type { CommandClient, NexusChat } from '@nexus/chat-core';
 /**
  * History load for a conversation opened from the sidebar.
  *
- * `chat.listMessages` is the normal path. When the list says the thread has
- * content but `messages.list` comes back empty, we make one more attempt with
- * `anx.communicate.conversations.get`, which for older threads carries the body
- * as `messages` / `turns`. This is what stops a row the list says has content
- * from opening as a silently blank thread; a genuinely empty thread still ends
- * up empty, and the panel renders its explicit "Send a message to start."
- * empty state.
+ * The fast path is `chat.loadThreadHistory`: it paints the durable cache's turn
+ * skeletons instantly, then fetches only the newest `historyInitialLimit` turns
+ * (20 by default) — or the forward delta past the newest cached id when the
+ * cache is warm. Older turns load lazily on scroll-up via `chat.loadOlderHistory`.
+ *
+ * `chat.listMessages` remains the fallback for a controller without the lazy
+ * path. When the list says the thread has content but history comes back empty,
+ * we make one more attempt with `anx.communicate.conversations.get`, which for
+ * older threads carries the body as `messages` / `turns`. This is what stops a
+ * row the list says has content from opening as a silently blank thread; a
+ * genuinely empty thread still ends up empty, and the panel renders its
+ * explicit "Send a message to start." empty state.
  */
 
 type MessageRow = Record<string, unknown>;
@@ -49,6 +54,7 @@ function getBodyRows(data: Record<string, unknown>): MessageRow[] {
  *
  * @param expectsContent row says the thread has messages (portal `messageCount`
  *   / a preview), so an empty `messages.list` is worth a second attempt.
+ * @param limit initial page size; defaults to the controller's lazy limit (20).
  * @returns how many turns were rehydrated and which command supplied them.
  */
 export async function loadThreadHistory(input: {
@@ -56,11 +62,32 @@ export async function loadThreadHistory(input: {
   client?: CommandClient | null;
   conversationId: string;
   expectsContent?: boolean;
-}): Promise<{ turnCount: number; via: 'list' | 'get' | 'none' }> {
+  limit?: number;
+}): Promise<{ turnCount: number; via: 'cache' | 'list' | 'get' | 'none'; fromCache?: boolean }> {
   const { chat, client, conversationId } = input;
+
+  // Preferred: cache-first + delta. Paints skeletons instantly, then fetches
+  // only the tail (or the delta) so a reload does not re-read the whole thread.
+  if (typeof chat.loadThreadHistory === 'function') {
+    try {
+      const result = await chat.loadThreadHistory(conversationId, { limit: input.limit });
+      if (result.fetched > 0 || result.fromCache) {
+        return {
+          turnCount: result.fetched,
+          via: result.fromCache ? 'cache' : 'list',
+          fromCache: result.fromCache,
+        };
+      }
+    } catch {
+      // Fall through to the legacy path below.
+    }
+  }
+
   let rows: MessageRow[] = [];
   try {
-    const messages = await chat.listMessages(conversationId, { limit: 80 });
+    const messages = await chat.listMessages(conversationId, {
+      limit: input.limit ?? 20,
+    });
     rows = (messages || []) as MessageRow[];
   } catch {
     rows = [];

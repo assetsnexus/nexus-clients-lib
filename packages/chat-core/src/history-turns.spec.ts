@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyRoomDispatchPlan,
+  mergeAppendedTurns,
   mergePrependedTurns,
   shouldKeepRoomAssistantPlaceholder,
 } from './history-turns.js';
@@ -16,6 +17,26 @@ describe('history turns', () => {
       { id: 'u1', role: 'user' },
     ];
     expect(mergePrependedTurns(existing, incoming).map((t) => t.id)).toEqual(['u0', 'u1', 'a_live']);
+  });
+
+  it('appends only turns after the newest cached id, id-deduped', () => {
+    const existing = [
+      { id: 'u1', role: 'user', text: 'hi' },
+      { id: 'a1', role: 'assistant', text: 'hello' },
+    ];
+    const incoming = [
+      { id: 'a1', role: 'assistant', text: 'hello there' },
+      { id: 'u2', role: 'user', text: 'bye' },
+      { id: 'a2', role: 'assistant', text: 'see you' },
+    ];
+    const merged = mergeAppendedTurns(existing, incoming);
+    expect(merged.map((t) => t.id)).toEqual(['u1', 'a1', 'u2', 'a2']);
+    expect(merged.find((t) => t.id === 'a1')?.text).toBe('hello there');
+  });
+
+  it('leaves the existing turns untouched when the delta is empty', () => {
+    const existing = [{ id: 'u1', role: 'user' }];
+    expect(mergeAppendedTurns(existing, [])).toBe(existing);
   });
 
   it('drops the room placeholder when no agent will respond', () => {

@@ -60,7 +60,7 @@ import {
   type AssistantWatermark,
   type ListedChatMessage,
 } from './stream/pending-reply.js';
-import { applyRoomDispatchPlan, mergePrependedTurns, shouldKeepRoomAssistantPlaceholder } from './history-turns.js';
+import { applyRoomDispatchPlan, mergePrependedTurns, mergeAppendedTurns, shouldKeepRoomAssistantPlaceholder } from './history-turns.js';
 import {
   dataAccessApprovalInfoFrom,
   type DataAccessApprovalInfo,
@@ -116,7 +116,7 @@ import {
   attachmentsForCommand,
   mergeAttachmentDisplay,
 } from './attachments.js';
-import { createContactThreadApi, type ContactThreadApi } from './session/contact-thread-api.js';
+import { createContactThreadApi, listMessagesPage, type ContactThreadApi } from './session/contact-thread-api.js';
 import {
   commandFailureError,
   nexusSessionCode,
@@ -172,6 +172,15 @@ import {
 } from './tools/index.js';
 import { parseModeChangedEvent } from './mode-transition.js';
 
+import {
+  ChatCacheStore,
+  MemoryChatCacheAdapter,
+  buildThreadSkeleton,
+  type ChatCacheAdapter,
+  type ChatCacheStats,
+  type CachedConversationList,
+  type CachedThreadSkeleton,
+} from './session/chat-cache.js';
 const lockedOpenInflight = new Map<string, Promise<{ conversationId: string; created: boolean; greetingText?: string | null }>>();
 const openingRequested = new Set<string>();
 
@@ -203,6 +212,25 @@ export type {
 };
 export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED, CONTACT_BANNED_CODE } from './types.js';
 export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus, SubAgentPendingApproval } from './state.js';
+export {
+  MemoryChatCacheAdapter,
+  ChatCacheStore,
+  DEFAULT_CHAT_CACHE_MAX_BYTES,
+  CHAT_CACHE_KEY_PREFIX,
+  chatCacheListKey,
+  chatCacheThreadKey,
+  buildThreadSkeleton,
+} from './session/chat-cache.js';
+export type {
+  ChatCacheAdapter,
+  ChatCacheStats,
+  ChatCacheStoreOptions,
+  ChatCacheKeyParts,
+  CachedConversationList,
+  CachedConversationListItem,
+  CachedThreadSkeleton,
+  CachedTurnSkeleton,
+} from './session/chat-cache.js';
 export {
   inferSupportsReasoning,
   modelSupportsToolCalling,
@@ -795,6 +823,10 @@ export type ChatState = {
     oldest: { messageId: string; createdAt: string | null } | null;
     loading: boolean;
     loadingMore: boolean;
+    /** Newest cached turn — the `after` cursor for the next delta fetch. */
+    newest: { messageId: string; createdAt: string | null } | null;
+    /** True while newer turns exist beyond `newest` (a forward page is pending). */
+    hasNewer: boolean;
   };
   lastDispatchSkip?: string | null;
 };
@@ -1706,6 +1738,8 @@ export type NexusChat = {
         oldest?: { messageId: string; createdAt: string | null } | null;
       };
     },
+        newest?: { messageId: string; createdAt: string | null } | null;
+        hasNewer?: boolean;
   ) => void;
   prependTurns: (
     rows: Array<{
@@ -1726,8 +1760,69 @@ export type NexusChat = {
   ) => void;
   /** Apply persisted conversation usage / context snapshot (e.g. from conversations.get). */
   applyUsage: (usage: ChatUsageSnapshot | null | undefined) => void;
+  /**
+   * Append a forward delta of turns (id-deduped), skipping any id already in
+   * the transcript. Used after rehydrating from the client cache so only the
+   * messages the cache did not hold are fetched.
+   */
+  appendDelta: (
+    rows: Array<{
+      id?: string;
+      role: string;
+      content?: string;
+      text?: string;
+      toolCalls?: Array<Record<string, unknown>>;
+      attachments?: IoDescriptor[];
+      createdAt?: string | null;
+      senderId?: string | null;
+      senderName?: string | null;
+    }>,
+    opts?: {
+      hasNewer?: boolean;
+      newest?: { messageId: string; createdAt: string | null } | null;
+    },
+  ) => void;
   /** Region presign+register upload; returns region fileId as conversation_attachment ref. */
   uploadAttachment: (
+  /** Read the cached conversation list (metadata only) for instant render on reload. */
+  getCachedConversationList: (opts?: {
+    status?: string | null;
+  }) => Promise<CachedConversationList | null>;
+  /** Persist the conversation list (metadata only) after a list fetch. */
+  putCachedConversationList: (
+    list: CachedConversationList,
+    opts?: { status?: string | null },
+  ) => Promise<void>;
+  /** Read a conversation's cached turn skeletons (no bodies) for instant render. */
+  getCachedThreadSkeleton: (conversationId: string) => Promise<CachedThreadSkeleton | null>;
+  /** Persist a conversation's turn skeletons after a history fetch. */
+  putCachedThreadSkeleton: (skeleton: CachedThreadSkeleton) => Promise<void>;
+  /** Drop one conversation's cached thread (archive / delete). */
+  invalidateConversation: (conversationId: string) => Promise<void>;
+  /** Drop every chat cache entry for this identity (logout / identity switch). */
+  clearChatCache: () => Promise<void>;
+  /** Cache byte usage + budget, for a settings readout. */
+  chatCacheStats: () => Promise<ChatCacheStats>;
+  /**
+   * Open a thread with lazy history: paint the cached turn skeletons instantly
+   * (metadata only), then fetch only the newest `historyInitialLimit` turns
+   * (or the delta past `newest` when the cache is warm) and persist a fresh
+   * skeleton. Agent context is unaffected — this is the client read path.
+   */
+  loadThreadHistory: (
+    conversationId: string,
+    opts?: { limit?: number },
+  ) => Promise<{ fromCache: boolean; fetched: number }>;
+  /** Load older turns (scroll-up) using the `oldest` cursor. */
+  loadOlderHistory: (opts?: {
+    conversationId?: string | null;
+    limit?: number;
+  }) => Promise<boolean>;
+  /** Load newer turns via the forward `after` delta cursor. */
+  loadNewerHistory: (opts?: {
+    conversationId?: string | null;
+    limit?: number;
+  }) => Promise<boolean>;
     file: File | Blob | Parameters<typeof uploadAttachmentViaRegion>[1],
     opts?: UploadAttachmentOpts,
   ) => Promise<UploadAttachmentResult>;
@@ -1915,6 +2010,22 @@ export type CreateNexusChatOptions = {
   pageTools?: PageToolSource | null;
 };
 
+  /**
+   * Durable metadata cache for the conversation list + per-thread turn
+   * skeletons. Hosts inject IndexedDB / main-process file / AsyncStorage;
+   * the default is in-memory. Bodies are never cached — only list metadata
+   * and short turn previews.
+   */
+  cacheAdapter?: ChatCacheAdapter;
+  /** Byte budget for the durable cache. Default 100 MB. */
+  cacheMaxBytes?: number;
+  /**
+   * Cache namespace, normally the signed-in user id, so two identities on one
+   * device never read each other's list/previews. Defaults to `anon`.
+   */
+  cacheScope?: string | null;
+  /** Initial turns fetched when a thread opens with no cache. Default 20. */
+  historyInitialLimit?: number;
 /**
  * Headless Nexus chat controller — framework-free.
  * Portal and OAuth embeds inject a CommandClient with the same send contract.
@@ -1937,7 +2048,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     messages: [],
     turns: [],
     streaming: false,
-    history: { hasMore: false, oldest: null, loading: false, loadingMore: false },
+    history: { hasMore: false, oldest: null, newest: null, hasNewer: false, loading: false, loadingMore: false },
     lastDispatchSkip: null,
     selectedAgentId: null,
     conversationId: null,
@@ -2420,6 +2531,85 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
 
   const guardLockedChannel = (input: {
     roomId?: string | null;
+  const cacheScope = typeof opts.cacheScope === 'string' && opts.cacheScope.trim()
+    ? opts.cacheScope.trim()
+    : null;
+  const chatCache = new ChatCacheStore({
+    adapter: opts.cacheAdapter ?? new MemoryChatCacheAdapter(),
+    maxBytes: opts.cacheMaxBytes,
+  });
+  /** Turns fetched on an uncached open. Clamped to the handler's 1-200 range. */
+  const historyInitialLimit = (() => {
+    const raw = opts.historyInitialLimit;
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 1) return 20;
+    return Math.min(Math.floor(raw), 200);
+  })();
+
+  const setHistoryLoading = (loading: boolean) => {
+    const prev = store.getState().history;
+    store.setState({
+      history: {
+        hasMore: prev?.hasMore ?? false,
+        oldest: prev?.oldest ?? null,
+        newest: prev?.newest ?? null,
+        hasNewer: prev?.hasNewer ?? false,
+        loading: false,
+        loadingMore: loading,
+      },
+    });
+  };
+
+  /**
+   * Render cached skeletons immediately. Bodies are empty previews, so the
+   * fetch that follows replaces them in place (same ids) rather than duplicating.
+   */
+  const applyThreadCachedTurns = (conversationId: string, skeleton: CachedThreadSkeleton) => {
+    const rows = skeleton.turns.map((turn) => ({
+      id: turn.id,
+      role: turn.role,
+      content: '',
+      createdAt: turn.createdAt ?? null,
+      senderId: turn.senderId ?? null,
+      senderName: turn.senderName ?? null,
+    }));
+    controller.rehydrateTurns(rows, {
+      conversationId,
+      detachStream: true,
+      history: {
+        hasMore: skeleton.hasMore,
+        oldest: skeleton.firstMessageId
+          ? {
+              messageId: skeleton.firstMessageId,
+              createdAt: skeleton.turns[0]?.createdAt ?? null,
+            }
+          : null,
+        newest: skeleton.lastMessageId
+          ? {
+              messageId: skeleton.lastMessageId,
+              createdAt: skeleton.turns[skeleton.turns.length - 1]?.createdAt ?? null,
+            }
+          : null,
+        hasNewer: false,
+      },
+    });
+  };
+
+  /** Persist the current transcript as a metadata-only skeleton. Best effort. */
+  const persistThreadSkeleton = async (conversationId: string) => {
+    const state = store.getState();
+    try {
+      const skeleton = buildThreadSkeleton(conversationId, state.turns, {
+        hasMore: state.history?.hasMore ?? false,
+      });
+      await chatCache.putThreadSkeleton({ scope: cacheScope }, skeleton);
+    } catch (err) {
+      opts.logger?.warn?.('chat_cache_write_failed', {
+        conversationId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
     conversationId?: string | null;
     requireKnownConversation?: boolean;
     adoptedConversationId?: string | null;
@@ -3887,6 +4077,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           logLockedAgentRefusal(gated);
           return;
         }
+          newest?: { messageId: string; createdAt: string | null } | null;
+          hasNewer?: boolean;
       }
       // Rebuilt rows carry no raw sub-agent stream: let the next replay refill it.
       subAgentSeq.reset(store.getState().conversationId);
@@ -3989,6 +4181,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const incoming = rows.map((row, i) => ({
         id: String(row.id || `older_${i}`),
         role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
+            newest: rehydrateOpts.history.newest ?? null,
+            hasNewer: !!rehydrateOpts.history.hasNewer,
         text: String(row.content ?? row.text ?? ''),
         ...(row.createdAt ? { createdAt: row.createdAt } : {}),
         ...(row.senderId ? { senderId: row.senderId } : {}),
@@ -4026,6 +4220,56 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     async approveTool({ approvalId, callId }) {
       const result = (await opts.client.send('anx.ai-agents.approvals.approve', {
         approvalId,
+          newest: prev?.newest ?? null,
+          hasNewer: prev?.hasNewer ?? false,
+          loading: false,
+          loadingMore: false,
+        },
+      });
+    },
+    appendDelta(
+      rows: Array<{
+        id?: string;
+        role: string;
+        content?: string;
+        text?: string;
+        toolCalls?: Array<Record<string, unknown>>;
+        attachments?: IoDescriptor[];
+        createdAt?: string | null;
+        senderId?: string | null;
+        senderName?: string | null;
+      }>,
+      deltaOpts?: {
+        hasNewer?: boolean;
+        newest?: { messageId: string; createdAt: string | null } | null;
+      },
+    ) {
+      const existing = store.getState().turns;
+      const incoming: ChatTurn[] = rows.map((row, i) => ({
+        id: String(row.id || `delta_${i}`),
+        role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
+        text: String(row.content ?? row.text ?? ''),
+        ...(row.createdAt ? { createdAt: row.createdAt } : {}),
+        ...(row.senderId ? { senderId: row.senderId } : {}),
+        ...(row.senderName ? { senderName: row.senderName } : {}),
+      }));
+      // Upsert by id: a re-included newest turn replaces its cached preview in
+      // place; genuinely new ids append.
+      const next = mergeAppendedTurns(existing, incoming);
+      if (incoming.length) syncMessagesFromTurns(next);
+      const prev = store.getState().history;
+      const lastTurn = next[next.length - 1];
+      const newest =
+        deltaOpts?.newest ??
+        (lastTurn
+          ? { messageId: lastTurn.id, createdAt: lastTurn.createdAt ?? null }
+          : prev?.newest ?? null);
+      store.setState({
+        history: {
+          hasMore: prev?.hasMore ?? false,
+          oldest: prev?.oldest ?? null,
+          newest,
+          hasNewer: deltaOpts?.hasNewer ?? false,
       })) as SendResult;
       if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
         if (result.kind === 'sca_required') {
@@ -4049,6 +4293,138 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       return true;
     },
     async revertTool({ approvalId, callId }) {
+    getCachedConversationList(cacheOpts) {
+      return chatCache.getConversationList({ scope: cacheScope }, cacheOpts?.status ?? null);
+    },
+    putCachedConversationList(list, cacheOpts) {
+      return chatCache.putConversationList({ scope: cacheScope }, list, cacheOpts?.status ?? null);
+    },
+    getCachedThreadSkeleton(conversationId) {
+      return chatCache.getThreadSkeleton({ scope: cacheScope }, conversationId);
+    },
+    async putCachedThreadSkeleton(skeleton) {
+      await chatCache.putThreadSkeleton({ scope: cacheScope }, skeleton);
+    },
+    invalidateConversation(conversationId) {
+      return chatCache.invalidateConversation({ scope: cacheScope }, conversationId);
+    },
+    clearChatCache() {
+      return chatCache.clear();
+    },
+    async chatCacheStats() {
+      return chatCache.stats();
+    },
+    async loadThreadHistory(conversationId, historyOpts) {
+      const id = typeof conversationId === 'string' ? conversationId.trim() : '';
+      if (!id) return { fromCache: false, fetched: 0 };
+      const limit =
+        typeof historyOpts?.limit === 'number' && historyOpts.limit > 0
+          ? Math.min(Math.floor(historyOpts.limit), 200)
+          : historyInitialLimit;
+
+      // Paint the cached skeleton first so the thread renders instantly; the
+      // fetch below then refreshes the newest turns' bodies.
+      const skeleton = await chatCache.getThreadSkeleton({ scope: cacheScope }, id);
+      let fromCache = false;
+      if (skeleton?.turns.length) {
+        applyThreadCachedTurns(id, skeleton);
+        fromCache = true;
+      }
+
+      try {
+        const page = await listMessagesPage(
+          { send: opts.client.send.bind(opts.client) },
+          id,
+          { limit },
+        );
+        const rows = rehydrateRowsFromMessages(page.messages);
+        controller.rehydrateTurns(rows, {
+          conversationId: id,
+          detachStream: true,
+          history: {
+            hasMore: page.hasMore,
+            oldest: page.oldest,
+            newest: page.newest,
+            hasNewer: page.hasNewer,
+          },
+        });
+        await persistThreadSkeleton(id);
+        return { fromCache, fetched: rows.length };
+      } catch (err) {
+        opts.logger?.warn?.('thread_history_failed', {
+          conversationId: id,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return { fromCache, fetched: 0 };
+      }
+    },
+    async loadOlderHistory(olderOpts) {
+      const state = store.getState();
+      const conversationId = olderOpts?.conversationId ?? state.conversationId;
+      const oldest = state.history?.oldest ?? null;
+      if (!conversationId || !oldest || !oldest.createdAt || state.history?.loadingMore) return false;
+      const limit =
+        typeof olderOpts?.limit === 'number' && olderOpts.limit > 0
+          ? Math.min(Math.floor(olderOpts.limit), 200)
+          : historyInitialLimit;
+      const beforeCursor = { messageId: oldest.messageId, createdAt: oldest.createdAt };
+      setHistoryLoading(true);
+      try {
+        const page = await listMessagesPage(
+          { send: opts.client.send.bind(opts.client) },
+          conversationId,
+          { limit, before: beforeCursor },
+        );
+        const rows = rehydrateRowsFromMessages(page.messages);
+        if (!rows.length) {
+          controller.prependTurns([], { hasMore: false, oldest: beforeCursor });
+          return false;
+        }
+        controller.prependTurns(rows, { hasMore: page.hasMore, oldest: page.oldest });
+        await persistThreadSkeleton(conversationId);
+        return true;
+      } catch (err) {
+        opts.logger?.warn?.('thread_history_older_failed', {
+          conversationId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        setHistoryLoading(false);
+        return false;
+      }
+    },
+    async loadNewerHistory(newerOpts) {
+      const state = store.getState();
+      const conversationId = newerOpts?.conversationId ?? state.conversationId;
+      const newest = state.history?.newest ?? null;
+      if (!conversationId || !newest || !newest.createdAt) return false;
+      const limit =
+        typeof newerOpts?.limit === 'number' && newerOpts.limit > 0
+          ? Math.min(Math.floor(newerOpts.limit), 200)
+          : historyInitialLimit;
+      const afterCursor = { messageId: newest.messageId, createdAt: newest.createdAt };
+      try {
+        // Re-include the newest cached turn so its (preview-only) body is
+        // refreshed, then append only what comes after it.
+        const page = await listMessagesPage(
+          { send: opts.client.send.bind(opts.client) },
+          conversationId,
+          { limit, after: afterCursor },
+        );
+        const rows = rehydrateRowsFromMessages(page.messages);
+        controller.appendDelta(rows, {
+          hasNewer: page.hasNewer,
+          newest: page.newest ?? afterCursor,
+        });
+        await persistThreadSkeleton(conversationId);
+        return true;
+      } catch (err) {
+        opts.logger?.warn?.('thread_history_newer_failed', {
+          conversationId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      }
+    },
       const result = (await opts.client.send('anx.ai-agents.approvals.reject', {
         approvalId,
       })) as SendResult;

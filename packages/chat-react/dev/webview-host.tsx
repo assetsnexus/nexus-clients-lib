@@ -16,6 +16,7 @@ import {
   createHostBridge,
   createHostPageTools,
   createRegionCommandClient,
+  createWebViewChatCacheAdapter,
   loadWakeEngine,
   openContactThread,
   type HostToSdkMessage,
@@ -24,6 +25,8 @@ import {
   type ChatIdentitySession,
   type HostPageScreen,
   type HostPageSitemapEntry,
+  type HostChatCacheResultMessage,
+  type WebViewChatCacheTransport,
 } from '@nexus/chat-react';
 
 type AuthState = {
@@ -136,6 +139,25 @@ function WebViewHost() {
   const clientRef = useRef(client);
   clientRef.current = client;
 
+  // The durable chat cache lives in the native AsyncStorage; the WebView talks to
+  // it through the host bridge (the same `postToNative` channel everything else
+  // uses). The handler set is a ref so the message loop can fan a reply to the
+  // adapter without re-creating it on render.
+  const chatCacheResultHandlersRef = useRef<
+    Set<(result: HostChatCacheResultMessage) => void>
+  >(new Set());
+  const chatCacheAdapterRef = useRef<ReturnType<typeof createWebViewChatCacheAdapter> | null>(null);
+  if (!chatCacheAdapterRef.current) {
+    const transport: WebViewChatCacheTransport = {
+      send: (request) => postToNative(request as unknown as SdkToHostMessage),
+      onResult: (handler) => {
+        chatCacheResultHandlersRef.current.add(handler);
+        return () => chatCacheResultHandlersRef.current.delete(handler);
+      },
+    };
+    chatCacheAdapterRef.current = createWebViewChatCacheAdapter(transport);
+  }
+
   useEffect(() => {
     const bridge = createHostBridge({
       postToHost: postToNative,
@@ -168,6 +190,9 @@ function WebViewHost() {
               pending.resolve(msg.result);
             }
           }
+        }
+        if (msg.type === 'chatCacheResult') {
+          for (const handler of chatCacheResultHandlersRef.current) handler(msg);
         }
         if (msg.type === 'openContact' && msg.contactId) {
           setPendingContactId(msg.contactId);
@@ -249,8 +274,10 @@ function WebViewHost() {
         features: { adminPanels: false },
         publicFilesBaseUrl: auth.apiBaseUrl,
         wakeEngine,
-      });
-      setClient(nextClient);
+        // Durable, metadata-only cache in native AsyncStorage via the host bridge.
+        cacheAdapter: chatCacheAdapterRef.current ?? undefined,
+        cacheScope: (auth.identity.userId as string) || null,
+      });      setClient(nextClient);
       setChat(next);
     });
     return () => {

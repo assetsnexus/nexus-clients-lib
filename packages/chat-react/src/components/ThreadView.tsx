@@ -13,6 +13,13 @@ import type { ViewerFileRef } from '../viewer/load-preview.js';
  */
 export const THREAD_STICK_TO_BOTTOM_PX = 80;
 
+/**
+ * How close to the top (in px) the reader must be before scroll-up triggers the
+ * "load older" fetch. A small threshold keeps the fetch from firing on an
+ * incidental 1px nudge.
+ */
+export const THREAD_LOAD_OLDER_AT_TOP_PX = 48;
+
 export type ThreadViewProps = {
   turns: ChatTurn[];
   streaming?: boolean;
@@ -20,6 +27,12 @@ export type ThreadViewProps = {
   chat?: NexusChat;
   conversationId?: string | null;
   onOpenFile?: (file: ViewerFileRef) => void;
+  /** Older turns exist beyond the loaded window (scroll-up should fetch). */
+  historyHasMore?: boolean;
+  /** A load-older request is in flight. */
+  historyLoadingMore?: boolean;
+  /** Fetch the previous page. Fired on scroll-up near the top. */
+  onLoadOlder?: () => void;
 };
 
 function attachmentLabel(att: IoDescriptor): string {
@@ -59,6 +72,9 @@ export function ThreadView({
   chat,
   conversationId,
   onOpenFile,
+  historyHasMore,
+  historyLoadingMore,
+  onLoadOlder,
 }: ThreadViewProps) {
   const threadRef = useRef<HTMLDivElement>(null);
   // Whether the reader is "at" the bottom. Starts true so a freshly-opened
@@ -68,12 +84,27 @@ export function ThreadView({
   // The conversation whose turns are currently rendered, so a *switch* can be
   // told apart from an append within the same conversation.
   const conversationRef = useRef<string | null>(conversationId ?? null);
+  // Turns rendered before the last older page landed, so prepending older turns
+  // does not visually jump the viewport (the browser would otherwise keep
+  // scrollTop and show a different message).
+  const loadOlderAnchorRef = useRef<{ count: number; height: number } | null>(null);
+  const loadOlderInFlightRef = useRef(false);
 
   useLayoutEffect(() => {
     const el = threadRef.current;
     if (!el) return;
     const switched = conversationRef.current !== (conversationId ?? null);
     conversationRef.current = conversationId ?? null;
+    // After an older page is prepended, keep the message the reader was on in
+    // place by shifting scrollTop by exactly the height the new turns added.
+    const anchor = loadOlderAnchorRef.current;
+    if (!switched && anchor) {
+      const delta = el.scrollHeight - anchor.height;
+      if (delta > 0) el.scrollTop += delta;
+      loadOlderAnchorRef.current = null;
+      stickRef.current = false;
+      return;
+    }
     // Jump on open/switch, and whenever the reader is already at the bottom;
     // never yank the viewport away from someone reading further up.
     if (switched || stickRef.current) {
@@ -81,6 +112,10 @@ export function ThreadView({
       stickRef.current = true;
     }
   }, [turns, streaming, conversationId]);
+
+  useEffect(() => {
+    if (!historyLoadingMore) loadOlderInFlightRef.current = false;
+  }, [historyLoadingMore]);
 
   // Follow streamed growth (an assistant turn with no new array identity yet,
   // e.g. tool cards appended inside a turn) too, once per frame.
@@ -101,6 +136,14 @@ export function ThreadView({
   if (!turns.length && !streaming) {
     return <div className="nexus-chat__empty">{empty ?? 'Select a contact to start chatting.'}</div>;
   }
+  const triggerLoadOlder = () => {
+    if (!onLoadOlder || !historyHasMore || historyLoadingMore) return;
+    if (loadOlderInFlightRef.current) return;
+    const el = threadRef.current;
+    loadOlderInFlightRef.current = true;
+    loadOlderAnchorRef.current = el ? { count: turns.length, height: el.scrollHeight } : null;
+    onLoadOlder();
+  };
   return (
     <div
       ref={threadRef}
@@ -112,8 +155,24 @@ export function ThreadView({
         if (!el) return;
         stickRef.current =
           el.scrollHeight - el.scrollTop - el.clientHeight <= THREAD_STICK_TO_BOTTOM_PX;
+        // Scroll-up near the top pulls the previous page (scroll anchor keeps
+        // the reading position stable once it lands).
+        if (el.scrollTop <= THREAD_LOAD_OLDER_AT_TOP_PX) triggerLoadOlder();
       }}
     >
+      {historyLoadingMore ? (
+        <div className="nexus-chat__load-older" style={{ textAlign: 'center', fontSize: 11, color: 'var(--nx-chat-muted)' }}>
+          Loading older messages…
+        </div>
+      ) : historyHasMore && onLoadOlder ? (
+        <button
+          type="button"
+          className="nexus-chat__load-older nexus-chat__chip nexus-chat__chip--clickable"
+          onClick={triggerLoadOlder}
+        >
+          Load older messages
+        </button>
+      ) : null}
       {turns.map((turn) => {
         const isUser = turn.role === 'user';
         const isStreamingBubble =
