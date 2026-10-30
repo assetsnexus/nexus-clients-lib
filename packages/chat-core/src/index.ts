@@ -573,6 +573,7 @@ export {
   SCHEDULE_CHECK_BACK_TOOL_NAME,
   parseScheduleCheckBackResult,
   isScheduleCheckBackTool,
+  selectPromotedCheckBackRun,
   checkBackWakeAtMs,
   checkBackRemainingMs,
   isCheckBackWaiting,

@@ -46,6 +46,18 @@ export function ToolTimeline({
           <span aria-hidden="true">▸</span>
         </button>
       ) : null}
+      {view.mode === 'summary' && view.promotedCheckBack ? (
+        // A waiting schedule_check_back must stay visible outside the collapsed
+        // tools, otherwise the countdown hides behind the summary row.
+        <div className="nexus-chat__tool-timeline-promoted">
+          <ToolTimelineRow
+            run={view.promotedCheckBack}
+            chat={chat}
+            conversationId={conversationId}
+            onOpenFile={onOpenFile}
+          />
+        </div>
+      ) : null}
       {view.mode !== 'summary' && expanded ? (
         <button
           type="button"

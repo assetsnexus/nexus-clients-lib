@@ -22,7 +22,8 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
-    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "dompurify": "^3.3.2",

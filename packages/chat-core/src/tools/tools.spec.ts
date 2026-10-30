@@ -12,6 +12,7 @@ import {
   toConsoleStorageExplorerUrl,
   parseScheduleCheckBackResult,
   parseUserChoiceOptions,
+  selectPromotedCheckBackRun,
 } from './index.js';
 
 describe('schedule-check-back', () => {
@@ -31,6 +32,51 @@ describe('schedule-check-back', () => {
   it('treats settled trigger errors as non-retryable', () => {
     expect(isCheckBackTriggerSettledError(new Error('No pending check-back'))).toBe(true);
     expect(isCheckBackTriggerSettledError(new Error('network'))).toBe(false);
+  });
+
+  it('promotes a still-waiting check-back so it can render outside collapsed tools', () => {
+    const waiting = {
+      tool: 'schedule_check_back',
+      result: {
+        scheduled: true,
+        delaySec: 90,
+        reason: 'Wait for upload',
+        wakeAt: new Date(Date.now() + 90_000).toISOString(),
+      },
+    };
+    expect(selectPromotedCheckBackRun([waiting])).toBe(waiting);
+  });
+
+  it('never promotes a completed check-back (a stale countdown must not linger)', () => {
+    expect(
+      selectPromotedCheckBackRun([
+        {
+          tool: 'schedule_check_back',
+          result: {
+            scheduled: true,
+            delaySec: 90,
+            reason: 'Wait for upload',
+            wakeAt: new Date().toISOString(),
+            wakeUp: true,
+          },
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it('ignores other tools and picks the newest promoted check-back', () => {
+    const older = {
+      tool: 'schedule_check_back',
+      result: { scheduled: true, delaySec: 30, reason: 'a', wakeAt: new Date().toISOString() },
+    };
+    const newer = {
+      tool: 'schedule_check_back',
+      result: { scheduled: true, delaySec: 60, reason: 'b', wakeAt: new Date().toISOString() },
+    };
+    const other = { tool: 'anx.crm.lead.create', result: { ok: true } };
+    expect(selectPromotedCheckBackRun([other, older, newer])).toBe(newer);
+    expect(selectPromotedCheckBackRun([other])).toBeNull();
+    expect(selectPromotedCheckBackRun([])).toBeNull();
   });
 });
 

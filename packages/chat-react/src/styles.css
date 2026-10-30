@@ -384,6 +384,12 @@
   border-color: color-mix(in srgb, #e55353 45%, var(--nx-chat-border));
 }
 
+/* A waiting schedule_check_back stays visible below the collapsed summary row
+   so its countdown is never hidden behind "N tools called". */
+.nexus-chat__tool-timeline-promoted {
+  margin-top: 2px;
+}
+
 .nexus-chat__tool-row {
   font-size: 12px;
   border-left: 3px solid var(--nx-chat-accent);

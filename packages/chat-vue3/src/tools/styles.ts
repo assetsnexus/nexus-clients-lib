@@ -120,6 +120,8 @@ export const TOOL_WIDGET_CSS = `
 .nexus-tool-timeline__summary:hover { background: #fff; color: #334155; }
 .nexus-tool-timeline__summary--errors .nexus-tool-timeline__summary-label { color: #b91c1c; }
 .nexus-tool-timeline__summary-label { flex: 1; min-width: 0; }
+.nexus-tool-timeline__promoted { margin-top: 2px; }
+.nexus-tool-timeline__promoted .nexus-checkback { margin: 0; }
 .nexus-tool-timeline .timeline-marker { width: 6px; height: 6px; border-radius: 50%; margin-top: 9px; background: #c5cbd3; flex-shrink: 0; box-shadow: 0 0 0 2px rgba(197,203,211,.25); }
 .nexus-tool-timeline .timeline-marker.is-running { background: #2a9d8f; box-shadow: 0 0 0 3px rgba(42,157,143,.18); animation: nexus-tool-pulse 1.2s ease-in-out infinite; }
 .nexus-tool-timeline .timeline-marker.is-paused { background: #e9a825; box-shadow: 0 0 0 3px rgba(233,168,37,.16); }

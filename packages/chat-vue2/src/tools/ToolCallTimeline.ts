@@ -3,6 +3,7 @@ import {
   isScheduleCheckBackTool,
   parseScheduleCheckBackResult,
   parseUserChoiceOptions,
+  selectPromotedCheckBackRun,
   type ChatToolRun,
 } from '@nexus/chat-core';
 import AskUserChoiceToolWidget from './AskUserChoiceToolWidget';
@@ -125,6 +126,15 @@ export const ToolCallTimeline = defineComponent({
     },
     summaryLabel(): string {
       return formatToolsSummary(this.normalized.length, this.errorCount);
+    },
+    /**
+     * A still-waiting `schedule_check_back` must never hide behind the collapsed
+     * summary — promote it below the summary row so the countdown stays visible
+     * (the user otherwise has to expand the tools to notice the agent is waiting).
+     */
+    promotedCheckBackRun(): ChatToolRun | null {
+      if (!this.useFinishedSummary) return null;
+      return selectPromotedCheckBackRun(this.normalized);
     },
   },
   methods: {
@@ -278,6 +288,15 @@ export const ToolCallTimeline = defineComponent({
               h('span', { class: 'nexus-tool-run__chev', attrs: { 'aria-hidden': 'true' } }, '▸'),
             ],
           ),
+          ...(this.promotedCheckBackRun
+            ? [
+                h(
+                  'div',
+                  { class: 'nexus-tool-timeline__promoted' },
+                  [this.renderRun(h, this.promotedCheckBackRun)],
+                ),
+              ]
+            : []),
         ],
       );
     }

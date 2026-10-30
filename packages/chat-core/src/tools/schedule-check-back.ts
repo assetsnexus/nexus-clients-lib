@@ -41,6 +41,31 @@ export function isScheduleCheckBackTool(toolName: string): boolean {
   return toolName === SCHEDULE_CHECK_BACK_TOOL_NAME;
 }
 
+/**
+ * Picks the tool run whose "Scheduled check-back" card must stay visible even
+ * when the finished tool timeline is collapsed into its summary row (otherwise
+ * the countdown is hidden inside the collapsed tools and the user cannot tell
+ * the agent is waiting).
+ *
+ * Returns the newest AI-initiated check-back that has NOT fired yet
+ * (`wakeUp !== true`), or `null` when there is nothing to promote. The backend
+ * patches a scheduled row to `wakeUp: true` once the wake-up turn runs, so a
+ * completed row is deliberately ignored — a stale countdown must never be kept
+ * on screen next to finished work.
+ */
+export function selectPromotedCheckBackRun<T extends { tool: string; result?: unknown }>(
+  runs: readonly T[],
+): T | null {
+  let promoted: T | null = null;
+  for (const run of runs) {
+    if (!isScheduleCheckBackTool(run.tool)) continue;
+    const parsed = parseScheduleCheckBackResult(run.result);
+    if (!parsed || parsed.wakeUp) continue;
+    promoted = run;
+  }
+  return promoted;
+}
+
 export function checkBackWakeAtMs(result: ScheduleCheckBackResult): number {
   const parsed = Date.parse(result.wakeAt);
   return Number.isFinite(parsed) ? parsed : Date.now() + result.delaySec * 1000;
