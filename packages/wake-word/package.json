@@ -1,6 +1,6 @@
 {
   "name": "@nexus/wake-word",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "On-device wake-word engine adapter for Nexus chat surfaces. Wake never authenticates.",
   "license": "UNLICENSED",
   "publishConfig": {
