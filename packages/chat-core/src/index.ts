@@ -102,6 +102,7 @@ import {
 } from './contact-identity.js';
 import { SubAgentObserver } from './stream/sub-agent-observer.js';
 import { SubAgentSeqTracker } from './stream/sub-agent-seq-tracker.js';
+import { ElevationPromptTracker } from './stream/elevation-prompt-tracker.js';
 import {
   applySubAgentRunStatesToTurns,
   type SubAgentRunState,
@@ -171,7 +172,6 @@ import {
   type QuestionAnswer,
 } from './tools/index.js';
 import { parseModeChangedEvent } from './mode-transition.js';
-
 import {
   ChatCacheStore,
   MemoryChatCacheAdapter,
@@ -181,6 +181,7 @@ import {
   type CachedConversationList,
   type CachedThreadSkeleton,
 } from './session/chat-cache.js';
+
 const lockedOpenInflight = new Map<string, Promise<{ conversationId: string; created: boolean; greetingText?: string | null }>>();
 const openingRequested = new Set<string>();
 
@@ -211,7 +212,6 @@ export type {
   IoDescriptor,
 };
 export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED, CONTACT_BANNED_CODE } from './types.js';
-export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus, SubAgentPendingApproval } from './state.js';
 export {
   MemoryChatCacheAdapter,
   ChatCacheStore,
@@ -231,6 +231,7 @@ export type {
   CachedThreadSkeleton,
   CachedTurnSkeleton,
 } from './session/chat-cache.js';
+export type { ChatTurn, ChatDeliveryStatus, PanelState, ChatToolRun, ChatToolRunStatus, SubAgentFinalStatus, SubAgentPendingApproval } from './state.js';
 export {
   inferSupportsReasoning,
   modelSupportsToolCalling,
@@ -295,6 +296,7 @@ export {
 } from './agent-runs/apply-run-states.js';
 export { SubAgentObserver, isObservedEventType } from './stream/sub-agent-observer.js';
 export { SubAgentSeqTracker } from './stream/sub-agent-seq-tracker.js';
+export { ElevationPromptTracker } from './stream/elevation-prompt-tracker.js';
 export {
   permissionElevationInfoFromEvent,
   isSubAgentApprovalEvent,
@@ -821,12 +823,12 @@ export type ChatState = {
   history?: {
     hasMore: boolean;
     oldest: { messageId: string; createdAt: string | null } | null;
-    loading: boolean;
-    loadingMore: boolean;
     /** Newest cached turn — the `after` cursor for the next delta fetch. */
     newest: { messageId: string; createdAt: string | null } | null;
     /** True while newer turns exist beyond `newest` (a forward page is pending). */
     hasNewer: boolean;
+    loading: boolean;
+    loadingMore: boolean;
   };
   lastDispatchSkip?: string | null;
 };
@@ -1736,10 +1738,10 @@ export type NexusChat = {
       history?: {
         hasMore?: boolean;
         oldest?: { messageId: string; createdAt: string | null } | null;
-      };
-    },
         newest?: { messageId: string; createdAt: string | null } | null;
         hasNewer?: boolean;
+      };
+    },
   ) => void;
   prependTurns: (
     rows: Array<{
@@ -1758,8 +1760,6 @@ export type NexusChat = {
       oldest?: { messageId: string; createdAt: string | null } | null;
     },
   ) => void;
-  /** Apply persisted conversation usage / context snapshot (e.g. from conversations.get). */
-  applyUsage: (usage: ChatUsageSnapshot | null | undefined) => void;
   /**
    * Append a forward delta of turns (id-deduped), skipping any id already in
    * the transcript. Used after rehydrating from the client cache so only the
@@ -1782,8 +1782,8 @@ export type NexusChat = {
       newest?: { messageId: string; createdAt: string | null } | null;
     },
   ) => void;
-  /** Region presign+register upload; returns region fileId as conversation_attachment ref. */
-  uploadAttachment: (
+  /** Apply persisted conversation usage / context snapshot (e.g. from conversations.get). */
+  applyUsage: (usage: ChatUsageSnapshot | null | undefined) => void;
   /** Read the cached conversation list (metadata only) for instant render on reload. */
   getCachedConversationList: (opts?: {
     status?: string | null;
@@ -1823,6 +1823,8 @@ export type NexusChat = {
     conversationId?: string | null;
     limit?: number;
   }) => Promise<boolean>;
+  /** Region presign+register upload; returns region fileId as conversation_attachment ref. */
+  uploadAttachment: (
     file: File | Blob | Parameters<typeof uploadAttachmentViaRegion>[1],
     opts?: UploadAttachmentOpts,
   ) => Promise<UploadAttachmentResult>;
@@ -2008,8 +2010,6 @@ export type CreateNexusChatOptions = {
    * instructions). Swappable later with `setPageTools` on a route change.
    */
   pageTools?: PageToolSource | null;
-};
-
   /**
    * Durable metadata cache for the conversation list + per-thread turn
    * skeletons. Hosts inject IndexedDB / main-process file / AsyncStorage;
@@ -2026,6 +2026,8 @@ export type CreateNexusChatOptions = {
   cacheScope?: string | null;
   /** Initial turns fetched when a thread opens with no cache. Default 20. */
   historyInitialLimit?: number;
+};
+
 /**
  * Headless Nexus chat controller — framework-free.
  * Portal and OAuth embeds inject a CommandClient with the same send contract.
@@ -2529,8 +2531,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     },
   );
 
-  const guardLockedChannel = (input: {
-    roomId?: string | null;
   const cacheScope = typeof opts.cacheScope === 'string' && opts.cacheScope.trim()
     ? opts.cacheScope.trim()
     : null;
@@ -2610,6 +2610,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     }
   };
 
+  const guardLockedChannel = (input: {
+    roomId?: string | null;
     conversationId?: string | null;
     requireKnownConversation?: boolean;
     adoptedConversationId?: string | null;
@@ -2684,8 +2686,26 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   };
 
   const subAgentSeq = new SubAgentSeqTracker();
+  const elevationPrompt = new ElevationPromptTracker();
   /** Never a real turn id: observer events only patch turns owning a sub-agent row. */
   const OBSERVER_TURN_ID = '__sub_agent_observer__';
+
+  /**
+   * Surface an elevation prompt at most once per elevation id per conversation.
+   * The backend emits a `needs_approval` tool_result AND a
+   * `permission_elevation_request` for the same pause, and a reconnecting socket
+   * replays both; the `tool_result` copy is not seq-deduped (`SubAgentSeqTracker`
+   * only tracks `sub_agent_*` + the two approval-request types), so without this
+   * an answered elevation re-prompted. Ids are unique per request, so this never
+   * suppresses a genuinely new elevation.
+   */
+  const raisePermissionElevationOnce = (
+    conversationId: string | null | undefined,
+    info: Parameters<NonNullable<ChatHooks['onPermissionElevationRequired']>>[0],
+  ): void => {
+    if (!elevationPrompt.shouldRaise(conversationId, info?.elevationId)) return;
+    opts.hooks?.onPermissionElevationRequired?.(info);
+  };
 
   const applyRunStates = (runs: SubAgentRunState[]): boolean => {
     const current = store.getState().turns;
@@ -2755,7 +2775,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       if (subAgentSeq.alreadyApplied(conversationId, parsed)) return;
       subAgentSeq.record(conversationId, parsed);
       if (parsed.type === 'permission_elevation_request') {
-        opts.hooks?.onPermissionElevationRequired?.(permissionElevationInfoFromEvent(parsed.data));
+        raisePermissionElevationOnce(
+          conversationId,
+          permissionElevationInfoFromEvent(parsed.data),
+        );
         return;
       }
       if (parsed.type === 'data_access_approval_request') {
@@ -2879,7 +2902,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             onboardingSatisfied?: boolean;
           };
           const commandNames = elevationCommandNames(elev);
-          opts.hooks?.onPermissionElevationRequired?.({
+          raisePermissionElevationOnce(store.getState().conversationId, {
             elevationId: elev.elevationId ?? null,
             pack: elev.pack ?? null,
             command:
@@ -2908,7 +2931,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         }
       }
       if (parsed.type === 'permission_elevation_request') {
-        opts.hooks?.onPermissionElevationRequired?.(permissionElevationInfoFromEvent(parsed.data));
+        raisePermissionElevationOnce(
+          streamConversationId,
+          permissionElevationInfoFromEvent(parsed.data),
+        );
         // A background sub-agent's pause does not pause this parent turn.
         if (!isSubAgentApprovalEvent(parsed.data)) finishPausedTurn();
       }
@@ -4051,6 +4077,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         history?: {
           hasMore?: boolean;
           oldest?: { messageId: string; createdAt: string | null } | null;
+          newest?: { messageId: string; createdAt: string | null } | null;
+          hasNewer?: boolean;
         };
       },
     ) {
@@ -4077,8 +4105,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           logLockedAgentRefusal(gated);
           return;
         }
-          newest?: { messageId: string; createdAt: string | null } | null;
-          hasNewer?: boolean;
       }
       // Rebuilt rows carry no raw sub-agent stream: let the next replay refill it.
       subAgentSeq.reset(store.getState().conversationId);
@@ -4155,6 +4181,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           history: {
             hasMore: !!rehydrateOpts.history.hasMore,
             oldest: rehydrateOpts.history.oldest ?? null,
+            newest: rehydrateOpts.history.newest ?? null,
+            hasNewer: !!rehydrateOpts.history.hasNewer,
             loading: false,
             loadingMore: false,
           },
@@ -4181,8 +4209,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       const incoming = rows.map((row, i) => ({
         id: String(row.id || `older_${i}`),
         role: (row.role === 'user' || row.role === 'system' ? row.role : 'assistant') as ChatTurn['role'],
-            newest: rehydrateOpts.history.newest ?? null,
-            hasNewer: !!rehydrateOpts.history.hasNewer,
         text: String(row.content ?? row.text ?? ''),
         ...(row.createdAt ? { createdAt: row.createdAt } : {}),
         ...(row.senderId ? { senderId: row.senderId } : {}),
@@ -4194,32 +4220,6 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         history: {
           hasMore: prependOpts?.hasMore ?? prev?.hasMore ?? false,
           oldest: prependOpts?.oldest ?? prev?.oldest ?? null,
-          loading: false,
-          loadingMore: false,
-        },
-      });
-    },
-    applyUsage(usage) {
-      const panel = currentPanel(store.getState());
-      if (!panel?.id) return;
-      if (!usage) {
-        mergePanelPatch(panel.id, {
-          usage: null,
-          credits: {
-            ...(panel.credits || {}),
-            usedCents: null,
-          },
-        });
-        return;
-      }
-      applyUsageToPanel(panel.id, usage);
-    },
-    uploadAttachment(file, uploadOpts) {
-      return uploadAttachmentViaRegion(opts.client, file, uploadOpts);
-    },
-    async approveTool({ approvalId, callId }) {
-      const result = (await opts.client.send('anx.ai-agents.approvals.approve', {
-        approvalId,
           newest: prev?.newest ?? null,
           hasNewer: prev?.hasNewer ?? false,
           loading: false,
@@ -4270,29 +4270,29 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           oldest: prev?.oldest ?? null,
           newest,
           hasNewer: deltaOpts?.hasNewer ?? false,
-      })) as SendResult;
-      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
-        if (result.kind === 'sca_required') {
-          opts.hooks?.onScaRequired?.({
-            authRequestId: result.authRequestId ?? null,
-            command: 'anx.ai-agents.approvals.approve',
-          });
-        }
-        return false;
-      }
-      if (callId) {
-        const turns = store.getState().turns.map((t) => ({
-          ...t,
-          toolEvents: patchToolRunStatus(t.toolEvents || [], callId, {
-            status: 'approved',
-            approvalRequired: false,
-          }),
-        }));
-        syncMessagesFromTurns(turns);
-      }
-      return true;
+          loading: false,
+          loadingMore: false,
+        },
+      });
     },
-    async revertTool({ approvalId, callId }) {
+    applyUsage(usage) {
+      const panel = currentPanel(store.getState());
+      if (!panel?.id) return;
+      if (!usage) {
+        mergePanelPatch(panel.id, {
+          usage: null,
+          credits: {
+            ...(panel.credits || {}),
+            usedCents: null,
+          },
+        });
+        return;
+      }
+      applyUsageToPanel(panel.id, usage);
+    },
+    uploadAttachment(file, uploadOpts) {
+      return uploadAttachmentViaRegion(opts.client, file, uploadOpts);
+    },
     getCachedConversationList(cacheOpts) {
       return chatCache.getConversationList({ scope: cacheScope }, cacheOpts?.status ?? null);
     },
@@ -4425,6 +4425,32 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         return false;
       }
     },
+    async approveTool({ approvalId, callId }) {
+      const result = (await opts.client.send('anx.ai-agents.approvals.approve', {
+        approvalId,
+      })) as SendResult;
+      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        if (result.kind === 'sca_required') {
+          opts.hooks?.onScaRequired?.({
+            authRequestId: result.authRequestId ?? null,
+            command: 'anx.ai-agents.approvals.approve',
+          });
+        }
+        return false;
+      }
+      if (callId) {
+        const turns = store.getState().turns.map((t) => ({
+          ...t,
+          toolEvents: patchToolRunStatus(t.toolEvents || [], callId, {
+            status: 'approved',
+            approvalRequired: false,
+          }),
+        }));
+        syncMessagesFromTurns(turns);
+      }
+      return true;
+    },
+    async revertTool({ approvalId, callId }) {
       const result = (await opts.client.send('anx.ai-agents.approvals.reject', {
         approvalId,
       })) as SendResult;
@@ -4862,11 +4888,14 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             opts.hooks?.onDataAccessApproval?.(result.dataAccessApproval);
           }
           if (result.kind === 'permission_elevation_required') {
-            opts.hooks?.onPermissionElevationRequired?.(result.permissionElevation ?? {
-              elevationId: null,
-              pack: null,
-              reason: result.message || null,
-            });
+            raisePermissionElevationOnce(
+              conversationId || store.getState().conversationId,
+              result.permissionElevation ?? {
+                elevationId: null,
+                pack: null,
+                reason: result.message || null,
+              },
+            );
           }
           if (panelId) {
             applyThrottleToPanel(panelId, throttleFromFailure(result));
