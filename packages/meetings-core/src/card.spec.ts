@@ -45,6 +45,23 @@ describe('buildMeetingCard', () => {
     const card = buildMeetingCard(input({ provider: 'webex', joinUrl: 'https://w/x' }));
     expect(card.surfaces).toEqual({ video: false, participants: true, scene: false, screenshare: false });
   });
+
+  it('never marks a card clickable when the click has no destination', () => {
+    // A `nexus` meeting whose room never provisioned (region provisioning is
+    // fail-soft) has no room to route to. Clickable-but-describe is the dead
+    // click this guards against, in every host.
+    const orphanNexus = buildMeetingCard(input({ provider: 'nexus' }));
+    expect(orphanNexus.clickable).toBe(false);
+    expect(resolveOpenTarget(orphanNexus).kind).toBe('describe');
+
+    const noUrlZoom = buildMeetingCard(input({ provider: 'zoom' }));
+    expect(noUrlZoom.clickable).toBe(false);
+    expect(resolveOpenTarget(noUrlZoom).kind).toBe('describe');
+
+    const withRoom = buildMeetingCard(input({ provider: 'nexus', roomId: 'room-1' }));
+    expect(withRoom.clickable).toBe(true);
+    expect(resolveOpenTarget(withRoom).kind).toBe('room');
+  });
 });
 
 describe('resolveOpenTarget', () => {

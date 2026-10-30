@@ -24,6 +24,25 @@ describe('normalizeProviderId', () => {
     expect(normalizeProviderId('')).toBeNull();
     expect(normalizeProviderId(undefined)).toBeNull();
   });
+
+  it('maps the legacy slugs the region accepts (and older events stored)', () => {
+    // `normalizeMeetingProvider` in @anx/calendar-contract accepts these, and
+    // pre-subdoc events stored them on metadata.conferenceProvider. A host that
+    // only normalizes here must not silently fall through to in_person.
+    expect(normalizeProviderId('nexus_meeting')).toBe('nexus');
+    expect(normalizeProviderId('nexus_room')).toBe('nexus');
+    expect(normalizeProviderId('ms_teams')).toBe('teams');
+    expect(normalizeProviderId('microsoft_teams')).toBe('teams');
+    expect(normalizeProviderId('cisco_webex')).toBe('webex');
+    expect(normalizeProviderId('onsite')).toBe('in_person');
+    expect(normalizeProviderId('on_site')).toBe('in_person');
+  });
+
+  it('folds separator variants (underscore / hyphen / space)', () => {
+    expect(normalizeProviderId('MS Teams')).toBe('teams');
+    expect(normalizeProviderId('google meet')).toBe('google_meet');
+    expect(normalizeProviderId('In-Person')).toBe('in_person');
+  });
 });
 
 describe('detectProviderFromUrl', () => {
@@ -50,8 +69,12 @@ describe('isMeetingProviderId', () => {
 });
 
 describe('providerOpens / providerSpec', () => {
-  it('nexus is always clickable, external needs a url, describe is not', () => {
-    expect(providerOpens('nexus', null)).toBe(true);
+  it('nexus needs a room, external needs a url, describe is not clickable', () => {
+    expect(providerOpens('nexus', null, 'room-1')).toBe(true);
+    // A nexus meeting with no provisioned room resolves to `describe`; making
+    // it clickable would be a dead click in every host.
+    expect(providerOpens('nexus', null, null)).toBe(false);
+    expect(providerOpens('nexus', null)).toBe(false);
     expect(providerOpens('zoom', null)).toBe(false);
     expect(providerOpens('zoom', 'https://z/x')).toBe(true);
     expect(providerOpens('custom', 'https://x/y')).toBe(false);

@@ -114,21 +114,25 @@ const PROVIDER_ALIASES: Record<string, MeetingProviderId> = {
   nexus: 'nexus',
   anx: 'nexus',
   room: 'nexus',
+  nexus_meeting: 'nexus',
+  nexus_room: 'nexus',
   zoom: 'zoom',
   teams: 'teams',
   msteams: 'teams',
-  'ms-teams': 'teams',
+  ms_teams: 'teams',
+  microsoft_teams: 'teams',
   microsoftteams: 'teams',
   google: 'google_meet',
-  'google-meet': 'google_meet',
   google_meet: 'google_meet',
   meet: 'google_meet',
   webex: 'webex',
   cisco: 'webex',
+  cisco_webex: 'webex',
   custom: 'custom',
   other: 'custom',
   in_person: 'in_person',
-  'in-person': 'in_person',
+  onsite: 'in_person',
+  on_site: 'in_person',
   physical: 'in_person',
 };
 
@@ -136,10 +140,17 @@ export function isMeetingProviderId(value: unknown): value is MeetingProviderId 
   return typeof value === 'string' && value in MEETING_PROVIDERS;
 }
 
-/** Normalize a raw token (client input or metadata) to a canonical provider id. */
+/**
+ * Normalize a raw token (client input or metadata) to a canonical provider id.
+ *
+ * Separators (`-`/whitespace) are folded to `_` before the alias lookup, so the
+ * loose spellings the region accepts in `normalizeMeetingProvider` (and the
+ * portal-era slugs legacy events stored: `nexus_meeting`, `ms_teams`,
+ * `cisco_webex`, `on_site`) resolve identically in every host.
+ */
 export function normalizeProviderId(raw: unknown): MeetingProviderId | null {
   if (typeof raw !== 'string') return null;
-  const key = raw.trim().toLowerCase();
+  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (!key) return null;
   return PROVIDER_ALIASES[key] ?? (isMeetingProviderId(key) ? key : null);
 }
@@ -168,10 +179,22 @@ export function providerSpec(id: MeetingProviderId): MeetingProviderSpec {
   return MEETING_PROVIDERS[id];
 }
 
-/** Should the card render a clickable join action? */
-export function providerOpens(id: MeetingProviderId, joinUrl: string | null): boolean {
+/**
+ * Should the card render a clickable join action?
+ *
+ * Must agree with `resolveOpenTarget` — a card that is `clickable` but resolves
+ * to `describe` is a dead click in every host (portal, app, desktop). An
+ * `in_app` provider therefore needs a room id: a `nexus` meeting whose room
+ * never got provisioned (region is fail-soft here) has nowhere to go and must
+ * render as a non-clickable description instead.
+ */
+export function providerOpens(
+  id: MeetingProviderId,
+  joinUrl: string | null,
+  roomId?: string | null,
+): boolean {
   const spec = providerSpec(id);
-  if (spec.openMode === 'in_app') return true;
+  if (spec.openMode === 'in_app') return Boolean(typeof roomId === 'string' && roomId.trim());
   if (spec.openMode === 'external') return Boolean(joinUrl);
   return false;
 }

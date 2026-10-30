@@ -97,7 +97,7 @@ export function buildMeetingCard(input: MeetingCardInput): MeetingCardModel {
     endsAt: input.endsAt,
     allDay: Boolean(input.allDay),
     cancelled: input.status === 'cancelled',
-    clickable: !input.status || input.status !== 'cancelled' ? providerOpens(provider, joinUrl) : false,
+    clickable: !input.status || input.status !== 'cancelled' ? providerOpens(provider, joinUrl, roomId) : false,
     joinUrl,
     roomId,
     location: clean(input.location),
