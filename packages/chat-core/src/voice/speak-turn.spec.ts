@@ -102,6 +102,83 @@ describe('createSpeakTurnController', () => {
     ctrl.dispose();
   });
 
+  it('speaks with the app-default model + voice when the contact has none', async () => {
+    const send = vi.fn(async (command: string) => {
+      if (command === 'anx.agents.contact-tts.get') {
+        return {
+          ok: true,
+          data: {
+            agentId: 'a1',
+            canAdjust: true,
+            canSetVoiceSample: true,
+            effectiveTtsModelId: null,
+            effectiveVoicePreset: null,
+          },
+        };
+      }
+      return { ok: true };
+    });
+    vi.mocked(createAndPollTts).mockResolvedValue({
+      ok: true,
+      audioUrl: 'data:audio/mpeg;base64,AQID',
+      workloadId: 'w3',
+    } as never);
+    vi.mocked(playAudioUrl).mockImplementation(async () => makeAudioEl());
+
+    const ctrl = createSpeakTurnController({
+      client: { send },
+      agentId: 'a1',
+      fallbackModelId: 'fish-s1',
+      fallbackVoiceId: 'ref-42',
+    });
+    await ctrl.speak('hello');
+    expect(createAndPollTts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ model: 'fish-s1', voice: 'ref-42' }),
+      expect.anything(),
+    );
+    ctrl.dispose();
+  });
+
+  it('never leaks the app-default voice onto a contact model of its own', async () => {
+    const send = vi.fn(async (command: string) => {
+      if (command === 'anx.agents.contact-tts.get') {
+        return {
+          ok: true,
+          data: {
+            agentId: 'a1',
+            canAdjust: true,
+            canSetVoiceSample: true,
+            effectiveTtsModelId: 'tts-1',
+            // No voice of its own: the model default must be used, NOT `ref-42`.
+            effectiveVoicePreset: null,
+          },
+        };
+      }
+      return { ok: true };
+    });
+    vi.mocked(createAndPollTts).mockResolvedValue({
+      ok: true,
+      audioUrl: 'data:audio/mpeg;base64,AQID',
+      workloadId: 'w4',
+    } as never);
+    vi.mocked(playAudioUrl).mockImplementation(async () => makeAudioEl());
+
+    const ctrl = createSpeakTurnController({
+      client: { send },
+      agentId: 'a1',
+      fallbackModelId: 'fish-s1',
+      fallbackVoiceId: 'ref-42',
+    });
+    await ctrl.speak('hello');
+    expect(createAndPollTts).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ model: 'tts-1', voice: null }),
+      expect.anything(),
+    );
+    ctrl.dispose();
+  });
+
   it('cancels playing TTS and cancels workload', async () => {
     const send = vi.fn(async (command: string) => {
       if (command === 'anx.agents.contact-tts.get') {

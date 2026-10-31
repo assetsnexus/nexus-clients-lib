@@ -283,6 +283,9 @@ export function createVoiceApi(deps: VoiceApiDeps) {
       agentId?: string | null;
       virtualAgentId?: string | null;
       fallbackModelId?: string | null;
+      fallbackVoiceId?: string | null;
+      fallbackVoiceSampleRef?: { bucketId: string; objectKey: string } | null;
+      fallbackVoiceSampleTranscript?: string | null;
       onPlaybackStream?: (
         stream: MediaStream | null,
         audioContext: AudioContext | null,
@@ -293,6 +296,9 @@ export function createVoiceApi(deps: VoiceApiDeps) {
         agentId: opts.agentId,
         virtualAgentId: opts.virtualAgentId,
         fallbackModelId: opts.fallbackModelId,
+        fallbackVoiceId: opts.fallbackVoiceId,
+        fallbackVoiceSampleRef: opts.fallbackVoiceSampleRef,
+        fallbackVoiceSampleTranscript: opts.fallbackVoiceSampleTranscript,
         onPlaybackStream: opts.onPlaybackStream,
       });
     },

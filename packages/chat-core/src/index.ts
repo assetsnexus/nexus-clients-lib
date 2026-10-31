@@ -1736,6 +1736,9 @@ export type NexusChat = {
     agentId?: string | null;
     virtualAgentId?: string | null;
     fallbackModelId?: string | null;
+    fallbackVoiceId?: string | null;
+    fallbackVoiceSampleRef?: { bucketId: string; objectKey: string } | null;
+    fallbackVoiceSampleTranscript?: string | null;
     onPlaybackStream?: (
       stream: MediaStream | null,
       audioContext: AudioContext | null,

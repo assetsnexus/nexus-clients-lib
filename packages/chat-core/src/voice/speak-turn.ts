@@ -209,6 +209,21 @@ export function createSpeakTurnController(opts: {
   virtualAgentId?: string | null;
   /** Fallback when contact-tts has no model. */
   fallbackModelId?: string | null;
+  /**
+   * Voice preset for `fallbackModelId` (the host's app-default voice). Only
+   * applied while the fallback model is in effect — once the contact has a model
+   * of its own, that model owns its voice and this is ignored, so an app default
+   * can never leak a `reference_id` from one model into another.
+   */
+  fallbackVoiceId?: string | null;
+  /**
+   * Optional WAV clone sample for `fallbackModelId` (a `voice-cloning` model).
+   * Same scoping rule as {@link fallbackVoiceId}: only used while the fallback
+   * model is in effect, so a clone never crosses onto the contact's own model.
+   */
+  fallbackVoiceSampleRef?: ContactVoiceSampleRef | null;
+  /** Transcript for {@link fallbackVoiceSampleRef}. */
+  fallbackVoiceSampleTranscript?: string | null;
   /** Lip-sync: MediaStream from the TTS AudioContext graph (null when done). */
   onPlaybackStream?: (
     stream: MediaStream | null,
@@ -307,13 +322,27 @@ export function createSpeakTurnController(opts: {
       emit({ phase: 'processing', errorMessage: null, workloadId: null });
 
       let modelId = opts.fallbackModelId || null;
-      let voice: string | null = null;
-      let voiceSampleRef: ContactVoiceSampleRef | null = null;
-      let voiceSampleTranscript: string | null = null;
+      // Fallback model + voice + clone sample travel together: the sample belongs
+      // to the fallback model, so it must be seeded only while that model is in
+      // effect (a contact model switch clears all three below).
+      const usingFallback = Boolean(modelId);
+      let voice: string | null = modelId ? opts.fallbackVoiceId || null : null;
+      let voiceSampleRef: ContactVoiceSampleRef | null =
+        usingFallback ? opts.fallbackVoiceSampleRef ?? null : null;
+      let voiceSampleTranscript: string | null =
+        usingFallback ? opts.fallbackVoiceSampleTranscript ?? null : null;
       let contactView: ContactTtsView | null = null;
       if (opts.agentId) {
         contactView = await fetchContactTts(opts.client, opts.agentId, opts.virtualAgentId);
-        if (contactView?.effectiveTtsModelId) modelId = contactView.effectiveTtsModelId;
+        // A contact model/voice fully supersedes the app default: the voice
+        // belongs to the model, so the fallback voice must not survive a model
+        // switch (a `reference_id` from the default model is meaningless here).
+        if (contactView?.effectiveTtsModelId) {
+          modelId = contactView.effectiveTtsModelId;
+          voice = null;
+          voiceSampleRef = null;
+          voiceSampleTranscript = null;
+        }
         if (contactView?.effectiveVoicePreset) voice = contactView.effectiveVoicePreset;
         if (contactView?.effectiveVoiceSampleRef) {
           voiceSampleRef = contactView.effectiveVoiceSampleRef;
