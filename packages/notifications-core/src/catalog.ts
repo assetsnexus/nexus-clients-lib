@@ -141,6 +141,25 @@ export const NOTIFICATION_ROUTE_RULES: readonly NotificationRouteRule[] = [
     app: { portalWeb: true },
   },
   {
+    id: 'agent-reminder',
+    match: {
+      resource: 'conversation',
+      eventKeys: ['agent.notification.reminder'],
+      categoryKeys: ['inference.agents'],
+    },
+    params: ['conversationId'],
+    portal: { sectionPath: '/user/ai-employees/conversations' },
+    app: { screen: 'ChatContact', params: { contactId: ':conversationId' } },
+  },
+  {
+    // Deadline/ack lifecycle events have no dedicated screen; land them on the
+    // agent conversations section so a tap is never a dead `none`.
+    id: 'agent-notification-category',
+    match: { eventKeys: ['agent.notification.*'], categoryKeys: ['inference.agents'] },
+    portal: { sectionPath: '/user/ai-employees/conversations' },
+    app: { portalWeb: true },
+  },
+  {
     id: 'wake-2fa',
     match: { types: ['2fa_approval'] },
     app: { screen: 'PendingApprovals' },

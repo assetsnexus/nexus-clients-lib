@@ -23,6 +23,8 @@ import {
   type LockedAgent,
   type NexusChat,
   type ReasoningEffortLevel,
+  type ActivityEvent,
+  type ActivityEventData,
   filterSttModelsForPicker,
   listAudioModels,
   modelSupportsSttStream,
@@ -155,6 +157,12 @@ export type NexusChatAppProps = {
   layout?: 'app' | 'column';
   /** Post messages to a native WebView shell. */
   onPostToHost?: (msg: SdkToHostMessage) => void;
+  /**
+   * Raw user-inbox activity events (new message, generation beat, unread change).
+   * A native host uses it to raise an OS notification for a background agent
+   * message (self-wake / reminder) that lands while its window is unattended.
+   */
+  onInboxEvent?: (event: ActivityEvent) => void;
   locale?: string;
   /** Show avatar-assets set-validation controls. */
   isAdmin?: boolean;
@@ -315,6 +323,7 @@ export function NexusChatApp({
   className,
   layout = 'app',
   onPostToHost,
+  onInboxEvent,
   locale: localeProp,
   isAdmin,
   currentUserId,
@@ -508,6 +517,15 @@ export function NexusChatApp({
   }, [chat, clientToolsProp]);
 
   const client = clientProp || createOptions?.client;
+  // Latest-value refs so the inbox-activity handler stays referentially stable
+  // while still reading the current controller/list loader.
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  // Assigned once `reloadLists` exists below; the inbox handler only needs the
+  // latest loader, not a dependency (which would rebuild the socket).
+  const reloadListsRef = useRef<(() => Promise<void>) | null>(null);
   const [fundingGate, setFundingGate] = useState<FundingGateState>(initialFundingGate());
   useEffect(() => {
     if (!client || !agentTarget) return;
@@ -787,6 +805,62 @@ export function NexusChatApp({
     [selectedModelId, catalog],
   );
   const threadStreaming = Boolean(panel?.streaming || state.streaming);
+  const focusedConversationIdRef = useRef<string | null>(null);
+  focusedConversationIdRef.current = conversationId ?? null;
+  /**
+   * Live user-inbox handler: a background agent turn (self-wake / reminder)
+   * writes a message with no per-conversation stream, so without this the sidebar
+   * row stayed stale and an already-open thread stayed blank until the user
+   * clicked the conversation again — unlike any normal messenger.
+   *
+   * Reads live state through refs (not hook deps) so it stays referentially
+   * stable: the inbox socket is built once, and a handler that changes identity
+   * every render would force `useOutgoingQueue` to rebuild the WebSocket.
+   */
+  const handleInboxActivity = useCallback(
+    (event: ActivityEvent) => {
+      const data: Partial<ActivityEventData> = event?.data || {};
+      const conversationId = typeof data.conversationId === 'string' ? data.conversationId : '';
+      if (!conversationId) return;
+      const unreadDelta = typeof data.unreadDelta === 'number' ? data.unreadDelta : 0;
+      const kind = typeof data.kind === 'string' ? data.kind : '';
+      const isMessage = Boolean(unreadDelta) || kind === 'message' || kind === 'new_message';
+      if (!isMessage) return;
+
+      const preview = typeof data.preview === 'string' ? data.preview : '';
+      setInboxRows((prev) =>
+        prev.map((row) =>
+          row.conversationId === conversationId
+            ? {
+                ...row,
+                unreadCount: Math.max(0, (row.unreadCount || 0) + (unreadDelta || 0)),
+                ...(preview ? { summary: preview } : {}),
+                updatedAt: Date.now(),
+              }
+            : row,
+        ),
+      );
+      // Focused + visible thread: render the new message live, like any
+      // messenger. Otherwise refresh so the badge/preview move on their own.
+      const isFocused = focusedConversationIdRef.current === conversationId;
+      const documentVisible =
+        typeof document === 'undefined' || document.visibilityState === 'visible';
+      if (isFocused && documentVisible) {
+        void loadThreadHistory({
+          chat: chatRef.current,
+          client: clientRef.current,
+          conversationId,
+          expectsContent: true,
+        });
+      } else {
+        void reloadListsRef.current?.();
+      }
+      // Native shell (desktop) hook: it raises an OS notification when its
+      // window is unattended. Kept last so a host error never blocks the list.
+      onInboxEvent?.(event);
+    },
+    [chat, client, onInboxEvent],
+  );
   const outgoing = useOutgoingQueue({
     chat,
     client,
@@ -796,6 +870,7 @@ export function NexusChatApp({
     streaming: threadStreaming,
     nexusUnavailable,
     fallbackTransport,
+    onInboxEvent: handleInboxActivity,
   });
   reachRef.current = {
     presence: outgoing.presence,
@@ -978,6 +1053,7 @@ export function NexusChatApp({
       setInboxLoading(false);
     }
   }, [chat, chrome.showConversationList, chrome.conversationList, client, identities, hiddenIdentityKeys, lockedAgent?.virtualEmployeeId, inboxArchived]);
+  reloadListsRef.current = reloadLists;
 
   useEffect(() => {
     if (chrome.conversationList === 'drawer' && !drawerOpen) return;

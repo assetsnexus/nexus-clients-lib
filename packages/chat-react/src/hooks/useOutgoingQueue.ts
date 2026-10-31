@@ -13,6 +13,7 @@ import {
   shouldHoldOutgoingForNexus,
   subscribeConversationActivity,
   type ActivityConnectionStatus,
+  type ActivityEvent,
   type ChatModelOverride,
   type CommandClient,
   type FallbackChatTransport,
@@ -39,6 +40,14 @@ export function useOutgoingQueue(input: {
   streaming: boolean;
   nexusUnavailable: boolean;
   fallbackTransport?: FallbackChatTransport | null;
+  /**
+   * Fired for every user-inbox activity event (new message, generation beat,
+   * unread change, sub-agent settle). The host uses it to refresh the affected
+   * conversation live — including background agent messages, which arrive with
+   * no per-conversation stream and would otherwise be invisible until a manual
+   * re-open.
+   */
+  onInboxEvent?: (event: ActivityEvent) => void;
 }) {
   const queueRef = useRef<OutgoingSendQueue | null>(null);
   if (!queueRef.current) queueRef.current = createOutgoingSendQueue();
@@ -70,6 +79,11 @@ export function useOutgoingQueue(input: {
     });
   }, [chat]);
 
+  // The callback lives in a ref so a caller that re-creates its handler on every
+  // render does not tear down and rebuild the shared user-inbox WebSocket.
+  const onInboxEventRef = useRef(input.onInboxEvent);
+  onInboxEventRef.current = input.onInboxEvent;
+
   useEffect(() => {
     if (!client?.send) return undefined;
     const resolver = new StreamEndpointResolver();
@@ -83,7 +97,10 @@ export function useOutgoingQueue(input: {
           return false;
         }
       },
-      onEvent: () => {},
+      // Was a no-op, so a background agent message (self-wake / reminder) never
+      // reached the host: the sidebar badge stayed stale and an open thread
+      // stayed blank until the user clicked the conversation again.
+      onEvent: (event) => onInboxEventRef.current?.(event),
       onConnectionStatus: (status) => setActivity(status),
     });
   }, [chat, client]);

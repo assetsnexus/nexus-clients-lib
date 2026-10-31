@@ -12,6 +12,11 @@ export type {
   ChatFeatures,
   CommandClient,
   PageToolSource,
+  // Live user-inbox activity shapes: hosts (desktop, app) consume these to
+  // refresh an affected conversation and raise an OS notification for a
+  // background agent message that arrived with no per-conversation stream.
+  ActivityEvent,
+  ActivityEventData,
 } from '@nexus/chat-core';
 
 export declare function createNexusChat(...args: unknown[]): import('@nexus/chat-core').NexusChat;

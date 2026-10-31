@@ -268,6 +268,8 @@ export type {
   PlanPointer,
   PlanCard,
   PlanTodoItem,
+  ActivityEvent,
+  ActivityEventData,
 } from '@nexus/chat-core';
 // Single label-precedence rule for conversation/room/contact rows, so hosts and
 // the inbox never render a raw `conversationId` where a name belongs.

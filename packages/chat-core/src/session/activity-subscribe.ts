@@ -8,7 +8,13 @@ export type ActivityEventData = {
   /** Persona org, or null for a private identity. Absent means the client refreshes every identity. */
   orgId?: string | null;
   roomId?: string;
-  kind?: 'sub_agent' | 'generation' | 'unread' | string;
+  kind?: 'sub_agent' | 'generation' | 'unread' | 'message' | string;
+  /** Short message preview for a live row / OS notification (never required). */
+  preview?: string;
+  /** Stored message id, so a host can dedupe an OS notification. */
+  messageId?: string | null;
+  /** Authoring agent, so a native host can resolve a card title. */
+  agentId?: string;
   activeSubAgentCount?: number;
   backgroundSubAgentCompleted?: boolean;
   generationInProgress?: boolean;
@@ -46,7 +52,14 @@ export type ActivitySubscribeOptions = {
    * When true, list polling is skipped (events arrive on that socket / inbox).
    */
   isLiveConnected?: () => boolean;
-  onEvent: (ev: ActivityEvent | StreamEvent) => void;
+  /**
+   * Emitted only for normalised session activity. Every raw `StreamEvent` is
+   * routed through `toActivityEvent` first (and the poll fallback synthesises
+   * `type: 'activity'`), so the callback never receives a bare `StreamEvent` —
+   * the previous `ActivityEvent | StreamEvent` union forced every host to
+   * re-narrow a shape that could never actually reach it.
+   */
+  onEvent: (ev: ActivityEvent) => void;
   /** Optional full session refresh when list poll runs (disconnected fallback only). */
   onSessions?: (sessions: ChatSessionSummary[]) => void;
   onConnectionStatus?: (status: ActivityConnectionStatus) => void;
@@ -142,6 +155,14 @@ export function toActivityEvent(
                 : undefined,
       unreadDelta: typeof data.unreadDelta === 'number' ? data.unreadDelta : undefined,
       unreadCount: typeof data.unreadCount === 'number' ? data.unreadCount : undefined,
+      preview: typeof data.preview === 'string' ? data.preview : undefined,
+      messageId:
+        typeof data.messageId === 'string'
+          ? data.messageId
+          : data.messageId === null
+            ? null
+            : undefined,
+      agentId: typeof data.agentId === 'string' ? data.agentId : undefined,
       runId,
       subAgentRunId:
         typeof data.subAgentRunId === 'string'

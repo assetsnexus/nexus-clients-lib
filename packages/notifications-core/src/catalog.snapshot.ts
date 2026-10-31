@@ -59,6 +59,11 @@ export const NOTIFICATION_EVENT_KEYS: readonly string[] = [
   'ai.approval.approved',
   'ai.approval.denied',
   'ai.approval.cancelled',
+  'agent.notification.reminder',
+  'agent.notification.deadline_soon',
+  'agent.notification.deadline_expired',
+  'agent.notification.escalation_exhausted',
+  'agent.notification.acked',
   'compliance.aml.flagged',
 ];
 
