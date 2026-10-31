@@ -49,6 +49,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts src/mic/index.ts src/vad/index.ts src/batch/index.ts src/dictation/index.ts src/capture/index.ts --format esm,cjs --dts --clean",
+    "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

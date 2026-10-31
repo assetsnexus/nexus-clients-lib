@@ -23,6 +23,7 @@
   ],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
+    "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

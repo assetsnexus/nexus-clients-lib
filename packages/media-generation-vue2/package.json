@@ -23,6 +23,7 @@
   ],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
+    "prepare": "npm run build",
     "test": "node ./scripts/check-backdrop-dismiss.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

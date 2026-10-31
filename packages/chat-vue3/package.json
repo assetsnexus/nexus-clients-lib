@@ -22,6 +22,7 @@
   "files": ["dist", "README.md"],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
+    "prepare": "npm run build",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test": "vitest run"
   },
