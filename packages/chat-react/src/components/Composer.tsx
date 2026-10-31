@@ -197,7 +197,7 @@ export function Composer({
     setMentionQuery(m ? m[1] : null);
   };
 
-  const sendNow = useCallback(async () => {
+  const sendNow = useCallback(async (force = false) => {
     const body = text.trim();
     if (!body && !pendingFiles.length) return;
     const mentions = parseMentions(body);
@@ -219,7 +219,12 @@ export function Composer({
       setPendingFiles([]);
       onQueued?.();
     };
-    if (streaming) {
+    // A plain send while the agent is streaming queues locally (the composer's
+    // existing "queued until the current turn finishes" rail). A *forced* send
+    // goes to the server with `deliveryMode: 'steer'`, which cancels the live
+    // turn cooperatively and runs this message next — the escape hatch when the
+    // user does not want to wait out a long turn.
+    if (streaming && !force) {
       park('streaming');
       return;
     }
@@ -232,6 +237,7 @@ export function Composer({
         ...(modelOverride ? { modelOverride } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(bypassFallback ? { bypassFallback: true } : {}),
+        ...(force ? { deliveryMode: 'steer' as const } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Nexus could not be reached. Try again shortly.';
@@ -746,7 +752,8 @@ export function Composer({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                void sendNow();
+                // Cmd/Ctrl+Enter force-sends while the agent is streaming.
+                void sendNow(e.metaKey || e.ctrlKey);
               }
             }}
           />
@@ -865,12 +872,27 @@ export function Composer({
                 type="button"
                 className="nexus-chat__send"
                 aria-label={streaming ? 'Queue message' : 'Send message'}
-                title={streaming ? 'Queue message' : 'Send message'}
+                title={
+                  streaming
+                    ? 'Queue message (⌘/Ctrl+Enter to send now)'
+                    : 'Send message'
+                }
                 disabled={!text.trim() && !pendingFiles.length}
                 onClick={() => void sendNow()}
               >
                 {streaming ? <IconQueue /> : <IconSend />}
               </button>
+              {streaming && (text.trim() || pendingFiles.length) ? (
+                <button
+                  type="button"
+                  className="nexus-chat__send nexus-chat__send--force"
+                  aria-label="Send now and interrupt"
+                  title="Send now — interrupts the running turn"
+                  onClick={() => void sendNow(true)}
+                >
+                  <IconSend />
+                </button>
+              ) : null}
             </div>
           </div>
         </div>

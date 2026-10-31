@@ -659,6 +659,14 @@
   cursor: not-allowed;
 }
 
+/* Force-send while the agent is streaming: same footprint as the queue button
+   but visibly secondary, so "interrupt now" is never mistaken for the default. */
+.nexus-chat__send--force {
+  background: transparent;
+  color: var(--nx-chat-accent);
+  border: 1px solid var(--nx-chat-accent);
+}
+
 .nexus-chat__btn {
   border: 1px solid var(--nx-chat-border);
   background: var(--nx-chat-bg);
