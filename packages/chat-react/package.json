@@ -32,12 +32,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "dompurify": "^3.3.2",
+    "@e965/xlsx": "^0.20.3",
+    "dompurify": "^3.4.17",
     "jszip": "^3.10.2",
     "mammoth": "^1.13.0",
     "marked": "^15.0.0",
-    "qrcode": "^1.5.4",
-    "xlsx": "^0.18.5"
+    "qrcode": "^1.5.4"
   },
   "peerDependencies": {
     "@nexus/character-kit": "*",
@@ -64,7 +64,6 @@
   },
   "devDependencies": {
     "@nexus/chat-core": "file:../chat-core",
-    "@types/dompurify": "^3.0.5",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

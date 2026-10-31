@@ -12,13 +12,15 @@ export default defineConfig({
       fileName: (format) => (format === 'es' ? 'index.mjs' : 'index.js'),
     },
     rollupOptions: {
-      external: ['vue', '@nexus/media-generation-core', '@nexus/chat-core'],
+      external: ['vue', '@nexus/media-generation-core', '@nexus/chat-core', 'three', '@pixiv/three-vrm'],
       output: {
         exports: 'named',
         globals: {
           vue: 'Vue',
           '@nexus/media-generation-core': 'NexusMediaGenerationCore',
           '@nexus/chat-core': 'NexusChatCore',
+          three: 'THREE',
+          '@pixiv/three-vrm': 'THREE_VRM',
         },
       },
     },

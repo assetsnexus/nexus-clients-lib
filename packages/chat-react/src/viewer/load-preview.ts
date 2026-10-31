@@ -122,7 +122,7 @@ export async function loadViewerPreview(
   }
 
   if (kind === PREVIEW_KIND.OFFICE_SHEET) {
-    const XLSX = await import('xlsx');
+    const XLSX = await import('@e965/xlsx');
     const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
     const sheetNames = workbook.SheetNames || [];
     const first = sheetNames[0];
