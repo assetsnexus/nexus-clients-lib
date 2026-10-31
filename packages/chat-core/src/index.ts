@@ -32,6 +32,7 @@ import {
   type HostPageContext,
   type AppRouteContext,
 } from './host-page-context.js';
+import { detectClientTimezone } from './client-timezone.js';
 
 export {
   normalizeHostPageContext,
@@ -40,6 +41,7 @@ export {
   type HostPageContext,
   type AppRouteContext,
 } from './host-page-context.js';
+export { detectClientTimezone } from './client-timezone.js';
 import { StreamEndpointResolver } from './stream/stream-endpoint-resolver.js';
 import {
   LiveAttachSession,
@@ -1374,6 +1376,12 @@ export type NexusChat = {
       modelOverride?: import('./types').ChatModelOverride;
       reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
       uiLocale?: string;
+      /**
+       * Caller IANA timezone (e.g. "Europe/Berlin"). Defaults to the host's
+       * detected zone (see `detectClientTimezone`); pass an explicit value to
+       * override it, or `null` to omit it entirely.
+       */
+      clientTimezone?: string | null;
       currentPagePath?: string;
       injectedSystemPrompts?: string[];
       /**
@@ -2032,6 +2040,16 @@ export type CreateNexusChatOptions = {
  * Headless Nexus chat controller — framework-free.
  * Portal and OAuth embeds inject a CommandClient with the same send contract.
  */
+/**
+ * Resolve the timezone to send on a turn: an explicit string wins, `null` opts
+ * out, and an omitted value falls back to the host's detected IANA zone.
+ */
+function resolveClientTimezone(preferred: string | null | undefined): string | undefined {
+  if (preferred === null) return undefined;
+  if (typeof preferred === 'string' && preferred.trim()) return preferred.trim();
+  return detectClientTimezone();
+}
+
 export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
   const features: ChatFeatures = { ...DEFAULT_FEATURES, ...(opts.features || {}) };
   const lockedAgent = parseLockedAgent(opts.lockedAgent);
@@ -4532,6 +4550,11 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         modelOverride?: ChatModelOverride;
         reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
         uiLocale?: string;
+        /**
+         * Caller IANA timezone (e.g. "Europe/Berlin"). Defaults to the host's
+         * detected zone; pass `null` to omit it.
+         */
+        clientTimezone?: string | null;
         /** Current portal route — used with tinyPagePointer for page_context. */
         currentPagePath?: string;
         /** Overrides the host page context set with setHostPageContext for this send. */
@@ -4840,6 +4863,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         // explicit per-send browserContext, so the portal path is untouched.
         const appRouteAsBrowser = appRouteToBrowserContext(appRouteContext);
         const browserContextOut = sendOpts.browserContext ?? appRouteAsBrowser;
+        // The user's IANA zone rides every turn so reminders/wakes resolve in
+        // their day. Resolved once per send.
+        const clientTimezoneOut = resolveClientTimezone(sendOpts.clientTimezone);
         const result = (await opts.client.send(command, {
           text: sendOpts.conversationOpen ? '' : text,
           ...(sendOpts.conversationOpen ? { conversationOpen: true } : {}),
@@ -4851,6 +4877,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(sendOpts.modelOverride ? { modelOverride: sendOpts.modelOverride } : {}),
           ...(sendOpts.reasoningEffort ? { reasoningEffort: sendOpts.reasoningEffort } : {}),
           ...(sendOpts.uiLocale ? { uiLocale: sendOpts.uiLocale } : {}),
+          // Explicit `null` opts out; omitted → the host's detected zone.
+          ...(clientTimezoneOut ? { clientTimezone: clientTimezoneOut } : {}),
           ...(currentPagePath ? { currentPagePath } : {}),
           ...(pageContext ? { pageContext } : {}),
           ...(injectedSystemPrompts?.length
