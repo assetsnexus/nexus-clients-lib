@@ -3,6 +3,7 @@ import {
   readEmbodimentProfile,
   resolveEmbodimentFace,
   embodimentLipSyncEnabled,
+  bindCompanionHost,
   playAssistantEmbodiment,
   playSessionRoutine,
   unplayedAssistantTurns,
@@ -93,6 +94,106 @@ describe('playSessionRoutine', () => {
   it('no-ops without routine support', () => {
     expect(playSessionRoutine({}, 'greeting')).toBe(false);
     expect(playSessionRoutine(null, 'farewell')).toBe(false);
+  });
+});
+
+describe('bindCompanionHost', () => {
+  const makeHost = () => ({
+    playEmbodimentInlineTags: vi.fn(),
+    playInlineTags: vi.fn(),
+    playEmbodimentRoutine: vi.fn(),
+    setMood: vi.fn(() => true),
+  });
+
+  it('applies a mood that arrives with no new turn', () => {
+    const host = makeHost();
+    const update = bindCompanionHost(host, { now: () => 0 });
+    update({ presenceMood: 'worried', phase: 'idle' });
+    expect(host.setMood).toHaveBeenCalledWith('worried', 'agent', 'emotion');
+  });
+
+  it('does not re-apply an unchanged mood (idempotent)', () => {
+    const host = makeHost();
+    const update = bindCompanionHost(host, { now: () => 0 });
+    update({ presenceMood: 'worried' });
+    update({ presenceMood: 'worried' });
+    expect(host.setMood).toHaveBeenCalledTimes(1);
+  });
+
+  it('plays a reaction beat once per seq and never re-plays a re-delivery', () => {
+    const host = makeHost();
+    const played: number[] = [];
+    const update = bindCompanionHost(host, {
+      now: () => 0,
+      onBeatPlayed: (seq) => played.push(seq),
+    });
+    update({ presenceMood: 'annoyed', lastReactionBeat: { seq: 4, cue: '[disagree|angry=30]' } });
+    expect(host.playEmbodimentInlineTags).toHaveBeenCalledWith(
+      '[disagree|angry=30]',
+      expect.objectContaining({ enabled: true, source: 'chat' }),
+    );
+    expect(played).toEqual([4]);
+
+    // Same seq → no second dispatch.
+    update({ presenceMood: 'annoyed', lastReactionBeat: { seq: 4, cue: '[disagree|angry=30]' } });
+    expect(host.playEmbodimentInlineTags).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires onThink on generationStart and onListen on a listening phase (cooldown-gated)', () => {
+    const host = makeHost();
+    let clock = 1_000;
+    const update = bindCompanionHost(host, { now: () => clock, listenCooldownMs: 4_000 });
+    update({ phase: 'thinking' });
+    expect(host.playEmbodimentRoutine).toHaveBeenCalledWith(
+      'onThink',
+      expect.objectContaining({ source: 'companion' }),
+    );
+    update({ phase: 'idle' });
+    update({ phase: 'listening' });
+    expect(host.playEmbodimentRoutine).toHaveBeenCalledWith(
+      'onListen',
+      expect.objectContaining({ source: 'companion' }),
+    );
+    // A second listen inside the cooldown must not re-fire.
+    host.playEmbodimentRoutine.mockClear();
+    update({ phase: 'idle' });
+    update({ phase: 'listening' });
+    expect(host.playEmbodimentRoutine).not.toHaveBeenCalled();
+    // Past the cooldown it fires again.
+    clock += 5_000;
+    update({ phase: 'idle' });
+    update({ phase: 'listening' });
+    expect(host.playEmbodimentRoutine).toHaveBeenCalledWith(
+      'onListen',
+      expect.objectContaining({ source: 'companion' }),
+    );
+  });
+
+  it('restores the emotion mood (never neutral) when a busy phase ends', () => {
+    const host = makeHost();
+    const update = bindCompanionHost(host, { now: () => 0 });
+    update({ presenceMood: 'worried', phase: 'thinking' });
+    host.setMood.mockClear();
+    update({ presenceMood: 'worried', phase: 'idle' });
+    expect(host.setMood).toHaveBeenCalledWith('worried', 'agent', 'emotion');
+    expect(host.setMood).not.toHaveBeenCalledWith('neutral', expect.anything(), expect.anything());
+  });
+
+  it('restores the profile default mood when no emotion mood is live', () => {
+    const host = makeHost();
+    const update = bindCompanionHost(host, { now: () => 0 });
+    update({ presenceMood: 'happy', phase: 'thinking' });
+    host.setMood.mockClear();
+    update({ presenceMood: null, defaultMood: 'calm', phase: 'idle' });
+    expect(host.setMood).toHaveBeenCalledWith('calm', 'agent', 'emotion');
+  });
+
+  it('no-ops for a null host or a null state', () => {
+    const update = bindCompanionHost(null);
+    expect(() => update({ presenceMood: 'happy' })).not.toThrow();
+    const host = makeHost();
+    bindCompanionHost(host)(null);
+    expect(host.setMood).not.toHaveBeenCalled();
   });
 });
 

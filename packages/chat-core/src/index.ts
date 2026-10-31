@@ -33,6 +33,16 @@ import {
   type AppRouteContext,
 } from './host-page-context.js';
 import { detectClientTimezone } from './client-timezone.js';
+import {
+  INITIAL_COMPANION_STATE,
+  applyCompanionMood,
+  applyTurnsToCompanionState,
+  setCompanionDefaultMood,
+  setCompanionPhase,
+  phaseFromPanel,
+  type CompanionPhase,
+  type CompanionState,
+} from './companion-state.js';
 
 export {
   normalizeHostPageContext,
@@ -516,6 +526,23 @@ export {
 } from './voice/index.js';
 export { formatTurnSenderLine, formatTurnTime } from './turn-meta.js';
 export {
+  INITIAL_COMPANION_STATE,
+  applyCompanionMood,
+  applyTurnsToCompanionState,
+  moodFromTurns,
+  pendingReactionBeat,
+  phaseFromPanel,
+  readMoodFields,
+  restoreCompanionMood,
+  setCompanionDefaultMood,
+  setCompanionPhase,
+} from './companion-state.js';
+export type {
+  CompanionPhase,
+  CompanionReactionBeat,
+  CompanionState,
+} from './companion-state.js';
+export {
   findChatContact,
   chatContactIdentityKeys,
   chatContactsAreSameIdentity,
@@ -833,8 +860,14 @@ export type ChatState = {
     loadingMore: boolean;
   };
   lastDispatchSkip?: string | null;
+  /**
+   * Plan §P6c — the framework-free companion slice (mood, phase, reaction beat).
+   * Every client renders its avatar from this, so a silent warm `skip` tick or an
+   * async mood shift reaches the companion without a new turn. Always present
+   * (`INITIAL_COMPANION_STATE` until the first mood-carrying frame arrives).
+   */
+  companionState: CompanionState;
 };
-
 type Listener = (state: ChatState) => void;
 
 function createStore(initial: ChatState) {
@@ -1461,6 +1494,12 @@ export type NexusChat = {
   /** Same, from a user-inbox `activity` payload (kind `sub_agent`) for the open conversation. */
   applySubAgentActivity: (data: unknown) => boolean;
   /**
+   * Plan §P6c — record the presence profile's `defaultMood`, so a companion can
+   * restore it after a transient status motion (`thinking` / `running`) instead
+   * of falling back to a hardcoded `neutral`.
+   */
+  setCompanionDefaultMood: (mood: string | null | undefined) => void;
+  /**
    * Keep a passive stream subscription while background sub-agents of this
    * conversation are live and no send / live-attach socket is open (null stops).
    * Delivers widget live output, sub-agent approval requests and hands a new
@@ -1738,6 +1777,9 @@ export type NexusChat = {
       createdAt?: string | null;
       senderId?: string | null;
       senderName?: string | null;
+      /** Plan §P6c — ambient mood carried by the persisted turn (avatar rehydrate). */
+      presenceMood?: string | null;
+      voiceStyleHint?: string | null;
     }>,
     opts?: {
       conversationId?: string | null;
@@ -1762,6 +1804,9 @@ export type NexusChat = {
       createdAt?: string | null;
       senderId?: string | null;
       senderName?: string | null;
+      /** Plan §P6c — ambient mood carried by the persisted turn (avatar rehydrate). */
+      presenceMood?: string | null;
+      voiceStyleHint?: string | null;
     }>,
     opts?: {
       hasMore?: boolean;
@@ -1784,6 +1829,9 @@ export type NexusChat = {
       createdAt?: string | null;
       senderId?: string | null;
       senderName?: string | null;
+      /** Plan §P6c — ambient mood carried by the persisted turn (avatar rehydrate). */
+      presenceMood?: string | null;
+      voiceStyleHint?: string | null;
     }>,
     opts?: {
       hasNewer?: boolean;
@@ -2070,6 +2118,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     streaming: false,
     history: { hasMore: false, oldest: null, newest: null, hasNewer: false, loading: false, loadingMore: false },
     lastDispatchSkip: null,
+    companionState: INITIAL_COMPANION_STATE,
     selectedAgentId: null,
     conversationId: null,
     features,
@@ -2181,12 +2230,23 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       return { ok: false, code, message };
     }
   };
+  /** Plan §P6c — set the companion phase (idempotent). */
+  const setCompanionPhaseState = (phase: CompanionPhase) => {
+    const current = store.getState().companionState;
+    const next = setCompanionPhase(current, phase);
+    if (next !== current) store.setState({ companionState: next });
+  };
+
   const patchCurrentPanel = (patch: Partial<PanelState>) => {
     store.setState({
       panels: store.getState().panels.map((panel, index) =>
         index === store.getState().activePanelIndex ? { ...panel, ...patch } : panel,
       ),
     });
+    // Plan §P6c — every streaming toggle is also a companion phase change, so the
+    // avatar's `onThink` / idle routines follow the real generation lifecycle.
+    const active = store.getState().panels[store.getState().activePanelIndex];
+    setCompanionPhaseState(phaseFromPanel(active));
   };
   const mergePanelPatch = (panelId: string, patch: Partial<PanelState>) => {
     store.setState({
@@ -2753,6 +2813,33 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     ]);
   };
 
+  /**
+   * Plan §P6c — the invisible mood rail. Fold a mood-carrying payload
+   * (`assistant_final` / `done` meta, or the silent `activity { kind:
+   * 'emotion_state' }` frame) into `companionState`, so a mood shift lands even
+   * when no turn is generated. Idempotent: identical frames are no-ops.
+   */
+  const applyCompanionFromPayload = (data: unknown, opts?: { seq?: number }) => {
+    const current = store.getState().companionState;
+    const next = applyCompanionMood(current, data, opts);
+    if (next !== current) store.setState({ companionState: next });
+  };
+
+  /**
+   * Plan §P6c — a silent `activity { kind: 'emotion_state' }` frame carries a
+   * mood/beat with no turn. Applied even when the sub-agent branch declines it.
+   */
+  const applyCompanionActivity = (data: unknown) => {
+    if (!data || typeof data !== 'object') return;
+    const d = data as Record<string, unknown>;
+    if (d.kind !== 'emotion_state') return;
+    const conversationId = store.getState().conversationId;
+    if (conversationId && typeof d.conversationId === 'string' && d.conversationId !== conversationId) {
+      return;
+    }
+    applyCompanionFromPayload(d);
+  };
+
   /** A failed / superseded attach must not leave the observer suspended. */
   const resumeObserverAfter = <T,>(result: T): T => {
     setTimeout(() => void subAgentObserver.ensure(), 0);
@@ -2788,6 +2875,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       }
       if (parsed.type === 'activity') {
         applySubAgentActivity(parsed.data);
+        applyCompanionActivity(parsed.data);
         return;
       }
       if (subAgentSeq.alreadyApplied(conversationId, parsed)) return;
@@ -2850,6 +2938,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       subAgentSeq.record(streamConversationId, parsed);
       if (parsed.type === 'activity') {
         applySubAgentActivity(parsed.data);
+        applyCompanionActivity(parsed.data);
         return;
       }
       // Drop Redis replay from the previous turn until this turn's
@@ -2865,6 +2954,17 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
       // Prefer store turns so deliveryStatus patches are not clobbered.
       turns = applyStreamEventToTurns(store.getState().turns, assistantId, parsed);
       syncMessagesFromTurns(turns);
+      // Plan §P6c: the assistant_final / done payload carries the turn's mood and
+      // any one-shot reaction beat — fold it in so the companion reacts even when
+      // the turn produced no visible text.
+      if (
+        parsed.type === 'assistant_final' ||
+        parsed.type === 'done' ||
+        parsed.type === 'complete' ||
+        parsed.type === 'finished'
+      ) {
+        applyCompanionFromPayload(parsed.data);
+      }
       if (panelId && parsed.type === 'usage') {
         const turnUsage = turns.find((t) => t.id === assistantId)?.usage || null;
         applyUsageToPanel(panelId, turnUsage);
@@ -4087,6 +4187,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         timestamp?: string | null;
         senderId?: string | null;
         senderName?: string | null;
+        /** Plan §P6c — persisted ambient mood, for avatar rehydrate. */
+        presenceMood?: string | null;
+        voiceStyleHint?: string | null;
       }>,
       rehydrateOpts?: {
         conversationId?: string | null;
@@ -4180,9 +4283,22 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           ...(createdAt ? { createdAt } : {}),
           ...(senderId ? { senderId } : {}),
           ...(senderName ? { senderName } : {}),
+          ...(typeof row.presenceMood === 'string' && row.presenceMood.trim()
+            ? { presenceMood: row.presenceMood.trim() }
+            : {}),
+          ...(typeof row.voiceStyleHint === 'string' && row.voiceStyleHint.trim()
+            ? { voiceStyleHint: row.voiceStyleHint.trim() }
+            : {}),
         };
       });
       syncMessagesFromTurns(collapseRepeatedToolRows(turns));
+      // Plan §P6c — re-opening a conversation restores the companion where the
+      // live mood rail left it (newest mood-carrying assistant turn wins).
+      {
+        const current = store.getState().companionState;
+        const next = applyTurnsToCompanionState(current, turns);
+        if (next !== current) store.setState({ companionState: next });
+      }
       if (roomId) {
         store.setState({ conversationId: null });
         patchCurrentPanel({ conversationId: null, roomId, roomPurpose: 'room' });
@@ -5788,6 +5904,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     },
     applySubAgentActivity(data) {
       return applySubAgentActivity(data);
+    },
+    /**
+     * Plan §P6c — remember the profile's default mood so a companion can restore
+     * it after a transient status motion instead of snapping to `neutral`.
+     */
+    setCompanionDefaultMood(mood) {
+      const current = store.getState().companionState;
+      const next = setCompanionDefaultMood(current, mood ?? null);
+      if (next !== current) store.setState({ companionState: next });
     },
     observeSubAgents(observeOpts) {
       const conversationId =

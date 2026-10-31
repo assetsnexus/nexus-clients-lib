@@ -1,11 +1,27 @@
 import { useState, useSyncExternalStore } from 'react';
-import type { ChatState, NexusChat } from '@nexus/chat-core';
+import type { ChatState, CompanionState, NexusChat } from '@nexus/chat-core';
 
 export function useChatState(chat: NexusChat): ChatState {
   return useSyncExternalStore(
     (onStoreChange) => chat.subscribe(onStoreChange),
     () => chat.getState(),
     () => chat.getState(),
+  );
+}
+
+/**
+ * Plan §P6c — subscribe to just the companion slice.
+ *
+ * The companion reducer is referentially stable (it returns the *same* object
+ * when nothing changed), which is what makes this safe to use with
+ * `useSyncExternalStore`: a mood-carrying frame produces a new object, an
+ * unrelated turn does not.
+ */
+export function useCompanionState(chat: NexusChat): CompanionState {
+  return useSyncExternalStore(
+    (onStoreChange) => chat.subscribe(onStoreChange),
+    () => chat.getState().companionState,
+    () => chat.getState().companionState,
   );
 }
 

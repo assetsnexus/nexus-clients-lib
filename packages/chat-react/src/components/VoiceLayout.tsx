@@ -12,12 +12,14 @@ import { VoiceAvatarCanvas, type VoiceAvatarHost } from './VoiceAvatarCanvas.js'
 import { CachedAvatarImage } from './CachedAvatarImage.js';
 import { IconMic, IconPhone, IconSpeaker } from './icons.js';
 import {
-  applyTurnPresenceMood,
+  bindCompanionHost,
+  type CompanionStateLike,
   playAssistantEmbodiment,
   playSessionRoutine,
   resolveEmbodimentFace,
   unplayedAssistantTurns,
 } from './embodiment-playback.js';
+import { useCompanionState } from '../hooks/useChatState.js';
 import { WakeMicIndicator } from './WakeMicIndicator.js';
 import { readWakeWordConfig, type WakeSurfaceStateSnapshot } from './wake-word-chrome.js';
 import {
@@ -178,17 +180,27 @@ export function VoiceLayout({
   const playedAssistantTurns = useRef<Set<string>>(new Set());
   const [voiceHostTick, setVoiceHostTick] = useState(0);
   const embodimentFace = resolveEmbodimentFace(presence);
+  /**
+   * §P6c — the companion driver, bound once per host. It reacts to a mood
+   * *change* rather than to a new turn, which is what makes a silent warm `skip`
+   * tick (or an async post-turn appraisal) animate the avatar at all.
+   */
+  const companionUpdateRef = useRef<((state: CompanionStateLike | null | undefined) => void) | null>(
+    null,
+  );
   const handleVoiceHostReady = useCallback(
     (next: import('./VoiceAvatarCanvas.js').VoiceAvatarHost | null) => {
       embodimentHostRef.current = next;
+      companionUpdateRef.current = next
+        ? bindCompanionHost(next, { face: embodimentFace })
+        : null;
       setVoiceHostTick((n) => n + 1);
       onAvatarHost?.(next);
     },
-    [onAvatarHost],
+    [onAvatarHost, embodimentFace],
   );
 
-  // Play inline tags for each new assistant turn (greeting fires on live) and
-  // apply the emotion-engine mood the turn carries (if any).
+  // Play inline tags for each new assistant turn (greeting fires on live).
   useEffect(() => {
     const host = embodimentHostRef.current;
     if (!host) return;
@@ -196,13 +208,21 @@ export function VoiceLayout({
     for (const turn of pending) {
       playAssistantEmbodiment(host, turn.text, { face: embodimentFace, profile: presence?.embodiment });
     }
-    if (pending.length > 0) {
-      // The latest assistant turn's mood wins, so a stale earlier turn cannot
-      // overwrite the current one.
-      const latest = [...turns].reverse().find((t) => t.role === 'assistant');
-      applyTurnPresenceMood(host, latest?.presenceMood ?? null);
-    }
   }, [turns, voiceHostTick, embodimentFace, presence?.embodiment]);
+
+  // §P6c — drive the companion from the framework-free state. Deliberately NOT
+  // gated on `pending.length > 0`: the whole point is that a mood change with no
+  // new turn (silent warm skip, async appraisal) still reaches the avatar.
+  const companionState = useCompanionState(chat);
+  useEffect(() => {
+    companionUpdateRef.current?.(companionState);
+  }, [companionState, voiceHostTick]);
+
+  // §P6c — tell the store which mood the *profile* would show, so leaving a
+  // status motion restores it instead of a hardcoded `neutral`.
+  useEffect(() => {
+    chat.setCompanionDefaultMood?.(presence?.defaultMood ?? null);
+  }, [chat, presence?.defaultMood]);
 
   // Greeting on session open, farewell on session close.
   const prevLiveRef = useRef(false);

@@ -17,6 +17,12 @@ export type {
   // background agent message that arrived with no per-conversation stream.
   ActivityEvent,
   ActivityEventData,
+  // Plan §P6c — the framework-free companion slice every client renders from.
+  // Declared here because the published entry is hand-written rather than
+  // generated, so a host that only consumes dist still sees the companion surface.
+  CompanionState,
+  CompanionPhase,
+  CompanionReactionBeat,
 } from '@nexus/chat-core';
 
 export declare function createNexusChat(...args: unknown[]): import('@nexus/chat-core').NexusChat;
@@ -220,6 +226,12 @@ export declare function openContactThread(chat: import('@nexus/chat-core').Nexus
 export declare function loadConversationHistory(client: import('@nexus/chat-core').CommandClient, chat: import('@nexus/chat-core').NexusChat, conversationId: string): Promise<void>;
 export declare function useChatState(chat: import('@nexus/chat-core').NexusChat): import('@nexus/chat-core').ChatState;
 export declare function useChatPanel(chat: import('@nexus/chat-core').NexusChat): { state: import('@nexus/chat-core').ChatState; panel: import('@nexus/chat-core').PanelState | null };
+/**
+ * Plan §P6c — the live companion slice. Subscribes through
+ * \`useSyncExternalStore\`, so an async mood shift (a silent warm \`skip\` tick or a
+ * post-turn appraisal) re-renders the host even though no new turn arrived.
+ */
+export declare function useCompanionState(chat: import('@nexus/chat-core').NexusChat): import('@nexus/chat-core').CompanionState;
 `;
 
 writeFileSync(join(dir, 'index.d.ts'), dts);

@@ -140,6 +140,116 @@ export function applyTurnPresenceMood(
   return true;
 }
 
+/** Minimal companion-state surface `bindCompanionHost` needs (plan §P6c). */
+export type CompanionStateLike = {
+  presenceMood?: string | null;
+  voiceStyleHint?: string | null;
+  phase?: 'idle' | 'listening' | 'thinking' | 'speaking';
+  lastReactionBeat?: { seq: number; cue: string; mood?: string | null } | null;
+  /** Profile default mood, restored after a transient status motion. */
+  defaultMood?: string | null;
+};
+
+export type CompanionHostOptions = {
+  face?: EmbodimentFace;
+  /** Cooldown (ms) for the `onListen` routine so typing does not spam it. */
+  listenCooldownMs?: number;
+  /** Injectable clock, for tests. */
+  now?: () => number;
+  /** Called after a beat is dispatched so the host can persist `playedSeq`. */
+  onBeatPlayed?: (seq: number) => void;
+};
+
+/**
+ * Plan §P6c — drive any `EmbodimentPlaybackHost` from a framework-free
+ * `CompanionState`, across React, Desktop, Mobile and Vue without duplicating
+ * the rules in each app.
+ *
+ * What it fixes, and why each part is load-bearing:
+ *
+ *  - **Mood without a new turn.** The previous React binding only applied a mood
+ *    when `pending.length > 0`, so a silent warm `skip` tick (or an async
+ *    post-turn appraisal) could never animate the avatar. This reacts to a
+ *    `presenceMood` *change* directly.
+ *  - **Reaction beats.** A beat carried by the mood rail plays once per `seq`
+ *    via `playAssistantEmbodiment`, so an invisible shift can still fire a
+ *    one-shot gesture + face and kick the new mood's idle fidget pool.
+ *  - **`onListen` / `onThink` routines.** `embodiment-profile.ts` defines them
+ *    but nothing ever called them; the phase machine is their only caller.
+ *  - **No `neutral` clobber.** Leaving `thinking` restores the live emotion mood
+ *    (or the profile default), never a hardcoded `neutral`.
+ *
+ * Returns an `update` function; call it on every companion-state change. It is
+ * cheap and idempotent, so a caller may call it more often than needed.
+ */
+export function bindCompanionHost(
+  host: EmbodimentPlaybackHost | null | undefined,
+  opts: CompanionHostOptions = {},
+): (state: CompanionStateLike | null | undefined) => void {
+  const face = opts.face ?? 'owner';
+  const listenCooldownMs = opts.listenCooldownMs ?? 4000;
+  const now = opts.now ?? (() => Date.now());
+  let lastMood: string | null = null;
+  let lastPhase: CompanionStateLike['phase'] = undefined;
+  let lastBeatSeq: number | null = null;
+  // `-Infinity` so the *first* listen is never swallowed by the cooldown; the
+  // cooldown exists to stop typing from re-firing the routine on every keystroke.
+  let lastListenAt = Number.NEGATIVE_INFINITY;
+
+  const applyMood = (mood: string) => {
+    applyTurnPresenceMood(host, mood);
+    lastMood = mood;
+  };
+
+  return (state) => {
+    if (!host || !state) return;
+
+    // 1. Mood: react to a *change*, not to a new turn.
+    const mood = typeof state.presenceMood === 'string' ? state.presenceMood.trim() : '';
+    if (mood && mood !== lastMood) {
+      applyMood(mood);
+    }
+
+    // 2. One-shot reaction beat, once per seq.
+    const beat = state.lastReactionBeat;
+    if (beat?.cue && (lastBeatSeq == null || beat.seq > lastBeatSeq)) {
+      playAssistantEmbodiment(host, beat.cue, { face, enabled: true });
+      lastBeatSeq = beat.seq;
+      // A beat can set a mood of its own (the frame may carry both).
+      if (beat.mood && beat.mood !== lastMood) {
+        applyMood(beat.mood);
+      }
+      opts.onBeatPlayed?.(beat.seq);
+    }
+
+    // 3. Phase routines.
+    const phase = state.phase;
+    if (phase !== lastPhase) {
+      if (phase === 'listening') {
+        const t = now();
+        if (t - lastListenAt >= listenCooldownMs) {
+          lastListenAt = t;
+          void host.playEmbodimentRoutine?.('onListen', { source: 'companion', face });
+        }
+      } else if (phase === 'thinking') {
+        void host.playEmbodimentRoutine?.('onThink', { source: 'companion', face });
+      } else if (lastPhase === 'thinking' || lastPhase === 'speaking') {
+        // Leaving a busy phase restores the emotion mood instead of a hardcoded
+        // `neutral` — the §P6c clobber fix. Re-assert it **unconditionally**: the
+        // status-motion hook is a second writer of `setMood` and will have
+        // clobbered the avatar to a status mood while it was "thinking", so
+        // deduping against our own last value would leave the clobber in place.
+        const restore = mood || (state.defaultMood ?? '');
+        if (restore) {
+          applyTurnPresenceMood(host, restore);
+          lastMood = restore;
+        }
+      }
+      lastPhase = phase;
+    }
+  };
+}
+
 /**
  * Extract assistant turns that have not yet been played, in order. Uses a
  * per-session seen-set keyed on a stable turn id (falls back to index+text).

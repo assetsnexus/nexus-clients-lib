@@ -202,7 +202,7 @@ export { sortContactsForList } from './utils/sortContacts.js';
 export { createSendQueue } from './utils/sendQueue.js';
 export type { SendQueue, QueuedSend } from './utils/sendQueue.js';
 export { openContactThread, loadConversationHistory } from './utils/openContactFlow.js';
-export { useChatState, useChatPanel } from './hooks/useChatState.js';
+export { useChatState, useChatPanel, useCompanionState } from './hooks/useChatState.js';
 export {
   createRegionCommandClient,
 } from './webview/createRegionCommandClient.js';
@@ -270,6 +270,13 @@ export type {
   PlanTodoItem,
   ActivityEvent,
   ActivityEventData,
+  /**
+   * Plan §P6c — the framework-free companion slice every client renders from.
+   * Re-exported so a Vue 2 / mobile host binds the same rules as React.
+   */
+  CompanionState,
+  CompanionPhase,
+  CompanionReactionBeat,
 } from '@nexus/chat-core';
 // Single label-precedence rule for conversation/room/contact rows, so hosts and
 // the inbox never render a raw `conversationId` where a name belongs.
