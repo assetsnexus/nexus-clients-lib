@@ -19,6 +19,39 @@ describe('chat-core', () => {
     expect(chat.getState().aiDisclosureVisible).toBe(true);
   });
 
+  it('maps deliveryMode steer/interrupt to the wire `steer` flag, and omits it otherwise', async () => {
+    const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+    const chat = createNexusChat({
+      client: {
+        send: async (command: string, payload?: Record<string, unknown>) => {
+          sent.push({ command, payload });
+          if (command === 'anx.communicate.message.send') {
+            return { ok: true, data: { text: 'ok', conversationId: 'c1' } };
+          }
+          return { ok: true, data: {} };
+        },
+      },
+      features: { contacts: false, groups: false },
+    });
+    const payloads = () =>
+      sent
+        .filter((e) => e.command === 'anx.communicate.message.send')
+        .map((e) => e.payload ?? {});
+
+    await chat.sendMessage('steer please', { conversationId: 'c1', deliveryMode: 'steer' });
+    await chat.sendMessage('interrupt please', { conversationId: 'c1', deliveryMode: 'interrupt' });
+    await chat.sendMessage('just queue', { conversationId: 'c1', deliveryMode: 'queue' });
+    await chat.sendMessage('default', { conversationId: 'c1' });
+
+    const [steer, interrupt, queued, plain] = payloads();
+    expect(steer.steer).toBe(true);
+    expect(interrupt.steer).toBe(true);
+    // Queue / absent must NOT set the flag: a false positive would cancel a live
+    // turn the user only wanted to queue behind.
+    expect(queued.steer).toBeUndefined();
+    expect(plain.steer).toBeUndefined();
+  });
+
   it('sends registerTool descriptors as browserFunctionCalls; explicit schemas win', async () => {
     const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
     const chat = createNexusChat({

@@ -119,6 +119,7 @@ import {
   applySubAgentRunStatesToTurns,
   type SubAgentRunState,
 } from './agent-runs/apply-run-states.js';
+import type { MessageDelivery } from './agent-runs/types.js';
 import { pendingApprovalFromPayload } from './stream/tool-events.js';
 import {
   elevationCommandNames,
@@ -2096,6 +2097,18 @@ function resolveClientTimezone(preferred: string | null | undefined): string | u
   if (preferred === null) return undefined;
   if (typeof preferred === 'string' && preferred.trim()) return preferred.trim();
   return detectClientTimezone();
+}
+
+/**
+ * Does this delivery mode mean "interrupt the live turn and run me next"?
+ *
+ * `steer` is the canonical name; `interrupt` is the older alias used by the
+ * agent-run surfaces, so both map to the wire flag. Anything else — `queue`,
+ * absent, or an unrecognised value — keeps the safe default (queue behind the
+ * running turn, never dropped).
+ */
+function isSteerDelivery(mode: MessageDelivery | string | null | undefined): boolean {
+  return mode === 'steer' || mode === 'interrupt';
 }
 
 export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
@@ -4721,6 +4734,15 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         bypassFallback?: boolean;
         /** Empty thread: ask the agent to greet. Do not show a user turn. */
         conversationOpen?: boolean;
+        /**
+         * How to deliver this turn when the agent is already generating.
+         *
+         * `queue` (default) runs it as soon as the live turn settles; `steer`
+         * (aka `interrupt`) cooperatively cancels the live generation and runs
+         * this message next. The server never drops a message either way — it is
+         * already persisted, so the only question is ordering.
+         */
+        deliveryMode?: MessageDelivery | string | null;
       } = {},
     ): Promise<SendMessageResult> {
       if (
@@ -5019,6 +5041,10 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             ? { clientToolIndexHash: sendOpts.clientToolIndexHash }
             : {}),
           ...(sendOpts.questionAnswer ? { questionAnswer: sendOpts.questionAnswer } : {}),
+          // A force-send ("steer") interrupts the live generation instead of
+          // queuing behind it. Only the two interrupting modes map to the wire
+          // flag; everything else (queue/absent/unknown) is the safe default.
+          ...(isSteerDelivery(sendOpts.deliveryMode) ? { steer: true } : {}),
         })) as SendResult;
 
         if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
