@@ -75,16 +75,16 @@ Local portal development keeps `file:../anx-npm-modules/packages/...` — no Git
 
 ## Install from GitHub (external apps)
 
-The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.5.13` cover `@nexus/commands-client`, `@nexus/webhooks`, and `@nexus/privacy` together. `dist/` is not in git. Each of those packages runs `prepare` on install (`scripts/git-prepare.mjs`), which builds one package at a time so privacy can typecheck against the webhooks declarations. Its `tsconfig` does not depend on the monorepo root.
+The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.5.14` cover `@nexus/commands-client`, `@nexus/webhooks`, and `@nexus/privacy` together. `dist/` is not in git. Each of those packages runs `prepare` on install (`scripts/git-prepare.mjs`), which builds one package at a time so privacy can typecheck against the webhooks declarations. Its `tsconfig` does not depend on the monorepo root.
 
 pnpm 10:
 
 ```json
 {
   "dependencies": {
-    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.13&path:/packages/commands-client",
-    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.13&path:/packages/webhooks",
-    "@nexus/privacy": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.13&path:/packages/privacy"
+    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.14&path:/packages/commands-client",
+    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.14&path:/packages/webhooks",
+    "@nexus/privacy": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.14&path:/packages/privacy"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/commands-client", "@nexus/webhooks", "@nexus/privacy"]
@@ -99,9 +99,9 @@ Chat UI packages ship from the same tag (they build via their own `prepare` scri
 ```json
 {
   "dependencies": {
-    "@nexus/chat-core": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.13&path:/packages/chat-core",
-    "@nexus/chat-react": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.13&path:/packages/chat-react",
-    "@nexus/page-agent": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.13&path:/packages/page-agent"
+    "@nexus/chat-core": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.14&path:/packages/chat-core",
+    "@nexus/chat-react": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.14&path:/packages/chat-react",
+    "@nexus/page-agent": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.14&path:/packages/page-agent"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/chat-core", "@nexus/chat-react", "@nexus/page-agent"]
@@ -119,4 +119,15 @@ The same tag also ships `@nexus/chat-vue2`, `@nexus/chat-vue3`,
 `@nexus/meetings-core` (+ `meetings-react` / `meetings-vue2` / `meetings-vue3`),
 `@nexus/voice-capture`, `@nexus/storage-browser`, and `@nexus/wake-word` — add any you
 depend on to `onlyBuiltDependencies` the same way.
+
+## Security
+
+`sdk-v0.5.14` clears the consumer-facing dependency advisories:
+
+- `dompurify` is `^3.4.17` in `chat-react` / `chat-vue2` / `chat-vue3` (was `^3.3.2`).
+- `chat-react` replaced the abandoned `xlsx@0.18.5` (no npm fix) with the maintained
+  `@e965/xlsx` fork.
+- `media-generation-vue2` moved `three` / `@pixiv/three-vrm` to `peerDependencies` so
+  hosts keep a single `three`; `storage-browser` moved `@nexus/files-core` to a peer.
+
 
