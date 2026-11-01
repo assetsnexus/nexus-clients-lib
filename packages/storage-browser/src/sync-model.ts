@@ -35,6 +35,12 @@ export type SyncBinding = {
   /** User-facing label; unique per install. */
   name: string;
   workspaceId: string;
+  /**
+   * Identity context the workspace belongs to (`personal` / `org:<id>`). Persisted
+   * so a sync of an org workspace keeps routing to that org's context across
+   * restarts, even while a different identity is active. Absent = personal.
+   */
+  identityKey?: string;
   /** Remote sub-directory folder id, or null for the bucket root. */
   remoteFolderId: string | null;
   /** Display path of the remote sub-directory (e.g. `/Projects/Clients`). */
@@ -55,6 +61,8 @@ export type SyncBinding = {
 export type SyncBindingInput = {
   name: string;
   workspaceId: string;
+  /** Identity context owning the workspace (`personal` / `org:<id>`). */
+  identityKey?: string;
   remoteFolderId?: string | null;
   remoteFolderPath?: string;
   localDir: string;
@@ -113,6 +121,7 @@ export function normalizeSyncBinding(
       id: opts.id,
       name,
       workspaceId: String(input.workspaceId ?? '').trim(),
+      identityKey: typeof input.identityKey === 'string' && input.identityKey.trim() ? input.identityKey.trim() : undefined,
       remoteFolderId: input.remoteFolderId ?? null,
       remoteFolderPath,
       localDir: String(input.localDir ?? '').trim(),
@@ -137,6 +146,7 @@ export function updateSyncBinding(
   const merged: SyncBindingInput = {
     name: patch.name ?? binding.name,
     workspaceId: patch.workspaceId ?? binding.workspaceId,
+    identityKey: patch.identityKey ?? binding.identityKey,
     remoteFolderId: patch.remoteFolderId !== undefined ? patch.remoteFolderId : binding.remoteFolderId,
     remoteFolderPath:
       patch.remoteFolderPath !== undefined ? patch.remoteFolderPath : binding.remoteFolderPath,

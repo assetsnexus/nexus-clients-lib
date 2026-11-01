@@ -21,6 +21,7 @@
  */
 
 import { driverForPlatform, isSafeMountRelPath, type MountDriver, type MountMode } from './mount-plan.js';
+import { normalizeMountExpiry, type MountExpiry } from './mount-lifetime.js';
 
 export type MountSessionMode = 'kernel' | 'mirror';
 export type MountSessionState = 'stopped' | 'starting' | 'mounted' | 'degraded' | 'error';
@@ -30,6 +31,12 @@ export type MountSession = {
   id: string;
   /** Workspace / bucket id. */
   workspaceId: string;
+  /**
+   * Identity context the workspace belongs to (`personal` / `org:<id>`). Persisted
+   * so a mount to an org workspace re-mounts with that org's context after a
+   * restart, even while a different identity is active. Absent = personal.
+   */
+  identityKey?: string;
   /** Remote sub-directory folder id, or null for the bucket root. */
   remoteFolderId: string | null;
   /** Display path of the remote sub-directory (e.g. `/Projects/Clients`). */
@@ -44,6 +51,18 @@ export type MountSession = {
   journalPath: string;
   /** Filesystem label shown by the OS (kernel mode). */
   volumeName: string;
+  /**
+   * Relative lifetime: when set, the daemon stops the mount once `expiresAt`
+   * passes. `null` means the mount lives until stopped by hand.
+   */
+  expiresAfter: MountExpiry | null;
+  /** Absolute instant derived from `expiresAfter` while mounted; null otherwise. */
+  expiresAt: string | null;
+  /**
+   * When true the daemon re-mounts this session at app start; when false the
+   * session stays `stopped` across a restart and waits for a manual start.
+   */
+  persistAcrossRestarts: boolean;
   createdAt: string;
   updatedAt: string;
   /** Last error, when `state === 'error'`. */
@@ -52,6 +71,8 @@ export type MountSession = {
 
 export type MountSessionInput = {
   workspaceId: string;
+  /** Identity context owning the workspace (`personal` / `org:<id>`). */
+  identityKey?: string;
   remoteFolderId?: string | null;
   remoteFolderPath?: string;
   mountpoint: string;
@@ -59,6 +80,10 @@ export type MountSessionInput = {
   volumeName?: string;
   /** Force a delivery mode; by default the daemon picks from capability. */
   delivery?: MountSessionMode;
+  /** Relative lifetime after which the mount auto-stops. */
+  expiresAfter?: MountExpiry | null;
+  /** Re-mount this session on the next app start. */
+  persistAcrossRestarts?: boolean;
 };
 
 /**
@@ -117,6 +142,7 @@ export function normalizeMountSession(
     session: {
       id: opts.id,
       workspaceId: String(input.workspaceId ?? '').trim(),
+      identityKey: typeof input.identityKey === 'string' && input.identityKey.trim() ? input.identityKey.trim() : undefined,
       remoteFolderId: input.remoteFolderId ?? null,
       remoteFolderPath: normalizeMountPath(input.remoteFolderPath ?? '/'),
       mountpoint,
@@ -126,11 +152,24 @@ export function normalizeMountSession(
       cacheDir: paths.cacheDir,
       journalPath: paths.journalPath,
       volumeName: input.volumeName ?? 'Nexus',
+      expiresAfter: normalizeMountExpiry(input.expiresAfter),
+      expiresAt: null,
+      persistAcrossRestarts: input.persistAcrossRestarts === true,
       createdAt: now,
       updatedAt: now,
       error: null,
     },
     warnings,
+  };
+}
+
+/** Normalize a persisted session, backfilling the fields added after Phase 3. */
+export function normalizePersistedMountSession(raw: MountSession): MountSession {
+  return {
+    ...raw,
+    expiresAfter: normalizeMountExpiry(raw.expiresAfter),
+    expiresAt: typeof raw.expiresAt === 'string' ? raw.expiresAt : null,
+    persistAcrossRestarts: raw.persistAcrossRestarts === true,
   };
 }
 

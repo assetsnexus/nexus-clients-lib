@@ -90,10 +90,21 @@ export {
 } from './sync-state.js';
 
 export {
+  computeExpiresAt,
+  isExpired,
+  mountExpiryMs,
+  normalizeMountExpiry,
+  MOUNT_LIFETIME_UNITS,
+  type MountExpiry,
+  type MountLifetimeUnit,
+} from './mount-lifetime.js';
+
+export {
   defaultSessionPaths,
   describeCapabilities,
   normalizeMountPath,
   normalizeMountSession,
+  normalizePersistedMountSession,
   sessionDriver,
   validateMountSessions,
   type MountCapabilities,
