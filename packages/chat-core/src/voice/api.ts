@@ -12,7 +12,7 @@ import {
   getBrowserRealtimeRemoteStream,
   setBrowserRealtimeRemoteStreamHandler,
 } from './runtime.js';
-import { createSpeakTurnController } from './speak-turn.js';
+import { createSpeakTurnController, probeSpeakSetup } from './speak-turn.js';
 
 type SendResult =
   | { ok: true; data?: unknown; kind?: string }
@@ -301,6 +301,13 @@ export function createVoiceApi(deps: VoiceApiDeps) {
         fallbackVoiceSampleTranscript: opts.fallbackVoiceSampleTranscript,
         onPlaybackStream: opts.onPlaybackStream,
       });
+    },
+    probeSpeakSetup(opts: {
+      agentId?: string | null;
+      virtualAgentId?: string | null;
+      fallbackModelId?: string | null;
+    }) {
+      return probeSpeakSetup(deps.client, opts);
     },
     reattachVoice(agentId?: string | null): boolean {
       return session.reattach(agentId);

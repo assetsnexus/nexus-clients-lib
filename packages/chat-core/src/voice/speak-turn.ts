@@ -109,6 +109,18 @@ function mapContactTtsView(data: Record<string, unknown>, agentId: string): Cont
   };
 }
 
+/**
+ * Outcome of a contact-TTS lookup.
+ *
+ * `view: null` means "no contact override" and is a *normal* answer: the agent
+ * may be unreachable for `userId` (e.g. a global/public agent the caller cannot
+ * `getForChat`), which the backend reports as 404 `Agent not found`. That is not
+ * a reason to abort a speak turn — the host's app-default TTS model can still
+ * serve it — so it degrades to `null` instead of throwing.
+ *
+ * A transport failure (the command never reached the server) is the only case
+ * that throws; callers that must not fail a turn catch it explicitly.
+ */
 async function fetchContactTts(
   client: CommandClient,
   agentId: string,
@@ -119,11 +131,31 @@ async function fetchContactTts(
     ...(virtualAgentId ? { virtualAgentId } : {}),
   });
   if (result && typeof result === 'object' && 'ok' in result && (result as SendResult).ok === false) {
+    // Any structured rejection (404 not-found, 401/403, validation) means "no
+    // contact override is available" — never a hard failure of the turn.
     return null;
   }
   const data = unwrapData(result);
   if (!data.agentId && !data.effectiveTtsModelId) return null;
   return mapContactTtsView(data, agentId);
+}
+
+/**
+ * Best-effort lookup used on the speak path: a thrown transport error is
+ * swallowed (one log) so a flaky command channel never blocks spoken replies.
+ */
+async function tryFetchContactTts(
+  client: CommandClient,
+  agentId: string,
+  virtualAgentId?: string | null,
+): Promise<ContactTtsView | null> {
+  try {
+    return await fetchContactTts(client, agentId, virtualAgentId);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('anx.chat.speak: contact-tts lookup failed; continuing without override', error);
+    return null;
+  }
 }
 
 export async function getContactTts(
@@ -139,6 +171,49 @@ export async function getContactTts(
  */
 export function contactTtsNeedsSetup(view: ContactTtsView | null): boolean {
   return !view?.effectiveTtsModelId;
+}
+
+/** Message shown when a speak turn cannot run because no TTS model resolves. */
+export const SPEAK_NEEDS_SETUP_MESSAGE = 'Configure a TTS model to speak replies.';
+
+/** Result of {@link probeSpeakSetup}: whether a speak turn can run, and why. */
+export type SpeakSetupProbe = {
+  /** True when at least one model (contact override or host default) resolves. */
+  ready: boolean;
+  /** The model that would be used, or null. */
+  modelId: string | null;
+  /** Where the model came from, for the UI to explain the state. */
+  source: 'contact' | 'fallback' | 'none';
+  /** The contact view when the lookup returned one (null on 404/transport error). */
+  contact: ContactTtsView | null;
+};
+
+/**
+ * Pre-flight for the Speak button / auto-voice: resolve whether a TTS model is
+ * available without starting synthesis. Mirrors the resolution inside the
+ * controller — a contact override wins over the host's app-default fallback.
+ *
+ * Safe to call on every voice-mode toggle: a dead `contact-tts.get` (404 for an
+ * unreachable agent, or a transport error) degrades to "no override" instead of
+ * throwing, so the caller can still fall back to the app default.
+ */
+export async function probeSpeakSetup(
+  client: CommandClient,
+  input: {
+    agentId?: string | null;
+    virtualAgentId?: string | null;
+    fallbackModelId?: string | null;
+  },
+): Promise<SpeakSetupProbe> {
+  const contact = input.agentId
+    ? await tryFetchContactTts(client, input.agentId, input.virtualAgentId)
+    : null;
+  if (contact?.effectiveTtsModelId) {
+    return { ready: true, modelId: contact.effectiveTtsModelId, source: 'contact', contact };
+  }
+  const fallback = input.fallbackModelId?.trim() || null;
+  if (fallback) return { ready: true, modelId: fallback, source: 'fallback', contact };
+  return { ready: false, modelId: null, source: 'none', contact };
 }
 
 export async function setContactTts(
@@ -333,7 +408,9 @@ export function createSpeakTurnController(opts: {
         usingFallback ? opts.fallbackVoiceSampleTranscript ?? null : null;
       let contactView: ContactTtsView | null = null;
       if (opts.agentId) {
-        contactView = await fetchContactTts(opts.client, opts.agentId, opts.virtualAgentId);
+        // Never let a dead contact lookup abort a speak the fallback model could
+        // serve — the 404 for an unreachable agent is a normal answer here.
+        contactView = await tryFetchContactTts(opts.client, opts.agentId, opts.virtualAgentId);
         // A contact model/voice fully supersedes the app default: the voice
         // belongs to the model, so the fallback voice must not survive a model
         // switch (a `reference_id` from the default model is meaningless here).
@@ -355,7 +432,7 @@ export function createSpeakTurnController(opts: {
       if (!modelId) {
         emit({
           phase: 'needs_setup',
-          errorMessage: 'Configure a TTS model to speak replies.',
+          errorMessage: SPEAK_NEEDS_SETUP_MESSAGE,
         });
         return;
       }

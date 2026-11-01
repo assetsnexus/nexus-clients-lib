@@ -1,5 +1,5 @@
 import { chatModelPriceLevel, modelPriceSymbols } from '@nexus/chat-core';
-import { HOSTING_BADGE_LABELS } from '@nexus/chat-core';
+import { HOSTING_BADGE_LABELS, DATA_POLICY_BADGE_LABELS } from '@nexus/chat-core';
 import { formatCreditsPerM, formatIntelScore, formatUsdPerM } from './intel.js';
 import type { PickerModel } from './picker-types.js';
 import { modelDisplayName, resolveModelProvider } from './providerMark.js';
@@ -228,6 +228,37 @@ export function hostingBadges(
       preferred,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Data-policy badges
+// ---------------------------------------------------------------------------
+
+export type PolicyBadge = {
+  /** Canonical key, e.g. `no_logging`. */
+  key: string;
+  /** Compact pill text, e.g. `no-log`. */
+  short: string;
+  /** Full, human label for the `title` / `aria-label`. */
+  label: string;
+};
+
+/**
+ * One chip per provider data-policy badge a model advertises. Unknown keys are
+ * dropped (never inventing a commitment the provider did not make), and a row
+ * with no policy metadata renders nothing. Mirrors {@link hostingBadges} so the
+ * picker and the privacy dashboard agree on the vocabulary.
+ */
+export function policyBadges(
+  badges: readonly string[] | null | undefined,
+): PolicyBadge[] {
+  const list = Array.isArray(badges) ? badges.map((b) => String(b)) : [];
+  const unique = [...new Set(list)].filter((key) => key in DATA_POLICY_BADGE_LABELS);
+  return unique.map((key) => ({
+    key,
+    short: DATA_POLICY_BADGE_LABELS[key]!.short,
+    label: DATA_POLICY_BADGE_LABELS[key]!.label,
+  }));
 }
 
 // ---------------------------------------------------------------------------

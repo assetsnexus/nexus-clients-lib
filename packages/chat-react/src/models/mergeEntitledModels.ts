@@ -1,4 +1,4 @@
-import { mapCatalogRow, mergeHostingTypes, mergePickerModels } from './picker-map.js';
+import { mapCatalogRow, mergeBadges, mergeHostingTypes, mergePickerModels } from './picker-map.js';
 import type { PickerModel } from './picker-types.js';
 
 /** Region-sold entitlement sources (same as portal mergeEntitledModelsForPicker). */
@@ -129,6 +129,7 @@ function mergePickerRow(base: PickerModel, extra: PickerModel): PickerModel {
       base.availableHostingTypes,
       extra.availableHostingTypes,
     ),
+    dataPolicyBadges: mergeBadges(base.dataPolicyBadges, extra.dataPolicyBadges),
   };
 }
 
@@ -203,6 +204,7 @@ export function mergeEntitledModelsForPicker(opts: {
         row.preferredHostingType || routeHosting || catalogHit?.preferredHostingType,
       availableHostingTypes: row.availableHostingTypes || catalogHit?.availableHostingTypes,
       hostingType: row.hostingType || routeHosting || catalogHit?.preferredHostingType,
+      dataPolicyBadges: row.dataPolicyBadges || catalogHit?.dataPolicyBadges,
       intelligenceIndex: row.intelligenceIndex ?? catalogHit?.intelligenceIndex,
       iconUrl: catalogHit?.iconUrl,
       providerId: row.providerId || catalogHit?.providerId,

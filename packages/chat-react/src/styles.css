@@ -845,6 +845,21 @@
   cursor: not-allowed;
 }
 
+/* `needs_setup` / playback errors must not sink into the dim status line: a
+   missing TTS model (the 404 "Agent not found" case) used to look like a dead
+   button. Elevate it and let the "Set up voice" CTA sit inline. */
+.nexus-chat__voice-status.is-warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--nx-chat-warning-border, #7a5b1e);
+  background: var(--nx-chat-warning-bg, rgba(122, 91, 30, 0.18));
+  color: var(--nx-chat-warning-fg, #f0d18a);
+}
+
 /* Start call is the primary action: filled accent, like the composer send. */
 .nexus-chat__voice-btn--primary {
   border-color: transparent;
@@ -1122,6 +1137,39 @@
 /* Portal dot `.is-active`: the row's preferredHostingType stands out. */
 .nexus-chat-model-hosting-pill.is-preferred {
   box-shadow: 0 0 0 1px currentColor;
+}
+/* Provider data-policy chips (no-log / no-train) — same geometry as hosting. */
+.nexus-chat-model-col-policy {
+  width: 6.4rem;
+  justify-content: center;
+}
+.nexus-chat-model-policy {
+  display: inline-flex;
+  gap: 0.15rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.nexus-chat-model-policy-pill {
+  border-radius: 999px;
+  border: 1px solid rgba(120, 130, 145, 0.4);
+  background: rgba(120, 130, 145, 0.14);
+  color: #b6c0cc;
+  padding: 0 0.25rem;
+  font-size: 0.55rem;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.nexus-chat-model-policy-pill.policy-no-logging,
+.nexus-chat-model-policy-pill.policy-no-training {
+  color: #9fe7b8;
+  border-color: rgba(70, 160, 100, 0.45);
+  background: rgba(70, 160, 100, 0.16);
+}
+.nexus-chat-model-policy-pill.policy-self-hosted {
+  color: #f0d48a;
+  border-color: rgba(180, 140, 40, 0.45);
+  background: rgba(180, 140, 40, 0.16);
 }
 .nexus-chat-model-provider-icon {
   width: 16px;

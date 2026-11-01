@@ -103,6 +103,7 @@ export type PickerModel = {
   subscriptionIds?: string[];
   capabilities?: string[];
   category?: string | null;
+  dataPolicyBadges?: string[];
 };
 
 export declare function loadPickerModels(
@@ -114,6 +115,21 @@ export declare function buildModelOverride(
   selectedId: string | null | undefined,
   models: PickerModel[],
 ): import('@nexus/chat-core').ChatModelOverride | null;
+
+export type HostingBadge = {
+  key: string;
+  short: string;
+  label: string;
+  preferred: boolean;
+};
+export type PolicyBadge = { key: string; short: string; label: string };
+export declare function hostingBadges(
+  types: readonly string[] | null | undefined,
+  opts?: { preferred?: string | null },
+): HostingBadge[];
+export declare function policyBadges(
+  badges: readonly string[] | null | undefined,
+): PolicyBadge[];
 
 export type ChatSlots = {
   header?: ComponentType<any>;
@@ -232,6 +248,33 @@ export declare function useChatPanel(chat: import('@nexus/chat-core').NexusChat)
  * post-turn appraisal) re-renders the host even though no new turn arrived.
  */
 export declare function useCompanionState(chat: import('@nexus/chat-core').NexusChat): import('@nexus/chat-core').CompanionState;
+
+/**
+ * Shared "Auto voice" toggle (composer button + host settings read/write the
+ * same flag), plus the stable per-turn key used to dedupe spoken replies.
+ */
+export declare function readAutoVoice(fallback?: boolean): boolean;
+export declare function writeAutoVoice(value: boolean): void;
+export declare function spokenTurnKey(turn: { id?: string | null; role?: string | null; text?: string | null }): string;
+export type VoiceInterruptPolicy = 'skip_current' | 'clear_queue' | 'off';
+export declare function normalizeVoiceInterruptPolicy(value: unknown): VoiceInterruptPolicy;
+export declare function shouldStopOnSend(policy: VoiceInterruptPolicy): boolean;
+export declare function shouldClearQueueOnSend(policy: VoiceInterruptPolicy): boolean;
+export type AutoSpeakController = {
+  speak(text: string): Promise<void>;
+  cancel(): Promise<void> | void;
+};
+export type AutoSpeakQueue = {
+  speak(text: string, agentId: string | null): void;
+  interrupt(): void;
+  cancel(): void;
+  reset(): void;
+  isBusy(): boolean;
+};
+export declare function createAutoSpeakQueue(deps: {
+  createController: (agentId: string | null) => AutoSpeakController;
+  getInterruptPolicy?: () => VoiceInterruptPolicy;
+}): AutoSpeakQueue;
 `;
 
 writeFileSync(join(dir, 'index.d.ts'), dts);

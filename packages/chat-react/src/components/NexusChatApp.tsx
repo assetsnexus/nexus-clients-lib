@@ -113,6 +113,7 @@ import { CreateRoomDialog, type CreateRoomSubmit } from '../inbox/CreateRoomDial
 import { startAgentThread, startDirectMessage, createGroupRoom, dmResumeIndex } from '../inbox/startConversation.js';
 import { filterInboxRowsForLockedAgent } from '../inbox/inboxRows.js';
 import { readAutoVoice, writeAutoVoice } from '../chrome/auto-voice.js';
+import type { VoiceInterruptPolicy } from '../chrome/voice-interrupt.js';
 import { applyTextScaleToElement, readTextScaleDelta, writeTextScaleDelta } from '../chrome/text-scale.js';
 import { resolveChatChrome } from '../chrome/chat-chrome.js';
 import { WorkingOnStrip } from './WorkingOnStrip.js';
@@ -266,6 +267,11 @@ export type NexusChatAppProps = {
   activePlan?: import('@nexus/chat-core').PlanPointer | null;
   /** Called after the question answer is submitted (host clears `openQuestion`). */
   onQuestionAnswered?: () => void;
+  /**
+   * What sending a message does to speech that is still playing or queued, from
+   * the host's persisted voice-modes settings. Defaults to `skip_current`.
+   */
+  voiceInterruptPolicy?: VoiceInterruptPolicy;
 };
 
 function mapDataAccessInfo(info: unknown): DataAccessPromptModel | null {
@@ -340,6 +346,7 @@ export function NexusChatApp({
   openQuestion = null,
   activePlan = null,
   onQuestionAnswered,
+  voiceInterruptPolicy = 'skip_current',
   onError,
   displayName: displayNameProp,
   avatarUrl: avatarUrlProp,
@@ -1361,6 +1368,7 @@ export function NexusChatApp({
             visionSupported: m.visionSupported,
             capabilities: m.capabilities,
             category: m.category,
+            dataPolicyBadges: m.dataPolicyBadges,
           })),
         );
     void load
@@ -1772,6 +1780,7 @@ export function NexusChatApp({
           showModelPicker={false}
           autoVoice={autoVoice}
           onToggleAutoVoice={toggleAutoVoice}
+          voiceInterruptPolicy={voiceInterruptPolicy}
           textScaleDelta={textScaleDelta}
           onTextScaleDelta={nudgeTextScale}
           dictationMethod={dictation.method}
@@ -2155,10 +2164,11 @@ export function NexusChatApp({
                 reasoningLevels={reasoningLevels}
                 onReasoningEffort={setReasoningEffort}
                 showModelPicker={composerModelPickerVisible()}
-                autoVoice={autoVoice}
-                onToggleAutoVoice={toggleAutoVoice}
-                textScaleDelta={textScaleDelta}
-                onTextScaleDelta={nudgeTextScale}
+          autoVoice={autoVoice}
+          onToggleAutoVoice={toggleAutoVoice}
+          voiceInterruptPolicy={voiceInterruptPolicy}
+          textScaleDelta={textScaleDelta}
+          onTextScaleDelta={nudgeTextScale}
                 dictationMethod={dictation.method}
                 sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
                 sttLive={sttLive}

@@ -106,7 +106,17 @@ function makeFakeChat(): FakeChat {
     configureWake: () => {},
     subscribeRemotePlaybackStream: () => () => {},
     getRemotePlaybackStream: () => null,
-    createSpeakTurn: () => ({ speak: () => Promise.resolve() }),
+    createSpeakTurn: () => ({
+      getState: () => ({ phase: 'idle', errorMessage: null, audioUrl: null, workloadId: null }),
+      subscribe: (listener: (s: unknown) => void) => {
+        listener({ phase: 'idle', errorMessage: null, audioUrl: null, workloadId: null });
+        return () => {};
+      },
+      speak: () => Promise.resolve(),
+      cancel: () => Promise.resolve(),
+      replay: () => Promise.resolve(),
+      dispose: () => {},
+    }),
     toggleMute,
     pauseOrResumeCall,
     startBrowserCall: () => Promise.resolve(),

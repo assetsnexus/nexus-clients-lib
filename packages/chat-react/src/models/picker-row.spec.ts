@@ -10,6 +10,7 @@ import {
   isOpaqueModelId,
   modelIdentifier,
   modelTooltipText,
+  policyBadges,
   pricingTooltipText,
   stripSynthesizedProviderPrefix,
   authorMarkInput,
@@ -226,5 +227,26 @@ describe('cached price provenance (explicit vs derived)', () => {
       chatPriceCreditsPerMillion: null,
     });
     expect(tip).toContain('Cached: $0.300/M tokens (est. 10% of input)');
+  });
+});
+
+describe('policy badges: provider data-policy chips', () => {
+  it('maps known keys to a short text + full label, dropping unknowns', () => {
+    const badges = policyBadges(['no_logging', 'no_training', 'frobnicate']);
+    expect(badges.map((b) => b.key)).toEqual(['no_logging', 'no_training']);
+    expect(badges[0]!.short).toBe('no-log');
+    expect(badges[0]!.label).toContain('does not log');
+  });
+
+  it('de-duplicates and tolerates absent input', () => {
+    expect(policyBadges(['cloud', 'cloud']).map((b) => b.key)).toEqual(['cloud']);
+    expect(policyBadges(null)).toEqual([]);
+    expect(policyBadges(undefined)).toEqual([]);
+    expect(policyBadges([])).toEqual([]);
+  });
+
+  it('keeps self-hosted and cloud as distinct commitments', () => {
+    expect(policyBadges(['self_hosted'])[0]!.short).toBe('self-hosted');
+    expect(policyBadges(['cloud'])[0]!.short).toBe('cloud');
   });
 });

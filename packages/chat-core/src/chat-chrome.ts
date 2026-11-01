@@ -109,6 +109,21 @@ export const HOSTING_BADGE_LABELS: Record<HostingType, string> = {
   edge_processing: 'edge',
 };
 
+/**
+ * Compact text + full label for a provider data-policy badge. Canonical keys are
+ * produced by the region's catalog mapper (`no_logging`, `no_moderation`,
+ * `no_training`, `uncensored`, `self_hosted`, `cloud`). Kept next to the hosting
+ * labels so the picker and the privacy dashboard share one vocabulary.
+ */
+export const DATA_POLICY_BADGE_LABELS: Record<string, { short: string; label: string }> = {
+  no_logging: { short: 'no-log', label: 'Provider does not log prompts' },
+  no_training: { short: 'no-train', label: 'Provider does not train on prompts' },
+  no_moderation: { short: 'no-mod', label: 'No content moderation filter' },
+  uncensored: { short: 'uncensored', label: 'Uncensored model' },
+  self_hosted: { short: 'self-hosted', label: 'Self-hosted' },
+  cloud: { short: 'cloud', label: 'Third-party cloud' },
+};
+
 const HOSTING_PREFERENCE: HostingType[] = [
   'private_cloud',
   'managed_cloud',

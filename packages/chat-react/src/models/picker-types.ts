@@ -31,6 +31,13 @@ export type PickerModel = {
   subscriptionIds?: string[];
   capabilities?: string[];
   category?: string | null;
+  /**
+   * Provider data-policy membership (`no_logging`, `no_training`, `self_hosted`,
+   * `cloud`, …). Shown as privacy chips in the model picker and counted by the
+   * privacy dashboard. Audio models have always carried these; chat models
+   * returned them from the region too, the client just dropped them.
+   */
+  dataPolicyBadges?: string[];
 };
 
 const MILLICENTS_PER_DOLLAR = 100_000;

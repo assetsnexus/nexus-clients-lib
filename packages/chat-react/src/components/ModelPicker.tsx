@@ -9,8 +9,10 @@ import {
   displayModelName,
   hostingBadges,
   modelTooltipText,
+  policyBadges,
   pricingTooltipText,
   type HostingBadge,
+  type PolicyBadge,
 } from '../models/picker-row.js';
 import {
   readRecentModelIds,
@@ -271,6 +273,30 @@ function HostingBadges({ badges }: { badges: HostingBadge[] }) {
 }
 
 /**
+ * Provider data-policy chips (`no-log`, `no-train`, …) for a catalog row. The
+ * region has always returned these for chat models; rendering them here is what
+ * makes an "no training" commitment visible next to the hosting badge rather
+ * than only in the Privacy dashboard.
+ */
+function PolicyBadges({ badges }: { badges: PolicyBadge[] }) {
+  if (!badges.length) return null;
+  return (
+    <span className="nexus-chat-model-policy" role="group" aria-label="Provider data policy">
+      {badges.map((b) => (
+        <span
+          key={b.key}
+          className={`nexus-chat-model-policy-pill policy-${b.key.replace(/_/g, '-')}`}
+          title={b.label}
+          aria-label={b.label}
+        >
+          {b.short}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
  * One dropdown row: name + provider, intelligence index, hosting badges and
  * the pricing badge with its in/out/cached tooltip — the four portal columns.
  * Exported so the column layout can be rendered and asserted without opening
@@ -294,6 +320,7 @@ export function ModelPickerRow({
   const badges = hostingBadges(model.availableHostingTypes, {
     preferred: model.preferredHostingType,
   });
+  const policy = policyBadges(model.dataPolicyBadges);
   return (
     <button
       type="button"
@@ -324,6 +351,9 @@ export function ModelPickerRow({
       </span>
       <span className="nexus-chat-model-col nexus-chat-model-col-hosting">
         <HostingBadges badges={badges} />
+      </span>
+      <span className="nexus-chat-model-col nexus-chat-model-col-policy">
+        <PolicyBadges badges={policy} />
       </span>
       <span className="nexus-chat-model-col nexus-chat-model-col-price">
         {price ? (

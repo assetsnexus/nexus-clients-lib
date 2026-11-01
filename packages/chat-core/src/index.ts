@@ -483,10 +483,13 @@ export {
   setContactTts,
   clearContactTts,
   contactTtsNeedsSetup,
+  probeSpeakSetup,
+  SPEAK_NEEDS_SETUP_MESSAGE,
 } from './voice/speak-turn.js';
 export type {
   ContactTtsView,
   ContactVoiceSampleRef,
+  SpeakSetupProbe,
   SpeakTurnPhase,
   SpeakTurnState,
   SpeakTurnController,
@@ -742,6 +745,7 @@ export {
   chatModelPriceLevel,
   modelPriceSymbols,
   HOSTING_BADGE_LABELS,
+  DATA_POLICY_BADGE_LABELS,
 } from './chat-chrome.js';
 export type {
   ModelTier,
@@ -1466,6 +1470,12 @@ export type NexusChat = {
       bypassFallback?: boolean;
       /** Empty thread: ask the agent to greet. Do not show a user turn. */
       conversationOpen?: boolean;
+      /**
+       * Spoken/channel flag for this turn. When true the server authors a system
+       * block asking for concise, spoken-friendly plain text (no markdown, no
+       * tables, no code fences). Client-supplied flag, server-authored prompt.
+       */
+      voiceMode?: boolean;
     },
   ) => Promise<SendMessageResult>;
   /** Compact conversation context via anx.communicate.conversations.compact. */
@@ -1744,6 +1754,16 @@ export type NexusChat = {
       audioContext: AudioContext | null,
     ) => void;
   }) => import('./voice/speak-turn.js').SpeakTurnController;
+  /**
+   * Pre-flight for the Speak button / voice mode: whether a TTS model resolves
+   * (contact override or the supplied app-default fallback) without synthesising.
+   * Never throws on an unreachable agent (404 degrades to "no override").
+   */
+  probeSpeakSetup: (opts: {
+    agentId?: string | null;
+    virtualAgentId?: string | null;
+    fallbackModelId?: string | null;
+  }) => Promise<import('./voice/speak-turn.js').SpeakSetupProbe>;
   reattachVoice: (agentId?: string | null) => boolean;
   toggleMute: () => boolean;
   pauseCall: () => void;
@@ -4185,6 +4205,7 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     getRemotePlaybackStream: voice.getRemotePlaybackStream,
     setRemoteMuted: voice.setRemoteMuted,
     createSpeakTurn: voice.createSpeakTurn,
+    probeSpeakSetup: voice.probeSpeakSetup,
     reattachVoice: voice.reattachVoice,
     toggleMute: voice.toggleMute,
     pauseCall: voice.pauseCall,
@@ -4746,6 +4767,13 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
          * already persisted, so the only question is ordering.
          */
         deliveryMode?: MessageDelivery | string | null;
+        /**
+         * Spoken/channel flag for this turn. When true the server authors a
+         * system block asking for concise, spoken-friendly plain text (no
+         * markdown, no tables, no code fences). Client-supplied flag,
+         * server-authored prompt.
+         */
+        voiceMode?: boolean;
       } = {},
     ): Promise<SendMessageResult> {
       if (
@@ -5044,6 +5072,9 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
             ? { clientToolIndexHash: sendOpts.clientToolIndexHash }
             : {}),
           ...(sendOpts.questionAnswer ? { questionAnswer: sendOpts.questionAnswer } : {}),
+          // Spoken channel: the server authors a concise, spoken-friendly system
+          // block when this is set (never a raw client prompt).
+          ...(sendOpts.voiceMode ? { voiceMode: true } : {}),
           // A force-send ("steer") interrupts the live generation instead of
           // queuing behind it. Only the two interrupting modes map to the wire
           // flag; everything else (queue/absent/unknown) is the safe default.

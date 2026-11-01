@@ -9,6 +9,7 @@ import { createAndPollTts, playAudioUrl } from './stt-tts.js';
 import {
   contactTtsNeedsSetup,
   createSpeakTurnController,
+  probeSpeakSetup,
 } from './speak-turn.js';
 
 function makeAudioEl(): HTMLAudioElement {
@@ -29,8 +30,7 @@ function makeAudioEl(): HTMLAudioElement {
   } as unknown as HTMLAudioElement;
 }
 
-describe('createSpeakTurnController', () => {
-  afterEach(() => {
+describe('createSpeakTurnController', () => {  afterEach(() => {
     vi.clearAllMocks();
   });
 
@@ -76,8 +76,7 @@ describe('createSpeakTurnController', () => {
     ).toBe(false);
   });
 
-  it('emits needs_setup when no model and no fallback', async () => {
-    const send = vi.fn(async (command: string) => {
+  it('emits needs_setup when no model and no fallback', async () => {    const send = vi.fn(async (command: string) => {
       if (command === 'anx.agents.contact-tts.get') {
         return {
           ok: true,
@@ -298,5 +297,42 @@ describe('createSpeakTurnController', () => {
       expect.anything(),
     );
     ctrl.dispose();
+  });
+});
+
+describe('probeSpeakSetup (capability pre-flight)', () => {
+  it('reports ready with a contact model when the lookup succeeds', async () => {
+    const send = vi.fn(async () => ({
+      ok: true,
+      data: { agentId: 'a1', effectiveTtsModelId: 'tts-1' },
+    }));
+    const probe = await probeSpeakSetup({ send }, { agentId: 'a1' });
+    expect(probe).toMatchObject({ ready: true, modelId: 'tts-1', source: 'contact' });
+  });
+
+  it('degrades a dead contact lookup to the app-default fallback (404 no longer blocks)', async () => {
+    // The region answers a structured failure for an unreachable/global agent.
+    const send = vi.fn(async () => ({ ok: false, code: 'NOT_FOUND', message: 'Agent not found' }));
+    const probe = await probeSpeakSetup(
+      { send },
+      { agentId: 'global-agent', fallbackModelId: 'fish-s1' },
+    );
+    expect(probe).toMatchObject({ ready: true, modelId: 'fish-s1', source: 'fallback' });
+    expect(probe.contact).toBeNull();
+  });
+
+  it('reports not ready when the lookup dies and there is no fallback', async () => {
+    const send = vi.fn(async () => {
+      throw new Error('transport down');
+    });
+    const probe = await probeSpeakSetup({ send }, { agentId: 'a1', fallbackModelId: null });
+    expect(probe).toMatchObject({ ready: false, modelId: null, source: 'none' });
+  });
+
+  it('skips the lookup entirely when there is no agent (fallback only)', async () => {
+    const send = vi.fn(async () => ({ ok: true }));
+    const probe = await probeSpeakSetup({ send }, { agentId: null, fallbackModelId: 'm1' });
+    expect(probe).toMatchObject({ ready: true, source: 'fallback' });
+    expect(send).not.toHaveBeenCalled();
   });
 });

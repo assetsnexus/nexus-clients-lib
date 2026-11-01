@@ -53,6 +53,8 @@ import {
 } from './icons.js';
 import { reasoningEffortLabel } from '../chrome/reasoning-slider.js';
 import { spokenTurnKey } from '../chrome/auto-voice.js';
+import { createAutoSpeakQueue, type AutoSpeakQueue } from '../chrome/auto-speak.js';
+import type { VoiceInterruptPolicy } from '../chrome/voice-interrupt.js';
 
 /** Error text for the composer banner, preserving the failure copy when present. */
 function errorMessageOf(error: unknown): string {
@@ -93,6 +95,12 @@ export type ComposerProps = {
   /** Auto-play new assistant replies with TTS. */
   autoVoice?: boolean;
   onToggleAutoVoice?: () => void;
+  /**
+   * What sending a message does to speech that is still playing or queued. Host
+   * supplies this from its persisted voice-modes settings; the default
+   * (`skip_current`) matches the desktop default.
+   */
+  voiceInterruptPolicy?: VoiceInterruptPolicy;
   /** Chat text scale stepper (`-a` / `+A`). */
   textScaleDelta?: number;
   onTextScaleDelta?: (next: number) => void;
@@ -139,6 +147,7 @@ export function Composer({
   onReasoningEffort,
   autoVoice = false,
   onToggleAutoVoice,
+  voiceInterruptPolicy = 'skip_current',
   textScaleDelta = 0,
   onTextScaleDelta,
   dictationMethod = 'phone',
@@ -161,6 +170,45 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   /** Assistant text already spoken by the auto-voice toggle, so a re-render never repeats it. */
   const spokenTurnsRef = useRef<Set<string>>(new Set());
+  /**
+   * The queue factory reads these refs so the (stable) queue always targets the
+   * live agent and the live interrupt policy without being rebuilt every render.
+   */
+  const latestTargetRef = useRef<{ agentId: string | null; virtualEmployeeId: string | null }>({
+    agentId: null,
+    virtualEmployeeId: null,
+  });
+  const latestInterruptPolicyRef = useRef<VoiceInterruptPolicy>(voiceInterruptPolicy);
+  /**
+   * Serialised auto-speak queue: one TTS controller per agent, newest reply for
+   * an agent wins over an unstarted older one, and a user send barges in
+   * according to `voiceInterruptPolicy`. Shared shape with the desktop's
+   * notification speaker so barge-in behaves the same in every client.
+   */
+  const speakQueueRef = useRef<AutoSpeakQueue | null>(null);
+  if (speakQueueRef.current === null) {
+    speakQueueRef.current = createAutoSpeakQueue({
+      createController: (agentId) => {
+        // Resolve the mounted target fresh per controller so a panel/agent switch
+        // is honoured, and degrade to a no-op when this build has no TTS surface.
+        if (typeof chat.createSpeakTurn !== 'function') {
+          return { speak: async () => undefined, cancel: () => undefined };
+        }
+        const target = latestTargetRef.current;
+        return chat.createSpeakTurn({
+          agentId,
+          virtualAgentId: target?.virtualEmployeeId ?? null,
+        });
+      },
+      getInterruptPolicy: () => latestInterruptPolicyRef.current,
+    });
+  }
+  useEffect(() => {
+    const queue = speakQueueRef.current;
+    return () => {
+      queue?.reset();
+    };
+  }, []);
   const sessionRef = useRef<{
     cancel: () => void;
     finish: (commit: boolean) => Promise<void>;
@@ -230,6 +278,10 @@ export function Composer({
     }
     let result: Awaited<ReturnType<NexusChat['sendMessage']>>;
     try {
+      // A user send barges in on speech that is still playing/queued, per the
+      // configured policy; the spoken channel flag tells the server to author a
+      // concise, spoken-friendly reply (never a raw client prompt).
+      if (autoVoice) speakQueueRef.current?.interrupt();
       result = await chat.sendMessage(payloadText, {
         conversationId: conversationId || undefined,
         contactId: contactId || undefined,
@@ -237,6 +289,7 @@ export function Composer({
         ...(modelOverride ? { modelOverride } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
         ...(bypassFallback ? { bypassFallback: true } : {}),
+        ...(autoVoice ? { voiceMode: true as const } : {}),
         ...(force ? { deliveryMode: 'steer' as const } : {}),
       });
     } catch (err) {
@@ -549,17 +602,9 @@ export function Composer({
     if (spokenTurnsRef.current.has(key)) return;
     spokenTurnsRef.current.add(key);
     const agentId = (callTarget?.agentId || contactId || '').trim();
-    try {
-      const speak = chat.createSpeakTurn({
-        agentId: agentId || null,
-        virtualAgentId: callTarget?.virtualEmployeeId ?? null,
-      });
-      void speak.speak(last.text.trim()).catch((error) => {
-        console.warn('anx.chat.auto-voice failed', error);
-      });
-    } catch (error) {
-      console.warn('anx.chat.auto-voice unavailable', error);
-    }
+    // Routed through the queue so a burst of replies is serialised and a user
+    // send barges in per the configured interruption policy.
+    speakQueueRef.current?.speak(last.text.trim(), agentId || null);
   }, [autoVoice, streaming, chatState.turns, chat, callTarget?.agentId, callTarget?.virtualEmployeeId, contactId]);
 
   const startCall = useCallback(

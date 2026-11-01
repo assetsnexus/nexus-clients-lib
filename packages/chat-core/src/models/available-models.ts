@@ -17,6 +17,13 @@ export type AvailableChatModel = {
   capabilities: string[];
   category: string | null;
   supportsTools: boolean | null;
+  /**
+   * Provider data-policy membership (`no_logging`, `no_training`, …, or the
+   * `cloud` marker). Carried so the privacy dashboard can show the same
+   * commitments the audio catalog already exposes — the region has always
+   * returned this for chat models; the client just never surfaced it.
+   */
+  dataPolicyBadges: string[];
 };
 
 export type ModelsAvailableCatalog = {
@@ -125,6 +132,9 @@ export function mapAvailableChatModels(raw: unknown): ModelsAvailableCatalog {
       capabilities: caps,
       category: mapped.category,
       supportsTools: mapped.supportsTools,
+      dataPolicyBadges: Array.isArray(m.dataPolicyBadges)
+        ? m.dataPolicyBadges.map((b) => String(b))
+        : [],
     });
   }
 

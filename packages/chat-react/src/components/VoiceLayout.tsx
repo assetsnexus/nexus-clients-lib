@@ -22,11 +22,26 @@ import {
 import { useCompanionState } from '../hooks/useChatState.js';
 import { WakeMicIndicator } from './WakeMicIndicator.js';
 import { readWakeWordConfig, type WakeSurfaceStateSnapshot } from './wake-word-chrome.js';
+import { createAutoSpeakQueue, type AutoSpeakQueue } from '../chrome/auto-speak.js';
+import { spokenTurnKey } from '../chrome/auto-voice.js';
+import type { VoiceInterruptPolicy } from '../chrome/voice-interrupt.js';
 import {
   createPresenceStore,
   readPresenceFromProfile,
   type ParticipantPresenceV1,
 } from '../presence/participant-presence.js';
+
+/**
+ * Host-supplied app-default TTS fallback for the Speak button / voice mode,
+ * used when the agent↔user contact has no TTS model of its own. Kept as an
+ * opaque object so the shared layout never hardcodes a provider or model id.
+ */
+export type SpeakFallback = {
+  modelId?: string | null;
+  voiceId?: string | null;
+  voiceSampleRef?: { bucketId: string; objectKey: string } | null;
+  voiceSampleTranscript?: string | null;
+};
 
 export type VoiceLayoutProps = {
   chat: NexusChat;
@@ -35,6 +50,28 @@ export type VoiceLayoutProps = {
   streaming?: boolean;
   collapsed?: boolean;
   client?: CommandClient;
+  /**
+   * App-default TTS model/voice used when the contact has none, so a speak turn
+   * (and the voice-mode pre-flight) can still resolve a model. Authored by the
+   * host from its own settings (desktop: `resolveAppDefaultTts`).
+   */
+  speakFallback?: SpeakFallback | null;
+  /**
+   * Open the voice/TTS configuration surface. Rendered as a "Set up voice" CTA
+   * on the `needs_setup` warning so a missing model is actionable instead of a
+   * dead end. Omit to render the warning without the button.
+   */
+  onOpenVoiceSettings?: () => void;
+  /**
+   * Auto-voice: speak each new assistant reply as it arrives, without a click.
+   * The flag is host-owned (the composer's Auto-voice toggle shares the same
+   * persisted store); a host that also renders the composer passes the live
+   * value so the two controls never disagree.
+   */
+  autoVoice?: boolean;
+  onToggleAutoVoice?: () => void;
+  /** What sending a message does to speech that is still playing or queued. */
+  voiceInterruptPolicy?: VoiceInterruptPolicy;
   /** Override slot; when omitted, lazy CompanionCanvas loads for avatar/split. */
   avatarSlot?: React.ReactNode;
   presence?: ParticipantPresenceV1 | null;
@@ -98,6 +135,11 @@ export function VoiceLayout({
   collapsed,
   client,
   avatarSlot,
+  speakFallback = null,
+  onOpenVoiceSettings,
+  autoVoice = false,
+  onToggleAutoVoice,
+  voiceInterruptPolicy = 'skip_current',
   presence: presenceProp,
   onPlaybackStream,
   onVoiceActive,
@@ -268,6 +310,124 @@ export function VoiceLayout({
   }, [chat, emitPlayback]);
 
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * Manual "Speak (TTS)" toggle state, mirrored from the long-lived speak
+   * controller below. Without this the button was fire-and-forget: a
+   * `processing`/`playing`/`error`/`needs_setup` phase produced no visible
+   * reaction, so the control looked dead.
+   */
+  const [speakState, setSpeakState] = useState<import('@nexus/chat-core').SpeakTurnState>({
+    phase: 'idle',
+    errorMessage: null,
+    audioUrl: null,
+    workloadId: null,
+  });
+  /**
+   * One controller for the whole surface, recreated only when the target agent
+   * or fallback changes. Re-creating it per click (as before) meant a second
+   * click could never cancel/replay the first utterance.
+   */
+  const speakRef = useRef<import('@nexus/chat-core').SpeakTurnController | null>(null);
+  const speakKey = `${contact?.agentId || contact?.id || ''}|${contact?.virtualEmployeeId || ''}|${
+    speakFallback?.modelId || ''
+  }`;
+  useEffect(() => {
+    const agentId = contact?.agentId || contact?.id || '';
+    if (typeof chat.createSpeakTurn !== 'function') {
+      speakRef.current = null;
+      return;
+    }
+    const speak = chat.createSpeakTurn({
+      agentId,
+      virtualAgentId: contact?.virtualEmployeeId || null,
+      fallbackModelId: speakFallback?.modelId ?? null,
+      fallbackVoiceId: speakFallback?.voiceId ?? null,
+      fallbackVoiceSampleRef: speakFallback?.voiceSampleRef ?? null,
+      fallbackVoiceSampleTranscript: speakFallback?.voiceSampleTranscript ?? null,
+      onPlaybackStream: (stream, ctx) => {
+        emitPlayback(stream, {
+          agentId,
+          conversationId: chat.getState().conversationId,
+          audioContext: ctx,
+          source: 'tts',
+        });
+      },
+    });
+    speakRef.current = speak;
+    const unsubscribe = speak.subscribe(setSpeakState);
+    return () => {
+      unsubscribe();
+      speak.dispose();
+      if (speakRef.current === speak) speakRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat, speakKey, emitPlayback]);
+  const speakBusy = speakState.phase === 'processing' || speakState.phase === 'playing';
+  /**
+   * Auto-voice: when on, each new assistant reply is spoken without a click.
+   * Routed through a per-agent queue so a burst is serialised and a newer reply
+   * for the same agent replaces an unstarted older one. Keyed by turn so a
+   * re-render never replays audio the user already heard.
+   */
+  const spokenTurnsRef = useRef<Set<string>>(new Set());
+  const autoSpeakRef = useRef<AutoSpeakQueue | null>(null);
+  const latestSpeakTargetRef = useRef<{ agentId: string | null; ve: string | null }>({
+    agentId: null,
+    ve: null,
+  });
+  latestSpeakTargetRef.current = {
+    agentId: contact?.agentId || contact?.id || null,
+    ve: contact?.virtualEmployeeId || null,
+  };
+  const latestInterruptPolicyRef = useRef<VoiceInterruptPolicy>(voiceInterruptPolicy);
+  latestInterruptPolicyRef.current = voiceInterruptPolicy;
+  if (autoSpeakRef.current === null) {
+    autoSpeakRef.current = createAutoSpeakQueue({
+      createController: (agentId) => {
+        if (typeof chat.createSpeakTurn !== 'function') {
+          return { speak: async () => undefined, cancel: () => undefined };
+        }
+        const target = latestSpeakTargetRef.current;
+        return chat.createSpeakTurn({
+          agentId,
+          virtualAgentId: target?.ve ?? null,
+          fallbackModelId: speakFallback?.modelId ?? null,
+          fallbackVoiceId: speakFallback?.voiceId ?? null,
+          fallbackVoiceSampleRef: speakFallback?.voiceSampleRef ?? null,
+          fallbackVoiceSampleTranscript: speakFallback?.voiceSampleTranscript ?? null,
+        });
+      },
+      getInterruptPolicy: () => latestInterruptPolicyRef.current,
+    });
+  }
+  useEffect(() => {
+    const queue = autoSpeakRef.current;
+    return () => {
+      queue?.reset();
+    };
+  }, []);
+  useEffect(() => {
+    if (!autoVoice || streaming) return;
+    if (typeof chat.createSpeakTurn !== 'function') return;
+    const last = [...turns].reverse().find((t) => t.role === 'assistant' && t.text?.trim());
+    if (!last) return;
+    const key = spokenTurnKey(last);
+    if (spokenTurnsRef.current.has(key)) return;
+    spokenTurnsRef.current.add(key);
+    autoSpeakRef.current?.speak(last.text.trim(), contact?.agentId || contact?.id || null);
+  }, [autoVoice, streaming, turns, chat, contact?.agentId, contact?.id]);
+  // A user send barges in on speech per the policy. Detect the newest user turn
+  // (keyed by turn id) so a new *assistant* reply never triggers an interrupt.
+  const lastUserTurnRef = useRef<string | null>(null);
+  useEffect(() => {
+    const lastUser = [...turns].reverse().find((t) => t.role === 'user');
+    const key = lastUser ? spokenTurnKey({ ...lastUser, role: 'user' }) : null;
+    if (key && key !== lastUserTurnRef.current) {
+      const hadPrevious = lastUserTurnRef.current !== null;
+      lastUserTurnRef.current = key;
+      if (hadPrevious) autoSpeakRef.current?.interrupt();
+    }
+  }, [turns]);
 
   const startCall = useCallback(async () => {
     if (!captureEnabled) {
@@ -474,6 +634,46 @@ export function VoiceLayout({
   const canSpeakManager = typeof chat.createSpeakTurn === 'function';
   const canSpeak = Boolean(lastAssistantTurn?.text) && canSpeakManager;
 
+  /**
+   * `needs_setup` is the one phase the user can act on, so it is rendered as a
+   * prominent warning card with a route to the voice config instead of the dim
+   * status line (which is why a missing TTS model used to look like a dead
+   * button). `error` also gets visible elevation.
+   */
+  const speakWarning =
+    speakState.phase === 'needs_setup'
+      ? {
+          message: speakState.errorMessage || 'Set up a voice (TTS) model to speak replies.',
+          cta: onOpenVoiceSettings ? ('setup' as const) : null,
+        }
+      : speakState.phase === 'error'
+        ? { message: speakState.errorMessage || 'Voice playback failed.', cta: null }
+        : null;
+  const statusLine = (
+    <div
+      className={`nexus-chat__voice-status${speakWarning ? ' is-warning' : ''}`}
+      style={{ fontSize: 12, color: 'var(--nx-chat-muted)', marginTop: 8 }}
+    >
+      {speakWarning ? (
+        <>
+          <span>{speakWarning.message}</span>
+          {speakWarning.cta === 'setup' ? (
+            <button
+              type="button"
+              className="nexus-chat__icon-btn nexus-chat__icon-btn--label"
+              style={{ marginLeft: 8 }}
+              onClick={() => onOpenVoiceSettings?.()}
+            >
+              Set up voice
+            </button>
+          ) : null}
+        </>
+      ) : (
+        notice || surface.errorMessage || `Status: ${surface.status}`
+      )}
+    </div>
+  );
+
   /*
    * One tight row of compact, icon-first controls.
    *
@@ -534,38 +734,71 @@ export function VoiceLayout({
               : 'Start call'}
         </span>
       </button>
-      {/* `aria-disabled` (not native `disabled`) so clicking still explains why
-          nothing can be spoken instead of swallowing the click silently. */}
+      {/* A real toggle over the long-lived controller: it reflects the live
+          phase (Preparing… / Stop / Replay) and never silently no-ops. Still
+          `aria-disabled` (not native `disabled`) so a click explains why nothing
+          can be spoken yet. */}
       <button
         type="button"
-        className="nexus-chat__icon-btn nexus-chat__icon-btn--label"
-        aria-disabled={!canSpeak}
-        title="Speak (TTS)"
+        className={`nexus-chat__icon-btn nexus-chat__icon-btn--label${
+          speakState.phase === 'playing' ? ' is-on' : ''
+        }`}
+        aria-disabled={!canSpeak && !speakBusy}
+        aria-pressed={speakState.phase === 'playing'}
+        title={
+          speakBusy
+            ? 'Stop speaking'
+            : speakState.phase === 'done'
+              ? 'Replay last reply'
+              : 'Speak (TTS)'
+        }
         onClick={() => {
-          const agentId = contact?.agentId || contact?.id || '';
-          const conversationId = chat.getState().conversationId;
-          if (!lastAssistantTurn?.text || typeof chat.createSpeakTurn !== 'function') {
-            setNotice('Nothing to speak yet — send or receive a reply first.');
+          const speak = speakRef.current;
+          if (speakBusy) {
+            void speak?.cancel();
+            setNotice(null);
+            return;
+          }
+          if (!lastAssistantTurn?.text || !speak) {
+            setNotice(
+              canSpeakManager
+                ? 'Nothing to speak yet — send or receive a reply first.'
+                : 'Text-to-speech is unavailable in this build.',
+            );
             return;
           }
           setNotice(null);
-          const speak = chat.createSpeakTurn({
-            agentId,
-            virtualAgentId: contact?.virtualEmployeeId || null,
-            onPlaybackStream: (stream, ctx) => {
-              emitPlayback(stream, {
-                agentId,
-                conversationId,
-                audioContext: ctx,
-                source: 'tts',
-              });
-            },
-          });
           void speak.speak(lastAssistantTurn.text);
         }}
       >
         <IconSpeaker />
-        <span className="nexus-chat__icon-btn-label">Speak (TTS)</span>
+        <span className="nexus-chat__icon-btn-label">
+          {speakState.phase === 'playing'
+            ? 'Stop'
+            : speakState.phase === 'processing'
+              ? 'Preparing…'
+              : speakState.phase === 'done'
+                ? 'Replay'
+                : 'Speak (TTS)'}
+        </span>
+      </button>
+      {/*
+        Auto-voice: a persistent toggle over the same store the composer uses, so
+        a reply is spoken on arrival without a click. It turns the *speak*
+        behaviour on; the manual button above stays available for one-offs.
+      */}
+      <button
+        type="button"
+        className={`nexus-chat__icon-btn nexus-chat__icon-btn--label${autoVoice ? ' is-on' : ''}`}
+        aria-pressed={autoVoice}
+        title={autoVoice ? 'Auto voice: on' : 'Auto voice: off'}
+        onClick={() => {
+          autoSpeakRef.current?.interrupt();
+          onToggleAutoVoice?.();
+        }}
+      >
+        <IconSpeaker />
+        <span className="nexus-chat__icon-btn-label">Auto</span>
       </button>
       {/*
         Mute/Pause use `aria-disabled` rather than the native `disabled`
@@ -644,9 +877,7 @@ export function VoiceLayout({
         <div className="nexus-chat__voice-pane">
           {avatarPane}
           {controls}
-          <div style={{ fontSize: 12, color: 'var(--nx-chat-muted)', marginTop: 8 }}>
-            {notice || surface.errorMessage || `Status: ${surface.status}`}
-          </div>
+          {statusLine}
         </div>
       </div>
     );
@@ -673,9 +904,7 @@ export function VoiceLayout({
       <div className="nexus-chat__voice-pane">
         {avatarPane}
         {controls}
-        <div style={{ fontSize: 12, color: 'var(--nx-chat-muted)', marginTop: 8 }}>
-          {notice || surface.errorMessage || `Status: ${surface.status}`}
-        </div>
+        {statusLine}
       </div>
       <div
         className="nexus-chat__voice-handle"

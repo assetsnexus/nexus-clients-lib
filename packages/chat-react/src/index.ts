@@ -133,6 +133,8 @@ export { GuestContinue } from './components/GuestContinue.js';
 export type { GuestContinueProps } from './components/GuestContinue.js';
 export { ModelPicker, ModelPickerRow } from './components/ModelPicker.js';
 export type { ModelPickerProps } from './components/ModelPicker.js';
+export { hostingBadges, policyBadges } from './models/picker-row.js';
+export type { HostingBadge, PolicyBadge } from './models/picker-row.js';
 export { loadPickerModels, buildModelOverride, mergePickerModels } from './models/loadPickerModels.js';
 export { mergeEntitledModelsForPicker } from './models/mergeEntitledModels.js';
 export type { PickerModel } from './models/picker-types.js';
@@ -286,3 +288,13 @@ export {
   type InboxRow,
   type ConversationRowView,
 } from './inbox/inboxRows.js';
+// Auto-voice preference: shared with the composer's toggle so a host settings
+// screen can read/write the exact same flag (never a second source of truth).
+export { readAutoVoice, writeAutoVoice, spokenTurnKey } from './chrome/auto-voice.js';
+export {
+  normalizeVoiceInterruptPolicy,
+  shouldStopOnSend,
+  shouldClearQueueOnSend,
+  type VoiceInterruptPolicy,
+} from './chrome/voice-interrupt.js';
+export { createAutoSpeakQueue, type AutoSpeakQueue, type AutoSpeakController } from './chrome/auto-speak.js';

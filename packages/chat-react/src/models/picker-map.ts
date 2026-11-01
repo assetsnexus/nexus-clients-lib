@@ -51,6 +51,9 @@ export function mapCatalogRow(m: Record<string, unknown>): PickerModel | null {
     subscriptionIds: m.subscriptionId ? [String(m.subscriptionId)] : undefined,
     capabilities: caps,
     category: m.category != null ? String(m.category) : null,
+    dataPolicyBadges: Array.isArray(m.dataPolicyBadges)
+      ? m.dataPolicyBadges.map((b) => String(b))
+      : undefined,
   };
 }
 
@@ -90,6 +93,8 @@ export function mergePickerModels(
       preferredHostingType: mapped.preferredHostingType || prev.preferredHostingType,
       iconUrl: mapped.iconUrl || prev.iconUrl,
       providerId: mapped.providerId || prev.providerId,
+      dataPolicyBadges:
+        mergeBadges(prev.dataPolicyBadges, mapped.dataPolicyBadges),
     });
   }
   return [...byId.values()].filter((m) =>
@@ -106,4 +111,13 @@ export function mergeHostingTypes(a: string[], b: string[]): string[] {
   const out = [...a];
   for (const h of b) if (!out.includes(h)) out.push(h);
   return out;
+}
+
+/** Union of two data-policy badge lists, first-seen order. */
+export function mergeBadges(a?: string[], b?: string[]): string[] | undefined {
+  const out: string[] = [];
+  for (const badge of [...(a ?? []), ...(b ?? [])]) {
+    if (badge && !out.includes(badge)) out.push(badge);
+  }
+  return out.length ? out : undefined;
 }
