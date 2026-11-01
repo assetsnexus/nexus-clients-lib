@@ -32,7 +32,7 @@
           <div class="nexus-billing-popover__turns-title">{{ L.billingRecentTurns }}</div>
           <div v-for="(t, i) in turns" :key="i" class="nexus-billing-popover__turn">
             <span>{{ formatTurnAt(t.at) }}</span>
-            <span>{{ actionLabel(t.action) }}</span>
+            <span>{{ turnKindLabel(t) }}</span>
             <span>{{ formatTurnCost(t) }}</span>
           </div>
         </div>
@@ -202,6 +202,21 @@ export default {
       if (a === 'chat_reader') return 'Chat';
       if (a === 'chat_compact') return 'Compact';
       return a || 'Turn';
+    },
+    /**
+     * Prefer the budget bucket (normal chat / warm follow-up / automation) so
+     * the user can tell a conversational follow-up or a background compaction
+     * apart from a turn they actually sent. Falls back to the action label for
+     * older rows that carry no usageClass.
+     */
+    turnKindLabel(turn) {
+      const cls = turn && turn.usageClass;
+      if (cls === 'warm') return 'Follow-up';
+      if (cls === 'automation') {
+        const role = turn && turn.automationRole;
+        return role ? `Automation: ${role}` : 'Automation';
+      }
+      return this.actionLabel(turn && turn.action);
     },
     formatTurnCost(t) {
       const tracked = t.trackedMinor != null ? t.trackedMinor : t.creditsCents;
