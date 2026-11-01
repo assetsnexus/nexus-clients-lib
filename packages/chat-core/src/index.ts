@@ -1471,6 +1471,15 @@ export type NexusChat = {
       /** Empty thread: ask the agent to greet. Do not show a user turn. */
       conversationOpen?: boolean;
       /**
+       * How to deliver this turn when the agent is already generating.
+       *
+       * `queue` (default) runs it as soon as the live turn settles; `steer`
+       * (aka `interrupt`) cooperatively cancels the live generation and runs
+       * this message next. The server never drops a message either way — it is
+       * already persisted, so the only question is ordering.
+       */
+      deliveryMode?: MessageDelivery | string | null;
+      /**
        * Spoken/channel flag for this turn. When true the server authors a system
        * block asking for concise, spoken-friendly plain text (no markdown, no
        * tables, no code fences). Client-supplied flag, server-authored prompt.
