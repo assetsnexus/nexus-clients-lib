@@ -93,9 +93,13 @@ export function contextDonutModel(input: {
   });
 
   const dispatched = finite(snapshot?.dispatchedTokens) ?? finite(snapshot?.totalTokens) ?? finite(input.tokensUsed) ?? 0;
+  // Denominator is the selected model's real context window (`maxContextTokens`
+  // is the model window since the agent-level cap was removed); the smaller
+  // `dispatchBudgetTokens` trim target is only a legacy fallback so old snapshots
+  // still render.
   const max =
-    finite(snapshot?.dispatchBudgetTokens) ||
     finite(snapshot?.maxContextTokens) ||
+    finite(snapshot?.dispatchBudgetTokens) ||
     (typeof input.maxContextTokens === 'number' && input.maxContextTokens > 0 ? input.maxContextTokens : null);
   const pct = max && max > 0 ? Math.min(100, Math.max(0, Math.round((dispatched / max) * 100))) : null;
   const tokenLabel = max ? `${dispatched} / ${max} tok` : dispatched > 0 ? `${dispatched} tok` : '—';

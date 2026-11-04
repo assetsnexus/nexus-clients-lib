@@ -22,6 +22,29 @@ describe('context donut', () => {
     expect(model.slices[1]?.offset).toBe(-50);
   });
 
+  it('uses the model context window, not the smaller dispatch trim budget', () => {
+    // `maxContextTokens` is the selected model's real window (e.g. DS 4.1 = 1M);
+    // `dispatchBudgetTokens` is a fraction of it used for trimming. The displayed
+    // denominator must be the model window so the reading matches the model.
+    const model = contextDonutModel({
+      snapshot: {
+        dispatchedTokens: 14_000,
+        maxContextTokens: 1_048_576,
+        dispatchBudgetTokens: 734_003,
+        categories: [{ category: 'chat_history', tokens: 14_000, pct: 100 }],
+      },
+    });
+    expect(model.tokenLabel).toBe('14000 / 1048576 tok');
+    expect(model.pct).toBe(1);
+  });
+
+  it('falls back to the dispatch budget for legacy snapshots without a window', () => {
+    const model = contextDonutModel({
+      snapshot: { dispatchedTokens: 40, dispatchBudgetTokens: 80 },
+    });
+    expect(model.tokenLabel).toBe('40 / 80 tok');
+  });
+
   it('shows an empty ring when usage is unknown', () => {
     expect(contextDonutModel({}).pct).toBeNull();
     expect(contextDonutModel({}).tokenLabel).toBe('—');
