@@ -5962,8 +5962,8 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
     },
     seedPendingPause(card) {
       const next = card ?? null;
-      // Restore the runnable request behind a reloaded client_tool approval card
-      // so `approveClientTool` can still run the handler after a refresh.
+      // Restore the runnable request behind a reloaded client_tool card so
+      // `approveClientTool` can still run the handler after a refresh.
       pausedClientToolReq =
         next && next.kind === 'client_tool' && next.action === 'request'
           ? {
@@ -5979,6 +5979,43 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
         pendingPauseKind: next?.kind ?? null,
         pausedCallId: next?.callId ?? null,
       });
+      // A reloaded pause must be re-driven, not just re-rendered.
+      //
+      // The live path runs `resumeClientToolPause` for a `requiresApproval:false`
+      // client tool (page tools such as `anx.page.outline`). A reload only knows
+      // the persisted card, so without this the turn is never resumed — and the
+      // server holds the conversation's client-tool soft lock until a
+      // `client-tool.result` arrives. Every later `message.send` is then deferred
+      // and the UI sits on "Streaming…" forever with no reply.
+      //
+      // Only the `request`/no-approval shape is auto-run here: an `approval` or
+      // `mode_switch` card is a human decision, and a `bind` is a schema request,
+      // so those stay with the host. Runs after the state is seeded so a handler
+      // that reads the controller sees the restored card.
+      if (
+        next &&
+        next.kind === 'client_tool' &&
+        next.action === 'request' &&
+        next.requiresApproval === false
+      ) {
+        void resumeClientToolPause(
+          {
+            callId: next.callId,
+            name: next.name,
+            arguments: next.arguments,
+            conversationId: store.getState().conversationId ?? null,
+            action: next.action,
+          },
+          toolRegistry,
+        ).catch((err) => {
+          log('seed_pending_pause_resume_failed', {
+            message: String(err),
+            callId: next.callId,
+            name: next.name,
+          });
+          opts.hooks?.onError?.(err);
+        });
+      }
     },
     applySubAgentRunStates(runs) {
       return applyRunStates(Array.isArray(runs) ? runs : []);
