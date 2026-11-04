@@ -1,5 +1,8 @@
 /** Context-window slices. Same categories as the portal chat donut. */
 
+import { contextUsageModel } from '@nexus/chat-core';
+import type { ChatContextSnapshot } from '@nexus/chat-core';
+
 const COLORS = ['#51cbce', '#6bd098', '#fbc658', '#ef8157', '#9368e9', '#aaaaaa', '#51bcda', '#f3a4b5'];
 
 /**
@@ -92,18 +95,15 @@ export function contextDonutModel(input: {
     return slice;
   });
 
-  const dispatched = finite(snapshot?.dispatchedTokens) ?? finite(snapshot?.totalTokens) ?? finite(input.tokensUsed) ?? 0;
-  // Denominator is the selected model's real context window (`maxContextTokens`).
-  // The top-level `input.maxContextTokens` (the usage payload's model window) is
-  // preferred over a legacy snapshot's `dispatchBudgetTokens` trim target, which
-  // is 0.7x the window and only kept as a last-resort fallback so very old
-  // snapshots that predate the window field still render.
-  const max =
-    finite(snapshot?.maxContextTokens) ||
-    (typeof input.maxContextTokens === 'number' && input.maxContextTokens > 0 ? input.maxContextTokens : null) ||
-    finite(snapshot?.dispatchBudgetTokens);
-  const pct = max && max > 0 ? Math.min(100, Math.max(0, Math.round((dispatched / max) * 100))) : null;
-  const tokenLabel = max ? `${dispatched} / ${max} tok` : dispatched > 0 ? `${dispatched} tok` : '—';
+  // Single source of truth for numerator/denominator so the donut, the portal
+  // header pill and the SDK progress bar can never disagree (see `contextUsageModel`).
+  const context = contextUsageModel({
+    snapshot: (snapshot ?? null) as ChatContextSnapshot | null,
+    tokensUsed: input.tokensUsed ?? null,
+    maxContextTokens: input.maxContextTokens ?? null,
+  });
+  const pct = context.pct;
+  const tokenLabel = context.label;
   // `measured` is false when the snapshot carries no real lane breakdown — either
   // an explicit `measured: false` flag (room/asset token-only snapshots) or a
   // snapshot with no `categories[]` array. Distinguishes "not measured" from

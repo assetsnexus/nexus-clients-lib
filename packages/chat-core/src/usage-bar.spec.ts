@@ -3,6 +3,7 @@ import type { ChatUsageSnapshot } from './types.js';
 import {
   cacheHitPercent,
   contextFillPercent,
+  contextUsageModel,
   formatUsageTokensLabel,
   usageBarModel,
 } from './usage-bar.js';
@@ -50,6 +51,72 @@ describe('formatUsageTokensLabel', () => {
     expect(formatUsageTokensLabel(500, null)).toBe('500 tok');
     expect(formatUsageTokensLabel(undefined, undefined)).toBe('—');
     expect(formatUsageTokensLabel(null, 128000)).toBe('0 / 128000 tok');
+  });
+});
+
+describe('contextUsageModel', () => {
+  it('uses the last dispatch size, not the cumulative billed tokens', () => {
+    // The bug: the portal header pill and the SDK bar read different numerators
+    // because one used `tokensUsed` (cumulative billed total) and the other
+    // `dispatchedTokens` (last payload). A long thread has a small dispatch and a
+    // huge cumulative total, so the two readings diverged (12% vs 93%).
+    const model = contextUsageModel({
+      tokensUsed: 2_400_000,
+      maxContextTokens: 1_048_576,
+      snapshot: { dispatchedTokens: 130_000, totalTokens: 480_000, maxContextTokens: 1_048_576 },
+    });
+    expect(model.usedTokens).toBe(130_000);
+    expect(model.pct).toBe(12);
+    expect(model.label).toBe('130000 / 1048576 tok');
+  });
+
+  it('falls back to stored size then tokensUsed when no dispatch was recorded', () => {
+    expect(
+      contextUsageModel({
+        tokensUsed: 999,
+        maxContextTokens: 1000,
+        snapshot: { totalTokens: 500 },
+      }).usedTokens,
+    ).toBe(500);
+    expect(
+      contextUsageModel({ tokensUsed: 999, maxContextTokens: 1000 }).usedTokens,
+    ).toBe(999);
+  });
+
+  it('prefers the model window over the legacy dispatch trim budget', () => {
+    const model = contextUsageModel({
+      snapshot: { dispatchedTokens: 40, dispatchBudgetTokens: 80 },
+      maxContextTokens: 100,
+    });
+    expect(model.maxTokens).toBe(100);
+    expect(model.pct).toBe(40);
+    // Legacy snapshot with no window field at all still renders from the budget.
+    expect(
+      contextUsageModel({ snapshot: { dispatchedTokens: 40, dispatchBudgetTokens: 80 } }).maxTokens,
+    ).toBe(80);
+  });
+
+  it('reports no percent without a window but keeps the raw count', () => {
+    const model = contextUsageModel({ tokensUsed: 500 });
+    expect(model.pct).toBeNull();
+    expect(model.label).toBe('500 tok');
+    expect(contextUsageModel({}).label).toBe('—');
+  });
+
+  it('never overflows 100% when stored totalTokens exceeds the model window', () => {
+    // Real live snapshot shape: `totalTokens` (live stored set) can exceed both
+    // the window and the dispatch budget on a long session. Using it as the
+    // numerator produced the impossible "179% of 128,000"; `dispatchedTokens`
+    // (post-trim, bounded by the budget) is the only correct numerator.
+    const model = contextUsageModel({
+      snapshot: { totalTokens: 35_207, dispatchedTokens: 28_617, maxContextTokens: 32_000 },
+    });
+    expect(model.usedTokens).toBe(28_617);
+    expect(model.pct).toBe(89);
+    expect(model.pct).toBeLessThanOrEqual(100);
+    expect(
+      contextUsageModel({ snapshot: { totalTokens: 200_000, maxContextTokens: 128_000 } }).pct,
+    ).toBe(100);
   });
 });
 

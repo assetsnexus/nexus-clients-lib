@@ -6345,12 +6345,13 @@ export type { AgentAccessClient, AccessCommandClient, CommandOutcome } from './a
 export { formatMillicents, formatMinor, fundingQuickSelectModel } from './access/present.js';
 export type { FundingQuickSelectModel } from './access/present.js';
 export {
+  contextUsageModel,
   contextFillPercent,
   cacheHitPercent,
   formatUsageTokensLabel,
   usageBarModel,
 } from './usage-bar.js';
-export type { UsageBarModel } from './usage-bar.js';
+export type { ContextUsageModel, UsageBarModel } from './usage-bar.js';
 export type {
   AccessDecision,
   AgentAccessTarget,
