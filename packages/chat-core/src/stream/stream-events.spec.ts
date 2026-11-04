@@ -136,6 +136,25 @@ describe('stream-events', () => {
     expect(turns[0].compaction?.afterTokens).toBe(40);
   });
 
+  it('carries the prompt-cache hit rate from the usage event (top-level or snapshot)', () => {
+    let turns: ChatTurn[] = [{ id: 'a1', role: 'assistant', text: '' }];
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'usage',
+      data: {
+        tokensUsed: 15982,
+        maxContextTokens: 128000,
+        contextSnapshot: { maxContextTokens: 128000, cacheHitRate: 0.42 },
+      },
+    });
+    expect(turns[0].usage?.cacheHitRate).toBe(0.42);
+
+    turns = applyStreamEventToTurns(turns, 'a1', {
+      type: 'usage',
+      data: { tokensUsed: 1, maxContextTokens: 100, cacheHitRate: 0.9 },
+    });
+    expect(turns[0].usage?.cacheHitRate).toBe(0.9);
+  });
+
   it('WP23: sub_agent_token routes to rawToolStream, not parent text', () => {
     let turns: ChatTurn[] = [
       { id: 'a1', role: 'assistant', text: 'Before', toolEvents: [], rawToolStream: [] },

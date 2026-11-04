@@ -3251,6 +3251,71 @@
   cursor: default;
 }
 
+/* Dual context / prompt-cache progress bars (chat-core `usageBarModel`). */
+.nexus-chat__usage-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nexus-chat__usage-bars-btn {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.nexus-chat__usage-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.nexus-chat__usage-bar--text {
+  color: inherit;
+}
+
+.nexus-chat__usage-bar-label {
+  opacity: 0.7;
+}
+
+.nexus-chat__usage-bar-track {
+  display: inline-block;
+  width: 64px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.nexus-chat__usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--nx-chat-accent, #51cbce);
+  transition: width 160ms ease;
+}
+
+.nexus-chat__usage-bar-fill--cache {
+  background: #6bd098;
+}
+
+.nexus-chat__usage-bar-value {
+  min-width: 30px;
+  text-align: right;
+  font-weight: 600;
+}
+
+.nexus-chat__usage-bar-hint {
+  opacity: 0.6;
+}
+
+.nexus-chat__context-bars {
+  margin-top: 10px;
+}
+
 .nexus-chat__model-row {
   display: flex;
   align-items: center;

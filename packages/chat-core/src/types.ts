@@ -95,9 +95,37 @@ export type IoDescriptor =
       downloadUrl?: string;
     };
 
+export type ChatContextSnapshot = {
+  /** Post-trim size of the last real dispatch (the donut/gauge numerator). */
+  dispatchedTokens?: number | null;
+  /** Full live (non-compacted) message set size. */
+  totalTokens?: number | null;
+  /** Real input budget for one provider call (legacy trim target). */
+  dispatchBudgetTokens?: number | null;
+  /** The selected model's real context window. */
+  maxContextTokens?: number | null;
+  /** Recently reclaimed by compaction. */
+  reclaimableTokens?: number | null;
+  /** Provider prompt-cache hit ratio of the last turn (`tokensCachedInput / contextTokens`). */
+  cacheHitRate?: number | null;
+  /** Input tokens billed across every tool round of the last turn. */
+  lastTurnInputTokens?: number | null;
+  /** Provider calls the last turn took (1 = no tool use). */
+  lastTurnRounds?: number | null;
+  categories?: Array<{ category?: string; tokens?: number; pct?: number }>;
+  measured?: boolean;
+  measuredAt?: string | null;
+};
+
 export type ChatUsageSnapshot = {
   tokensUsed?: number;
   maxContextTokens?: number;
+  /**
+   * Prompt-cache hit ratio of the last turn (0–1). Kept alongside
+   * `contextSnapshot.cacheHitRate` so chrome can read it without narrowing the
+   * snapshot.
+   */
+  cacheHitRate?: number;
   costCents?: number;
   creditsCents?: number;
   /** Money minor units for UI when not prepaid platform credits. */
@@ -108,7 +136,7 @@ export type ChatUsageSnapshot = {
   billingMode?: string;
   /** Platform prepaid credits actually charged (0 on BYOK). */
   creditsChargedCents?: number;
-  contextSnapshot?: unknown;
+  contextSnapshot?: ChatContextSnapshot;
   /** Asset chat: who the usage event billed. */
   subscriberType?: string;
   /** Asset chat: `edge` (local) or `twin` (registry inference). */

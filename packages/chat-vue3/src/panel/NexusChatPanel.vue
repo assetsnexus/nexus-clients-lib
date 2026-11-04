@@ -133,7 +133,54 @@
             :title="resolvedLabels.usageDetails"
             @click="billingOpen = true"
           >
-            <span>{{ resolvedLabels.usage }}: {{ usageSummary }}</span>
+            <span
+              v-if="usageBars.contextPct != null"
+              class="nexus-chat-panel__usage-bar"
+              :title="resolvedLabels.usageContextHint"
+            >
+              <span class="nexus-chat-panel__usage-bar-label">{{ resolvedLabels.usageContext }}</span>
+              <span
+                class="nexus-chat-panel__usage-bar-track"
+                role="progressbar"
+                :aria-valuenow="usageBars.contextPct"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-label="resolvedLabels.usageContextHint"
+              >
+                <span
+                  class="nexus-chat-panel__usage-bar-fill"
+                  data-nexus-usage-fill="context"
+                  :style="{ width: usageBars.contextPct + '%' }"
+                />
+              </span>
+              <span class="nexus-chat-panel__usage-bar-value">{{ usageBars.contextPct }}%</span>
+              <span class="nexus-chat-panel__usage-bar-hint">{{ usageBars.contextLabel }}</span>
+            </span>
+            <span
+              v-if="usageBars.cachePct != null"
+              class="nexus-chat-panel__usage-bar"
+              :title="resolvedLabels.usageCacheHint"
+            >
+              <span class="nexus-chat-panel__usage-bar-label">{{ resolvedLabels.usageCache }}</span>
+              <span
+                class="nexus-chat-panel__usage-bar-track"
+                role="progressbar"
+                :aria-valuenow="usageBars.cachePct"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-label="resolvedLabels.usageCacheHint"
+              >
+                <span
+                  class="nexus-chat-panel__usage-bar-fill nexus-chat-panel__usage-bar-fill--cache"
+                  data-nexus-usage-fill="cache"
+                  :style="{ width: usageBars.cachePct + '%' }"
+                />
+              </span>
+              <span class="nexus-chat-panel__usage-bar-value">{{ usageBars.cacheLabel }}</span>
+            </span>
+            <span v-if="!usageBars.hasAny" class="nexus-chat-panel__usage-bar-hint">
+              {{ resolvedLabels.usageEmpty }}
+            </span>
             <span v-if="showSpendChrome">
               {{ spendChromeLabel }}: {{ formatMoney(resolvedPanel.credits.usedCents, displayCurrency) }}
             </span>
@@ -384,6 +431,7 @@ import {
   formatTurnSenderLine,
   resolveConversationLabel,
   UNTITLED_CONVERSATION_LABEL,
+  usageBarModel,
 } from '@nexus/chat-core';
 import { renderChatMarkdown } from '../markdown';
 import { ToolCallTimeline, toolTimelineProps, ensureToolWidgetStyles, SubAgentsStrip, PendingPauseCardWidget } from '../tools';
@@ -654,17 +702,13 @@ export default {
     canSend() {
       return (this.draft.trim().length > 0 || this.pendingAttachments.length > 0) && !this.isComposerDisabled;
     },
-    usageSummary() {
-      const used = this.resolvedPanel.usage && this.resolvedPanel.usage.tokensUsed;
-      const max = this.resolvedPanel.usage && this.resolvedPanel.usage.maxContextTokens;
-      const usage = this.resolvedPanel.usage || {};
-      const cost =
-        usage.displayCostMinor != null ? usage.displayCostMinor : usage.costCents;
-      const parts = [];
-      if (used != null) parts.push(`${used} tok`);
-      if (max != null) parts.push(`/${max}`);
-      if (cost != null) parts.push(this.formatMoney(cost, this.displayCurrency));
-      return parts.length ? parts.join(' ') : this.resolvedLabels.usageEmpty;
+    /**
+     * Dual context/cache bar model. The old `Usage: N tok /M €x` line repeated
+     * money the billing popover already owns and showed nothing about prompt
+     * caching, so the chrome now renders these two progress bars instead.
+     */
+    usageBars() {
+      return usageBarModel(this.resolvedPanel.usage || null);
     },
     displayCurrency() {
       return (
@@ -1029,6 +1073,55 @@ export default {
   border-bottom: 1px solid #e9ecef;
   color: #6c757d;
   font-size: 12px;
+}
+.nexus-chat-panel__meta-btn {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+/* Dual context / prompt-cache bars (chat-core `usageBarModel`). */
+.nexus-chat-panel__usage-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.nexus-chat-panel__usage-bar-label {
+  opacity: 0.75;
+}
+.nexus-chat-panel__usage-bar-track {
+  display: inline-block;
+  width: 56px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.12);
+}
+.nexus-chat-panel__usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #51cbce;
+  transition: width 160ms ease;
+}
+.nexus-chat-panel__usage-bar-fill--cache {
+  background: #6bd098;
+}
+.nexus-chat-panel__usage-bar-value {
+  min-width: 28px;
+  text-align: right;
+  font-weight: 600;
+}
+.nexus-chat-panel__usage-bar-hint {
+  opacity: 0.65;
 }
 .nexus-chat-panel__messages {
   flex: 1;

@@ -223,6 +223,7 @@ export {
 } from './viewer/file-preview-sanitize.js';
 export { detectPreviewKind, PREVIEW_KIND } from './viewer/preview-kind.js';
 export { contextUsagePercent, formatContextTokensLabel } from './utils/context-percent.js';
+export { UsageBars } from './chrome/UsageBars.js';
 export {
   summarizeSubAgentChip,
   subAgentChipLabel,

@@ -125,6 +125,12 @@ export type NexusChatPanelLabels = {
   streaming?: string;
   contextCompacted?: string;
   usageEmpty?: string;
+  usage?: string;
+  usageDetails?: string;
+  usageContext?: string;
+  usageCache?: string;
+  usageContextHint?: string;
+  usageCacheHint?: string;
   throttled?: string;
   spendLimit?: string;
   spendLimitHint?: string;

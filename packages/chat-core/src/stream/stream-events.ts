@@ -1,4 +1,5 @@
 import type { ChatToolRun, ChatTurn } from '../state.js';
+import type { ChatUsageSnapshot } from '../types.js';
 import { mergeToolStreamEvents, type ToolStreamEvent } from './tool-events.js';
 import { classifyChatBillingIssue } from '../billing/classify-billing-issue.js';
 
@@ -211,10 +212,20 @@ export function applyStreamEventToTurns(
     }
   } else if (ev.type === 'usage') {
     const data = (ev.data && typeof ev.data === 'object' ? ev.data : {}) as Record<string, unknown>;
+    const contextSnapshot =
+      data.contextSnapshot && typeof data.contextSnapshot === 'object'
+        ? (data.contextSnapshot as ChatUsageSnapshot['contextSnapshot'])
+        : undefined;
     turn.usage = {
       tokensUsed: typeof data.tokensUsed === 'number' ? data.tokensUsed : undefined,
       maxContextTokens:
         typeof data.maxContextTokens === 'number' ? data.maxContextTokens : undefined,
+      cacheHitRate:
+        typeof data.cacheHitRate === 'number'
+          ? data.cacheHitRate
+          : typeof contextSnapshot?.cacheHitRate === 'number'
+            ? contextSnapshot.cacheHitRate
+            : undefined,
       costCents: typeof data.costCents === 'number' ? data.costCents : undefined,
       creditsCents: typeof data.creditsCents === 'number' ? data.creditsCents : undefined,
       displayCostMinor:
@@ -229,7 +240,7 @@ export function applyStreamEventToTurns(
           : undefined,
       creditsChargedCents:
         typeof data.creditsChargedCents === 'number' ? data.creditsChargedCents : undefined,
-      contextSnapshot: data.contextSnapshot,
+      contextSnapshot,
       subscriberType:
         typeof data.subscriberType === 'string' && data.subscriberType.trim()
           ? data.subscriberType.trim()

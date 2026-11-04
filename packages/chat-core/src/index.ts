@@ -225,6 +225,7 @@ export type {
   IoDescriptor,
 };
 export { DEFAULT_FEATURES, AI_DISCLOSURE_REQUIRED, CONTACT_BANNED_CODE } from './types.js';
+export type { ChatContextSnapshot } from './types.js';
 export {
   MemoryChatCacheAdapter,
   ChatCacheStore,
@@ -938,9 +939,20 @@ function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null 
     typeof data.creditsChargedCents === 'number' ||
     data.contextSnapshot != null;
   if (!hasUsage) return null;
+  const contextSnapshot =
+    data.contextSnapshot && typeof data.contextSnapshot === 'object'
+      ? (data.contextSnapshot as ChatUsageSnapshot['contextSnapshot'])
+      : undefined;
+  const cacheHitRate =
+    typeof data.cacheHitRate === 'number'
+      ? data.cacheHitRate
+      : typeof contextSnapshot?.cacheHitRate === 'number'
+        ? contextSnapshot.cacheHitRate
+        : undefined;
   return {
     tokensUsed: typeof data.tokensUsed === 'number' ? data.tokensUsed : undefined,
     maxContextTokens: typeof data.maxContextTokens === 'number' ? data.maxContextTokens : undefined,
+    cacheHitRate,
     costCents: typeof data.costCents === 'number' ? data.costCents : undefined,
     creditsCents: typeof data.creditsCents === 'number' ? data.creditsCents : undefined,
     displayCostMinor:
@@ -955,7 +967,7 @@ function usageFromData(data: Record<string, unknown>): ChatUsageSnapshot | null 
         : undefined,
     creditsChargedCents:
       typeof data.creditsChargedCents === 'number' ? data.creditsChargedCents : undefined,
-    contextSnapshot: data.contextSnapshot,
+    contextSnapshot,
   };
 }
 
@@ -6332,6 +6344,13 @@ export {
 export type { AgentAccessClient, AccessCommandClient, CommandOutcome } from './access/commands.js';
 export { formatMillicents, formatMinor, fundingQuickSelectModel } from './access/present.js';
 export type { FundingQuickSelectModel } from './access/present.js';
+export {
+  contextFillPercent,
+  cacheHitPercent,
+  formatUsageTokensLabel,
+  usageBarModel,
+} from './usage-bar.js';
+export type { UsageBarModel } from './usage-bar.js';
 export type {
   AccessDecision,
   AgentAccessTarget,

@@ -1,22 +1,14 @@
 import { useState, type ReactNode } from 'react';
 import type { PanelState, ReasoningEffortLevel } from '@nexus/chat-core';
+import { usageBarModel } from '@nexus/chat-core';
 import { ModelPicker } from '../components/ModelPicker.js';
 import type { PickerModel } from '../models/picker-types.js';
 import { contextDonutModel } from './context-donut.js';
 import { ContextDonut } from './ContextDonut.js';
 import { ReasoningEffortControl } from './ReasoningEffortControl.js';
+import { UsageBars } from './UsageBars.js';
 import { ADVANCED_USAGE_OPEN_BY_DEFAULT } from './usage-disclosure.js';
 import { advancedCatalogNotice, advancedModelFacts, contextUsageVisible } from './advanced-model-facts.js';
-
-function formatMinor(minor: number | undefined, currency?: string | null): string {
-  if (minor == null || !Number.isFinite(minor)) return '—';
-  const cur = (currency || 'EUR').toUpperCase();
-  try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur }).format(minor / 100);
-  } catch {
-    return `${(minor / 100).toFixed(2)} ${cur}`;
-  }
-}
 
 export function UsageChrome({
   panel,
@@ -57,15 +49,9 @@ export function UsageChrome({
     tokensUsed: usage?.tokensUsed,
     maxContextTokens: usage?.maxContextTokens,
   });
-  const costLabel =
-    usage?.displayCostMinor != null
-      ? formatMinor(usage.displayCostMinor, usage.displayCurrency)
-      : usage?.costCents != null
-        ? formatMinor(usage.costCents, usage.displayCurrency)
-        : null;
-  const cost = costLabel && costLabel !== '—' ? costLabel : null;
   const facts = models.length ? advancedModelFacts(effectiveModel ?? null) : null;
   const showContext = contextUsageVisible(model);
+  const bars = usageBarModel(usage);
   const catalogNotice = advancedCatalogNotice({
     modelsError,
     modelCount: models.length,
@@ -124,9 +110,9 @@ export function UsageChrome({
               ) : null}
             </div>
           ) : null}
-          {cost ? (
-            <div data-nexus-cost="" title="Cost">
-              {cost}
+          {bars.hasAny ? (
+            <div data-nexus-usage="" title="Context usage and prompt-cache hit rate">
+              <UsageBars usage={usage} />
             </div>
           ) : null}
         </div>
@@ -144,8 +130,8 @@ export function UsageChrome({
   }
 
   // The reasoning stop lives in the composer action strip now, so this bar stays
-  // a single compact line: model, context, cost. Keeping the slider here too
-  // would spend a second row on a control the user already has under the draft.
+  // a single compact line: model picker + a dual context/cache bar (the cost is
+  // owned by the billing surfaces, not repeated here).
   return (
     <div className="nexus-chat__usage">
       <div data-nexus-model="">
@@ -153,16 +139,13 @@ export function UsageChrome({
       </div>
       <button
         type="button"
-        className="nexus-chat__btn"
+        className="nexus-chat__btn nexus-chat__usage-bars-btn"
         data-nexus-context=""
-        title="Context usage"
+        title="Context usage and prompt-cache hit rate"
         onClick={() => setOpen(true)}
       >
-        {model.pct == null ? '—' : `${model.pct}%`}
+        <UsageBars usage={usage} compact />
       </button>
-      <span data-nexus-cost="" title="Cost">
-        {cost || '—'}
-      </span>
       {open ? (
         <div className="nexus-chat__sheet-backdrop" onClick={() => setOpen(false)} role="presentation">
           <div
@@ -193,7 +176,7 @@ export function UsageChrome({
             ) : (
               <p className="nexus-chat__muted">{model.tokenLabel}</p>
             )}
-            <div>{cost || '—'}</div>
+            <UsageBars usage={usage} />
           </div>
         </div>
       ) : null}

@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CommandClient, NexusChat, PanelState } from '@nexus/chat-core';
 import { contextUsagePercent, formatContextTokensLabel } from '../utils/context-percent.js';
-
-function formatMinor(minor: number | undefined, currency?: string | null): string {
-  if (minor == null || !Number.isFinite(minor)) return '—';
-  const cur = (currency || 'EUR').toUpperCase();
-  try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur }).format(minor / 100);
-  } catch {
-    return `${(minor / 100).toFixed(2)} ${cur}`;
-  }
-}
+import { UsageBars } from '../chrome/UsageBars.js';
 
 export type ContextSpendChipProps = {
   panel: PanelState | null;
@@ -62,17 +53,9 @@ export function SpendChip({ panel, chat, client, conversationId }: ContextSpendC
   const maxTokens = usage?.maxContextTokens;
   const pct = contextUsagePercent(tokensUsed, maxTokens);
 
-  const costLabel =
-    usage?.displayCostMinor != null
-      ? formatMinor(usage.displayCostMinor, usage.displayCurrency)
-      : usage?.costCents != null
-        ? `${(usage.costCents / 100).toFixed(2)} cr`
-        : null;
-
   const parts: string[] = [];
   if (pct != null) parts.push(`${pct}%`);
   parts.push(formatContextTokensLabel(tokensUsed, maxTokens));
-  if (costLabel) parts.push(costLabel);
   if (credits?.availableCents != null) parts.push(`bal ${(credits.availableCents / 100).toFixed(2)}`);
   if (limits?.reached) parts.push('limit reached');
 
@@ -151,7 +134,9 @@ export function SpendChip({ panel, chat, client, conversationId }: ContextSpendC
             <div className="nexus-chat__context-pct">
               <div className="nexus-chat__context-pct-value">{pct == null ? '—' : `${pct}%`}</div>
               <div className="nexus-chat__muted">{formatContextTokensLabel(tokensUsed, maxTokens)}</div>
-              {costLabel ? <div>{costLabel}</div> : null}
+              <div className="nexus-chat__context-bars" data-nexus-usage="">
+                <UsageBars usage={usage} />
+              </div>
             </div>
 
             {detailsLoading ? <p className="nexus-chat__muted">Loading context…</p> : null}

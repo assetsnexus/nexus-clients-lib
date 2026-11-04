@@ -187,6 +187,11 @@ export type NexusChatPanelLabels = {
   copy?: string;
   usage?: string;
   usageDetails?: string;
+  /** Dual progress bar labels (context window / prompt cache). */
+  usageContext?: string;
+  usageCache?: string;
+  usageContextHint?: string;
+  usageCacheHint?: string;
   cost?: string;
   credits?: string;
   mode?: string;
@@ -281,6 +286,10 @@ export const DEFAULT_PANEL_LABELS: Required<NexusChatPanelLabels> = {
   copy: 'Copy',
   usage: 'Usage',
   usageDetails: 'Usage details',
+  usageContext: 'Context',
+  usageCache: 'Cache',
+  usageContextHint: 'Context window used',
+  usageCacheHint: 'Prompt cache hit rate (last turn)',
   cost: 'Cost',
   credits: 'Credits',
   mode: 'Mode',

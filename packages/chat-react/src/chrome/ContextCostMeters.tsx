@@ -1,27 +1,11 @@
 import { useState } from 'react';
 import type { PanelState } from '@nexus/chat-core';
+import { usageBarModel } from '@nexus/chat-core';
 import { contextDonutModel } from './context-donut.js';
 import { ContextDonut } from './ContextDonut.js';
+import { UsageBars } from './UsageBars.js';
 
-function formatMinor(minor: number | undefined, currency?: string | null): string | null {
-  if (minor == null || !Number.isFinite(minor)) return null;
-  const cur = (currency || 'EUR').toUpperCase();
-  try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency: cur }).format(minor / 100);
-  } catch {
-    return `${(minor / 100).toFixed(2)} ${cur}`;
-  }
-}
-
-function costLabel(panel: PanelState | null): string {
-  const usage = panel?.usage;
-  const label =
-    formatMinor(usage?.displayCostMinor, usage?.displayCurrency) ||
-    formatMinor(usage?.costCents, usage?.displayCurrency);
-  return label || '—';
-}
-
-/** Context percent (opens the usage pie) and conversation cost, for the column header. */
+/** Context + cache-hit dual bar (opens the usage pie), for the column header. */
 export function ContextCostMeters({ panel }: { panel: PanelState | null }) {
   const [open, setOpen] = useState(false);
   const usage = panel?.usage;
@@ -30,8 +14,7 @@ export function ContextCostMeters({ panel }: { panel: PanelState | null }) {
     tokensUsed: usage?.tokensUsed,
     maxContextTokens: usage?.maxContextTokens,
   });
-  const pctLabel = model.pct == null ? '—' : `${model.pct}%`;
-  const cost = costLabel(panel);
+  const bars = usageBarModel(usage);
 
   return (
     <div className="nexus-chat__column-meters">
@@ -39,15 +22,12 @@ export function ContextCostMeters({ panel }: { panel: PanelState | null }) {
         type="button"
         className="nexus-chat__meter"
         data-nexus-context=""
-        aria-label={`Context ${pctLabel}`}
-        title="Context usage"
+        aria-label={`Context ${model.pct == null ? '—' : `${model.pct}%`}`}
+        title="Context usage and prompt-cache hit rate"
         onClick={() => setOpen(true)}
       >
-        {pctLabel}
+        <UsageBars usage={usage} compact />
       </button>
-      <span className="nexus-chat__meter nexus-chat__meter--cost" data-nexus-cost="" title="Cost">
-        {cost}
-      </span>
       {open ? (
         <div className="nexus-chat__sheet-backdrop" onClick={() => setOpen(false)} role="presentation">
           <div
@@ -78,9 +58,11 @@ export function ContextCostMeters({ panel }: { panel: PanelState | null }) {
             ) : (
               <p className="nexus-chat__muted">{model.tokenLabel}</p>
             )}
-            <p className="nexus-chat__context-cost" data-nexus-cost="">
-              {cost}
-            </p>
+            {bars.hasAny ? (
+              <div className="nexus-chat__context-bars" data-nexus-usage="">
+                <UsageBars usage={usage} />
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
