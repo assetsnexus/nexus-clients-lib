@@ -53,7 +53,7 @@
 </template>
 
 <script>
-import { DEFAULT_PANEL_LABELS, formatMoneyMinor, spendLabelForCurrency } from './labels';
+import { DEFAULT_PANEL_LABELS, formatMicroUsd, formatMoneyMinor, spendLabelForCurrency } from './labels';
 
 function unwrapData(result) {
   if (!result || typeof result !== 'object') return {};
@@ -221,7 +221,15 @@ export default {
     formatTurnCost(t) {
       const tracked = t.trackedMinor != null ? t.trackedMinor : t.creditsCents;
       const charged = t.creditsCents;
-      const money = formatMoneyMinor(tracked, this.displayCurrency);
+      // A turn whose COGS is a fraction of a cent rounds to 0 minor units and
+      // would print "€0.00". Prefer the raw provider COGS (micro-USD) for those
+      // so the price shows real sub-cent precision.
+      const money =
+        (tracked == null || tracked === 0) &&
+        t.trackedMicroUsd != null &&
+        t.trackedMicroUsd > 0
+          ? formatMicroUsd(t.trackedMicroUsd, this.displayCurrency)
+          : formatMoneyMinor(tracked, this.displayCurrency);
       if (this.isByok) return money;
       if (charged != null && charged !== tracked) {
         return `${money} (${formatMoneyMinor(charged, null)} cr)`;

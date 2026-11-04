@@ -45,6 +45,13 @@ function majorFromMinor(minor: number, code: string): { major: number; digits: n
   return { major: minor / 100, digits: 2 };
 }
 
+/** ISO-4217 fraction digits (0 / 2 / 3). */
+function currencyDigits(code: string): number {
+  if (ZERO_DECIMAL.has(code)) return 0;
+  if (THREE_DECIMAL.has(code)) return 3;
+  return 2;
+}
+
 function formatMajorAmount(
   major: number,
   digits: number,
@@ -91,6 +98,39 @@ export function formatMoneyMinor(
   const { major, digits } = majorFromMinor(amount, code);
   const symbol = SYMBOL_PREFIX[code] || null;
   return formatMajorAmount(major, digits, amount, symbol, code);
+}
+
+/**
+ * Format provider COGS given in micro-USD (1e-6 USD) with sub-cent precision.
+ *
+ * `formatMoneyMinor` takes minor units and can only show sub-cent when it is
+ * handed a non-zero minor; a turn whose COGS rounds to 0 cents therefore prints
+ * `€0.00`. This helper converts micro-USD straight to display major units and
+ * applies the same precise-fraction rendering, so a tiny turn reads e.g.
+ * `€0.0004`. `rate` is display-currency units per 1 USD.
+ */
+export function formatMicroUsd(
+  microUsd: number | null | undefined,
+  currency?: string | null,
+  rate = 1,
+): string {
+  const micro = Number(microUsd);
+  if (microUsd == null || !Number.isFinite(micro) || micro <= 0) {
+    return formatMoneyMinor(0, currency);
+  }
+  const code = String(currency || '')
+    .trim()
+    .toUpperCase();
+  if (!/^[A-Z]{3}$/.test(code)) {
+    // No ISO currency: fall back to legacy credit cents rounded from micro-USD.
+    return formatCreditCents(Math.round(micro / 10_000));
+  }
+  const usdPerDisplayRate = Number(rate);
+  const r = Number.isFinite(usdPerDisplayRate) && usdPerDisplayRate > 0 ? usdPerDisplayRate : 1;
+  const digits = currencyDigits(code);
+  const symbol = SYMBOL_PREFIX[code] || null;
+  const major = (micro / 1_000_000) * r;
+  return formatMajorAmount(major, digits, micro / 10_000, symbol, code);
 }
 
 /** Spend / credits chrome label: money → "Cost", else "Credits". */

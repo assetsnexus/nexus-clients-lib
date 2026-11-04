@@ -16,10 +16,23 @@ describe('context donut', () => {
         ],
       },
     });
-    expect(model.pct).toBe(50);
+    expect(model.pct).toBe(40);
     expect(model.slices.map((slice) => slice.label)).toEqual(['Chat history', 'Tool schemas']);
     expect(model.slices[0]?.offset).toBe(25);
     expect(model.slices[1]?.offset).toBe(-50);
+  });
+
+  it('prefers the usage model window over a legacy snapshot trim budget', () => {
+    // `usage.maxContextTokens` is the model window known to the chrome; a legacy
+    // snapshot that only has `dispatchBudgetTokens` (0.7x) must not win just
+    // because the snapshot lacks its own `maxContextTokens`.
+    const model = contextDonutModel({
+      tokensUsed: 40,
+      maxContextTokens: 100,
+      snapshot: { dispatchedTokens: 40, dispatchBudgetTokens: 80 },
+    });
+    expect(model.tokenLabel).toBe('40 / 100 tok');
+    expect(model.pct).toBe(40);
   });
 
   it('uses the model context window, not the smaller dispatch trim budget', () => {

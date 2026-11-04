@@ -93,14 +93,15 @@ export function contextDonutModel(input: {
   });
 
   const dispatched = finite(snapshot?.dispatchedTokens) ?? finite(snapshot?.totalTokens) ?? finite(input.tokensUsed) ?? 0;
-  // Denominator is the selected model's real context window (`maxContextTokens`
-  // is the model window since the agent-level cap was removed); the smaller
-  // `dispatchBudgetTokens` trim target is only a legacy fallback so old snapshots
-  // still render.
+  // Denominator is the selected model's real context window (`maxContextTokens`).
+  // The top-level `input.maxContextTokens` (the usage payload's model window) is
+  // preferred over a legacy snapshot's `dispatchBudgetTokens` trim target, which
+  // is 0.7x the window and only kept as a last-resort fallback so very old
+  // snapshots that predate the window field still render.
   const max =
     finite(snapshot?.maxContextTokens) ||
-    finite(snapshot?.dispatchBudgetTokens) ||
-    (typeof input.maxContextTokens === 'number' && input.maxContextTokens > 0 ? input.maxContextTokens : null);
+    (typeof input.maxContextTokens === 'number' && input.maxContextTokens > 0 ? input.maxContextTokens : null) ||
+    finite(snapshot?.dispatchBudgetTokens);
   const pct = max && max > 0 ? Math.min(100, Math.max(0, Math.round((dispatched / max) * 100))) : null;
   const tokenLabel = max ? `${dispatched} / ${max} tok` : dispatched > 0 ? `${dispatched} tok` : '—';
   // `measured` is false when the snapshot carries no real lane breakdown — either
