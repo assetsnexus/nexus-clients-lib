@@ -5,18 +5,20 @@ export function ContextDonut({ model }: { model: ContextDonutModel }) {
     <div className="nexus-chat__donut-wrap">
       <svg viewBox="0 0 42 42" className="nexus-chat__donut" aria-hidden="true">
         <circle className="nexus-chat__donut-ring" cx="21" cy="21" r="15.915" />
-        {model.slices.map((slice) => (
-          <circle
-            key={slice.category}
-            className="nexus-chat__donut-segment"
-            cx="21"
-            cy="21"
-            r="15.915"
-            stroke={slice.color}
-            strokeDasharray={`${slice.pct} ${100 - slice.pct}`}
-            strokeDashoffset={slice.offset}
-          />
-        ))}
+        {model.measured
+          ? model.slices.map((slice) => (
+              <circle
+                key={slice.category}
+                className="nexus-chat__donut-segment"
+                cx="21"
+                cy="21"
+                r="15.915"
+                stroke={slice.color}
+                strokeDasharray={`${slice.pct} ${100 - slice.pct}`}
+                strokeDashoffset={slice.offset}
+              />
+            ))
+          : null}
       </svg>
       <div className="nexus-chat__donut-center">
         <div className="nexus-chat__donut-pct">{model.pct == null ? '' : `${model.pct}%`}</div>
@@ -24,6 +26,9 @@ export function ContextDonut({ model }: { model: ContextDonutModel }) {
           <div className="nexus-chat__muted">{model.tokenLabel}</div>
         ) : null}
       </div>
+      {!model.measured ? (
+        <div className="nexus-chat__muted">Context lanes are not measured for this thread yet.</div>
+      ) : null}
     </div>
   );
 }
