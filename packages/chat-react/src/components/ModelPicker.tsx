@@ -265,6 +265,7 @@ function HostingBadges({ badges }: { badges: HostingBadge[] }) {
           title={b.label}
           aria-label={b.label}
         >
+          {b.icon ? <span className="nexus-chat-model-hosting-icon" aria-hidden="true">{b.icon}</span> : null}
           {b.short}
         </span>
       ))}

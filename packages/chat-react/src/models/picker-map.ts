@@ -1,4 +1,5 @@
 import { isChatAgentPickerModel } from '@nexus/chat-core';
+import { sanitizeProviderIconUrl } from './providerMark.js';
 import {
   normalizeHostingTypes,
   readAvailableHostingTypes,
@@ -30,7 +31,9 @@ export function mapCatalogRow(m: Record<string, unknown>): PickerModel | null {
     label: String(m.catalogDisplayName || m.displayName || m.name || m.label || id),
     externalModelId: m.externalModelId != null ? String(m.externalModelId) : undefined,
     providerId: m.providerId != null ? String(m.providerId) : null,
-    iconUrl:
+    // http(s) URLs only — a `data:`/base64 payload is dropped here so it can
+    // never ride into a picker list (and the row falls back to the letter badge).
+    iconUrl: sanitizeProviderIconUrl(
       typeof m.iconUrl === 'string'
         ? m.iconUrl
         : typeof m.providerIconUrl === 'string'
@@ -38,6 +41,7 @@ export function mapCatalogRow(m: Record<string, unknown>): PickerModel | null {
           : typeof m.logoUrl === 'string'
             ? m.logoUrl
             : null,
+    ),
     intelligenceIndex: readIntelligenceIndex(m),
     inputPerM: readUsdPerM(m, 'input'),
     outputPerM: readUsdPerM(m, 'output'),

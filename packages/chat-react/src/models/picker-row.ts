@@ -2,7 +2,7 @@ import { chatModelPriceLevel, modelPriceSymbols } from '@nexus/chat-core';
 import { HOSTING_BADGE_LABELS, DATA_POLICY_BADGE_LABELS } from '@nexus/chat-core';
 import { formatCreditsPerM, formatIntelScore, formatUsdPerM } from './intel.js';
 import type { PickerModel } from './picker-types.js';
-import { modelDisplayName, resolveModelProvider } from './providerMark.js';
+import { modelDisplayName, resolveModelProvider, sanitizeProviderIconUrl } from './providerMark.js';
 
 /** Billing gateways are not the model author. Author comes from the catalog model id. */
 const GATEWAY_PROVIDER_IDS = new Set(['openrouter', 'nexus', 'assetsnexus', 'comfy']);
@@ -26,7 +26,7 @@ export function authorMarkInput(
   return {
     modelId: model.externalModelId || model.id,
     providerId,
-    iconUrl: model.iconUrl || null,
+    iconUrl: sanitizeProviderIconUrl(model.iconUrl),
   };
 }
 
@@ -188,6 +188,12 @@ export type HostingBadge = {
   key: string;
   /** Compact pill text the portal shows (portal `hostingShort`), e.g. `public`. */
   short: string;
+  /**
+   * Optional compact glyph rendered inside the pill (`edge` gets a sun `☀`).
+   * Kept separate from `short` so the pill never grows wide enough to wrap the
+   * row — the layout budget is fixed at 4 classes × a couple of characters.
+   */
+  icon?: string;
   /** Full, human label for the `title` / `aria-label`. */
   label: string;
   /** True for the row's `preferredHostingType` (portal `is-active` pill). */
@@ -224,6 +230,7 @@ export function hostingBadges(
     return {
       key,
       short,
+      icon: key === 'edge_processing' ? '☀' : undefined,
       label: preferred ? `${label} (preferred)` : label,
       preferred,
     };

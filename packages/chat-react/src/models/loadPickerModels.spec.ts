@@ -191,6 +191,14 @@ describe('hosting badges (picker column)', () => {
     expect(badges.map((b) => b.preferred)).toEqual([false, true]);
     expect(badges[1].label).toBe('Managed cloud (preferred)');
     expect(hostingBadges(['frobnicate_cloud', ''])).toEqual([]);
+  })
+
+  it('attaches the compact sun glyph only to edge, keeping the short text intact', () => {
+    const [edge] = hostingBadges(['edge_processing']);
+    expect(edge.icon).toBe('☀');
+    expect(edge.short).toBe('edge');
+    const [pub] = hostingBadges(['public_cloud']);
+    expect(pub.icon).toBeUndefined();
   });
 
   it('renders nothing when the row has no hosting metadata', () => {

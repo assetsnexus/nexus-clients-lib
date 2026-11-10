@@ -11,6 +11,22 @@ export type ModelProviderInfo = {
   iconUrl?: string;
 };
 
+/**
+ * Accept only a remote http(s) image URL. Model-list payloads must never carry
+ * inline image bytes: a `data:`/`blob:` URL (or a raw base64 blob) bloats every
+ * picker response and defeats the browser's HTTP image cache. Anything else —
+ * including a relative path, which would 404 from the picker's origin — fails
+ * closed and the caller falls back to the letter badge.
+ */
+export function sanitizeProviderIconUrl(raw: unknown): string | null {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) return null;
+  // Guard against a huge opaque string masquerading as a URL.
+  if (s.length > 2048) return null;
+  return s;
+}
+
 const PROVIDERS: Record<string, Omit<ModelProviderInfo, 'prefix'>> = {
   deepseek: {
     label: 'DeepSeek',
@@ -111,13 +127,14 @@ export function resolveModelProvider(input: {
   providerId?: string | null;
   iconUrl?: string | null;
 }): ModelProviderInfo {
-  if (input.iconUrl) {
+  const cleanIconUrl = sanitizeProviderIconUrl(input.iconUrl);
+  if (cleanIconUrl) {
     const prefix = (input.providerId || modelProviderPrefix(input.modelId) || 'model').toLowerCase();
     return {
       prefix,
       label: input.providerId || prefix,
       color: '#8a96a3',
-      iconUrl: input.iconUrl,
+      iconUrl: cleanIconUrl,
     };
   }
   const fromProviderId = String(input.providerId || '').trim().toLowerCase();

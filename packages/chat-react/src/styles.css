@@ -1138,6 +1138,10 @@
 .nexus-chat-model-hosting-pill.is-preferred {
   box-shadow: 0 0 0 1px currentColor;
 }
+/* Compact glyph inside a pill (edge sun). Never widens the pill's layout box. */
+.nexus-chat-model-hosting-icon {
+  margin-right: 0.1rem;
+}
 /* Provider data-policy chips (no-log / no-train) — same geometry as hosting. */
 .nexus-chat-model-col-policy {
   width: 6.4rem;

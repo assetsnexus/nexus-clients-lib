@@ -135,6 +135,8 @@ export { ModelPicker, ModelPickerRow } from './components/ModelPicker.js';
 export type { ModelPickerProps } from './components/ModelPicker.js';
 export { hostingBadges, policyBadges } from './models/picker-row.js';
 export type { HostingBadge, PolicyBadge } from './models/picker-row.js';
+export { sanitizeProviderIconUrl, resolveModelProvider } from './models/providerMark.js';
+export type { ModelProviderInfo } from './models/providerMark.js';
 export { loadPickerModels, buildModelOverride, mergePickerModels } from './models/loadPickerModels.js';
 export { mergeEntitledModelsForPicker } from './models/mergeEntitledModels.js';
 export type { PickerModel } from './models/picker-types.js';
