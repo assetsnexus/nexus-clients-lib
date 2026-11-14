@@ -124,6 +124,7 @@ export {
   unwrapElevationList,
   upsertElevationPrompt,
   removeElevationPrompt,
+  withElevationResumeBinding,
 } from './grants/pending-elevation.js';
 export type { ElevationListRow } from './grants/pending-elevation.js';
 

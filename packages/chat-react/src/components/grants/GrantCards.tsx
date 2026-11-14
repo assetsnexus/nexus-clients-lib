@@ -351,6 +351,16 @@ export type PermissionElevationPromptModel = {
   resourceRef?: Record<string, unknown> | null;
   requiredOnboardingType?: string | null;
   onboardingSatisfied?: boolean;
+  /**
+   * Paused client-tool call id the decision must resume. Carried on the live
+   * `onPermissionElevationRequired` hook and bound onto rehydrated
+   * `elevations.list` rows via `withElevationResumeBinding` — without it the
+   * decision is recorded but the paused turn is never resumed and the
+   * conversation stays soft-locked.
+   */
+  callId?: string | null;
+  /** Conversation the pause belongs to (rehydrate binding / multi-panel hosts). */
+  conversationId?: string | null;
 };
 
 type ElevationDecision = 'deny' | 'allow_once' | 'allow_session' | 'allow_always';
@@ -415,14 +425,44 @@ async function sendElevationDecision(
  * Open-chat grant dock. Supports one or many pending elevations; bulk actions
  * apply the same lasting decision to every row that is ready to grant.
  */
+/**
+ * Resume the paused client-tool call behind an elevation decision.
+ *
+ * The elevation pause rides the `client_tool` rail (which soft-locks the
+ * dispatcher); recording the decision in region does **not** clear that lock —
+ * only a `client-tool.result` resume does. So after `elevations.respond`
+ * succeeds we resume the exact paused call (approve *and* deny: inference
+ * reverts the tool on a denial), which re-checks the gate and spends the grant.
+ * A missing `chat` handle or `callId` (older hosts / unknown binding) is a
+ * no-op, never a throw.
+ */
+async function resumeElevationCall(
+  chat: Pick<NexusChat, 'resumeClientTool'> | undefined,
+  opts: { callId?: string | null; conversationId?: string | null; decision: ElevationDecision },
+): Promise<{ ok: boolean; message?: string }> {
+  const callId = String(opts.callId || '').trim();
+  if (!chat?.resumeClientTool || !callId) return { ok: true };
+  return chat.resumeClientTool({
+    callId,
+    conversationId: opts.conversationId || undefined,
+    result: { approved: opts.decision !== 'deny', decision: opts.decision },
+  });
+}
+
 export function PermissionElevationDock({
   prompts,
   client,
+  chat,
+  conversationId,
   onChange,
   onSca,
 }: {
   prompts: PermissionElevationPromptModel[];
   client?: CommandClient;
+  /** Resume handle — the paused turn only continues if this is present. */
+  chat?: Pick<NexusChat, 'resumeClientTool'>;
+  /** Fallback conversation for prompts whose own binding is empty. */
+  conversationId?: string | null;
   onChange: (next: PermissionElevationPromptModel[]) => void;
   onSca?: (info: { authRequestId: string | null; command: string }) => void;
 }) {
@@ -456,6 +496,12 @@ export function PermissionElevationDock({
         return;
       }
       onChange(prompts.filter((row) => row.elevationId !== elevationId));
+      // Decision recorded — resume the paused turn (approve or deny).
+      await resumeElevationCall(chat, {
+        callId: prompt.callId,
+        conversationId: prompt.conversationId ?? conversationId,
+        decision,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -469,6 +515,11 @@ export function PermissionElevationDock({
     setError(null);
     const remaining = [...prompts];
     const failures: string[] = [];
+    // A conversation has at most one paused client-tool call, so distinct
+    // callIds here collapse to one resume. Collect them (rather than resuming
+    // per prompt) so a genuinely shared pause is resumed exactly once.
+    const callIds = new Set<string>();
+    let resumeConversationId: string | null | undefined;
     try {
       for (const prompt of decidable) {
         const elevationId = String(prompt.elevationId || '').trim();
@@ -487,9 +538,21 @@ export function PermissionElevationDock({
         }
         const idx = remaining.findIndex((row) => row.elevationId === elevationId);
         if (idx >= 0) remaining.splice(idx, 1);
+        const callId = String(prompt.callId || '').trim();
+        if (callId) {
+          callIds.add(callId);
+          resumeConversationId = resumeConversationId ?? prompt.conversationId;
+        }
       }
       onChange(remaining);
       if (failures.length) setError(failures[0]);
+      for (const callId of callIds) {
+        await resumeElevationCall(chat, {
+          callId,
+          conversationId: resumeConversationId ?? conversationId,
+          decision,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -609,11 +672,15 @@ export function PermissionElevationDock({
 export function PermissionElevationCard({
   prompt,
   client,
+  chat,
+  conversationId,
   onResponded,
   onSca,
 }: {
   prompt: PermissionElevationPromptModel;
   client?: CommandClient;
+  chat?: Pick<NexusChat, 'resumeClientTool'>;
+  conversationId?: string | null;
   onResponded: () => void;
   onSca?: (info: { authRequestId: string | null; command: string }) => void;
 }) {
@@ -621,6 +688,8 @@ export function PermissionElevationCard({
     <PermissionElevationDock
       prompts={[prompt]}
       client={client}
+      chat={chat}
+      conversationId={conversationId}
       onChange={(next) => {
         if (!next.length) onResponded();
       }}

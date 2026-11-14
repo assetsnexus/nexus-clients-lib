@@ -159,6 +159,7 @@ import {
   resolveLockedAgentSendTarget,
 } from './session/locked-agent-send.js';
 import { conversationBelongsToContact, conversationIdFromRow } from './session/contact-threads.js';
+import { isResumeInFlight } from './session/resume-inflight.js';
 import {
   listAvailableChatModels,
   type ModelsAvailableCatalog,
@@ -412,6 +413,7 @@ export {
 } from './outgoing/outgoing-queue.metrics.js';
 export type { OutgoingQueueMetrics, OutgoingQueueOutcome } from './outgoing/outgoing-queue.metrics.js';
 export { isRetryableOutgoingFailure } from './outgoing/outgoing-failure.js';
+export { isResumeInFlight } from './session/resume-inflight.js';
 export { isDiscardableUnsentUserTurn, discardableUnsentTurnIds, latestUnsentUserTurnId } from './outgoing/unsent-turns.js';
 export type { LockedAgent } from './session/locked-agent.js';
 export {
@@ -5133,6 +5135,33 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
               mergePanelPatch(panelId, billingPatchFromIssue(issue));
             }
           }
+          // The agent is already generating: the server persists and queues this
+          // turn (never drops it), so this is not a hard error. Keep the live
+          // turn's streaming chrome — and its Cancel button — instead of lying
+          // that generation stopped. Attach the running turn so the queued reply
+          // still lands here.
+          if (isResumeInFlight(result)) {
+            store.setState({ streaming: true });
+            patchCurrentPanel({ streaming: true });
+            opts.hooks?.onStreamState?.('streaming');
+            closeSocket();
+            const inflightConversationId =
+              conversationId || store.getState().conversationId || null;
+            if (inflightConversationId) {
+              void controller
+                .attachLiveGeneration({ conversationId: inflightConversationId })
+                .catch((err) =>
+                  opts.logger?.warn?.('send_inflight_attach_failed', {
+                    conversationId: inflightConversationId,
+                    message: String(err),
+                  }),
+                );
+            }
+            // The turn was persisted and queued; it is delivered, not failed.
+            patchTurnById(id, { deliveryStatus: 'sent', deliveryError: null });
+            emitSendOutcome(opts.hooks, 'ok');
+            return { ok: true };
+          }
           store.setState({ streaming: false });
           patchCurrentPanel({ streaming: false });
           opts.hooks?.onStreamState?.('error');
@@ -5800,6 +5829,56 @@ export function createNexusChat(opts: CreateNexusChatOptions): NexusChat {
           const noPending =
             failCode === 'NO_PENDING_CLIENT_TOOL' ||
             /no pending client tool/i.test(failMsg);
+          // Already generating: a resume that lost the race is not a failure.
+          //
+          // `RESUME_IN_FLIGHT` (409) means a resume/message already holds the
+          // conversation and the turn is live. Killing streaming here is what
+          // hid the thinking bubble / Cancel button after an elevation grant;
+          // keep the socket and let the live turn deliver into the placeholder
+          // we appended above.
+          if (isResumeInFlight(result)) {
+            log('resume_client_tool_inflight', { conversationId, callId });
+            // Drop the empty resume placeholder we appended above: the re-attach
+            // path creates its own turn and replays the live one into it, so
+            // keeping both would leave a blank assistant bubble behind.
+            const withoutPlaceholder = store
+              .getState()
+              .turns.filter((t) => t.id !== assistantId);
+            syncMessagesFromTurns(withoutPlaceholder);
+            store.setState({ streaming: true, pausedCallId: null });
+            patchCurrentPanel({ streaming: true, pausedCallId: null });
+            opts.hooks?.onStreamState?.('streaming');
+            // Our resume socket never saw this turn's `generationStart`, so its
+            // handler would drop the replayed tokens. Drop it and re-attach with
+            // the reload path (`requireGenerationStart: false`), which is exactly
+            // the "join a generation already running" contract. If nothing is
+            // live to attach to, clear the chrome — a 409 means *a* resume was in
+            // flight, not that one is live forever; never leave a stuck bubble.
+            closeSocket();
+            void controller
+              .attachLiveGeneration({ conversationId })
+              .then((attached) => {
+                if (
+                  attached.attached ||
+                  store.getState().conversationId !== conversationId ||
+                  hasLiveStream()
+                ) {
+                  return;
+                }
+                if (store.getState().streaming) {
+                  store.setState({ streaming: false });
+                  patchCurrentPanel({ streaming: false });
+                  opts.hooks?.onStreamState?.('idle');
+                }
+              })
+              .catch((err) =>
+                opts.logger?.warn?.('resume_inflight_attach_failed', {
+                  conversationId,
+                  message: String(err),
+                }),
+              );
+            return { ok: true, code: 'RESUME_IN_FLIGHT' };
+          }
           // Expected when approving a data-access grant from a turn that
           // finished before pause was recorded — host falls back to follow-up.
           if (noPending) {

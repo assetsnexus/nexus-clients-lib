@@ -57,6 +57,29 @@ export function pendingElevationPrompt(
   return pendingElevationPrompts(rows)[0] || null;
 }
 
+/**
+ * Attach the conversation's paused client-tool binding to each prompt.
+ *
+ * `anx.ai-agents.elevations.list` rows do not carry the paused tool `callId`
+ * (the conversation's `pendingPause`/`pendingClientTool` does). Without the
+ * binding a decision records the grant but never resumes the paused turn, and
+ * the dispatcher's client-tool soft-lock strands the conversation. Mirrors the
+ * Portal util of the same name so both clients share one contract.
+ */
+export function withElevationResumeBinding(
+  prompts: readonly PermissionElevationPromptModel[],
+  binding: { conversationId?: string | null; callId?: string | null } = {},
+): PermissionElevationPromptModel[] {
+  const list = Array.isArray(prompts) ? prompts : [];
+  const conversationId = binding.conversationId || null;
+  const callId = binding.callId || null;
+  return list.map((prompt) => ({
+    ...prompt,
+    conversationId: prompt.conversationId ?? conversationId,
+    callId: prompt.callId ?? callId,
+  }));
+}
+
 export function unwrapElevationList(result: unknown): ElevationListRow[] {
   if (!result || typeof result !== 'object') return [];
   const row = result as {

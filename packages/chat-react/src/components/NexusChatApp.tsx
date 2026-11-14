@@ -103,6 +103,7 @@ import {
   pendingElevationPrompts,
   unwrapElevationList,
   upsertElevationPrompt,
+  withElevationResumeBinding,
 } from '../grants/pending-elevation.js';
 import { ConfigSheet } from './config/ConfigSheet.js';
 import type { ViewerFileRef } from '../viewer/load-preview.js';
@@ -832,6 +833,33 @@ export function NexusChatApp({
       const unreadDelta = typeof data.unreadDelta === 'number' ? data.unreadDelta : 0;
       const kind = typeof data.kind === 'string' ? data.kind : '';
       const isMessage = Boolean(unreadDelta) || kind === 'message' || kind === 'new_message';
+
+      // Generation beats carry the session-list "…" dot. The server announces
+      // `generationInProgress: true/false` (and a `generation` kind) for a
+      // background turn — a self-wake, a reminder, or the resumed turn after an
+      // elevation grant — which never rides a message event. Latch the row's
+      // streaming flag so the dot (and its Cancel affordance) is truthful
+      // without a full list reload, exactly like the in-thread bubble.
+      const hasGenerationBeat =
+        typeof data.generationInProgress === 'boolean' || kind === 'generation';
+      if (hasGenerationBeat) {
+        const streaming = data.generationInProgress === true;
+        setInboxRows((prev) =>
+          prev.map((row) =>
+            row.conversationId === conversationId
+              ? { ...row, streaming, updatedAt: Date.now() }
+              : row,
+          ),
+        );
+        if (!isMessage) {
+          // A finished beat may have landed a message (e.g. a reminder reply);
+          // refresh so the preview/badge catch up. A start beat needs no reload.
+          if (!streaming) void reloadListsRef.current?.();
+          onInboxEvent?.(event);
+          return;
+        }
+      }
+
       if (!isMessage) return;
 
       const preview = typeof data.preview === 'string' ? data.preview : '';
@@ -908,12 +936,22 @@ export function NexusChatApp({
       if (mapped) setDataAccessPrompt(mapped);
     };
     uiHooksRef.current.onPermissionElevationRequired = (info) => {
-      setElevationPrompts((prev) => upsertElevationPrompt(prev, info));
+      // Bind the live conversation + paused call so an immediate decision can
+      // resume the turn (the info already carries callId from the stream).
+      setElevationPrompts((prev) =>
+        upsertElevationPrompt(
+          prev,
+          withElevationResumeBinding([info], {
+            conversationId,
+            callId: info?.callId ?? null,
+          })[0] ?? info,
+        ),
+      );
     };
     uiHooksRef.current.onClientToolRequest = async (req) => {
       setClientToolReq(req);
     };
-  }, [handleSca]);
+  }, [handleSca, conversationId]);
 
   // Clear dock when leaving a conversation; rehydrate pending rows on open.
   useEffect(() => {
@@ -925,12 +963,50 @@ export function NexusChatApp({
     let cancelled = false;
     void (async () => {
       try {
-        const result = await client.send('anx.ai-agents.elevations.list', {
-          conversationId,
-          status: ['pending'],
-        });
+        // The elevation list rows do not carry the paused tool callId; the
+        // conversation's pending pause does. Read both in parallel and bind the
+        // paused call so a decision resumes the turn (parity with the Portal).
+        const [listResult, convoResult] = await Promise.all([
+          client.send('anx.ai-agents.elevations.list', {
+            conversationId,
+            status: ['pending'],
+          }),
+          client
+            .send('anx.communicate.conversations.get', { conversationId })
+            .catch(() => null),
+        ]);
         if (cancelled) return;
-        setElevationPrompts(pendingElevationPrompts(unwrapElevationList(result)));
+        const prompts = pendingElevationPrompts(unwrapElevationList(listResult));
+        const convo =
+          convoResult && typeof convoResult === 'object'
+            ? ((convoResult as { responseObject?: unknown; data?: unknown }).responseObject ??
+              (convoResult as { data?: unknown }).data ??
+              convoResult)
+            : null;
+        const pausedCallId =
+          convo && typeof convo === 'object'
+            ? (() => {
+                const row = convo as {
+                  pendingClientToolCallId?: unknown;
+                  pendingPause?: { callId?: unknown } | null;
+                };
+                const fromTop =
+                  typeof row.pendingClientToolCallId === 'string'
+                    ? row.pendingClientToolCallId
+                    : '';
+                const fromPause =
+                  row.pendingPause && typeof row.pendingPause.callId === 'string'
+                    ? row.pendingPause.callId
+                    : '';
+                return fromTop || fromPause;
+              })()
+            : '';
+        setElevationPrompts(
+          withElevationResumeBinding(prompts, {
+            conversationId,
+            callId: pausedCallId || null,
+          }),
+        );
       } catch {
         // Stream / next send can still surface the card; list is best-effort.
       }
@@ -1616,6 +1692,8 @@ export function NexusChatApp({
       <PermissionElevationDock
         prompts={elevationPrompts}
         client={client}
+        chat={chat}
+        conversationId={conversationId}
         onChange={setElevationPrompts}
         onSca={handleSca}
       />
