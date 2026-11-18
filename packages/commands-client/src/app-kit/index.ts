@@ -29,6 +29,34 @@ export {
   missingPermissions,
 } from './seed-catalog.js';
 
+export {
+  createAppManifest,
+  diffAppManifest,
+  requirementAction,
+  blocksApproval,
+  pendingRequirements,
+  isToolExposed,
+  exposedTools,
+  disabledNativeCommands,
+} from './app-manifest.js';
+export type {
+  AppCapability,
+  AppManifest,
+  AppManifestDiff,
+  AppManifestSeed,
+  AppManifestSeedResult,
+  AppNativeToolPolicy,
+  AppObjectType,
+  AppRequirement,
+  AppRequirementResolution,
+  AppRequirementState,
+  AppRequirementTarget,
+  AppRequirements,
+  AppRequirementsPayload,
+  AppSignal,
+  AppToolExposure,
+} from './app-manifest.js';
+
 export { createCustomBrain } from './custom-brain.js';
 export type {
   BrainHealth,
