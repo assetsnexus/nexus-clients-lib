@@ -36,3 +36,5 @@
 - TTS playback routes to the configured output sink; `wake-word` trust metadata was extended (`reportsDetectionsToBackend` / `isActivityTracker` / `transmitsOnlyOnUserSubmit`).
 ## 0.1.9
 - `features.dictation` turns the composer's hold-to-talk control off, for a host that does not want audio capture in its surface. Defaults to `true`; the AI disclosure remains non-configurable.
+## 0.1.10
+- Packaging only: `prepare` now runs `scripts/git-prepare.mjs`, so a `github:...&path:` install builds the package's `@nexus/*` siblings first. Without it a `dts` build read a dependency's missing `dist` and the whole install failed.

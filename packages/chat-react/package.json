@@ -1,6 +1,6 @@
 {
   "name": "@nexus/chat-react",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "React 19 adapter for @nexus/chat-core (messenger / WebView embeds)",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "build": "vite build && node ./scripts/write-dts.mjs",
-    "prepare": "npm run build",
+    "prepare": "node ../../scripts/git-prepare.mjs",
     "build:webview": "vite build --config vite.webview.config.ts",
     "dev": "vite --config vite.dev.config.ts",
     "test": "vitest run",

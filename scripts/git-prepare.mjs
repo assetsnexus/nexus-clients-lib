@@ -6,15 +6,19 @@
  * deletes `dist/` while privacy is still reading it. One lock per checkout
  * makes the builds run one at a time, and a finished `dist/index.d.ts` is not
  * rebuilt.
+ *
+ * The lock is a directory created with `mkdirSync`, which is atomic on Linux,
+ * macOS and Windows. No `flock` binary is required, so a plain `pnpm install`
+ * works on a developer laptop without extra system packages.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = join(dirname(scriptPath), '..');
-const lockPath = join(repoRoot, '.sdk-prepare.lock');
+const lockDir = join(repoRoot, '.sdk-prepare.lock');
 const pkgDir = process.cwd();
 const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
 if (typeof pkg.name !== 'string' || !pkg.name.startsWith('@nexus/')) {
@@ -22,21 +26,44 @@ if (typeof pkg.name !== 'string' || !pkg.name.startsWith('@nexus/')) {
   process.exit(1);
 }
 
-if (process.env.SDK_PREPARE_LOCKED !== '1') {
-  const locked = spawnSync(
-    'flock',
-    ['-x', lockPath, '-c', `"${process.execPath}" "${scriptPath}"`],
-    {
-      cwd: pkgDir,
-      stdio: 'inherit',
-      env: { ...process.env, SDK_PREPARE_LOCKED: '1' },
-    },
-  );
-  if (locked.error && locked.error.code === 'ENOENT') {
-    console.error('git-prepare: flock is required to build these packages from git');
-    process.exit(1);
+const STALE_MS = 10 * 60 * 1000;
+const TIMEOUT_MS = 15 * 60 * 1000;
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function acquireLock() {
+  const start = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(lockDir);
+      return;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - statSync(lockDir).mtimeMs > STALE_MS) {
+          rmdirSync(lockDir);
+          continue;
+        }
+      } catch {
+        // The holder released it between the mkdir and the stat.
+        continue;
+      }
+      if (Date.now() - start > TIMEOUT_MS) {
+        throw new Error(`git-prepare: timed out waiting for ${lockDir}`);
+      }
+      sleep(200);
+    }
   }
-  process.exit(locked.status ?? 1);
+}
+
+function releaseLock() {
+  try {
+    rmdirSync(lockDir);
+  } catch {
+    // Already released.
+  }
 }
 
 function declarationsReady(dir) {
@@ -45,7 +72,9 @@ function declarationsReady(dir) {
 
 function build(dir) {
   const result = spawnSync('npm', ['run', 'build'], { cwd: dir, stdio: 'inherit' });
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.status !== 0) {
+    throw new Error(`git-prepare: build failed in ${dir}`);
+  }
 }
 
 function siblingPackages() {
@@ -59,7 +88,12 @@ function siblingPackages() {
   return dirs;
 }
 
-for (const dir of siblingPackages()) {
-  if (!declarationsReady(dir)) build(dir);
+acquireLock();
+try {
+  for (const dir of siblingPackages()) {
+    if (!declarationsReady(dir)) build(dir);
+  }
+  if (!declarationsReady(pkgDir)) build(pkgDir);
+} finally {
+  releaseLock();
 }
-if (!declarationsReady(pkgDir)) build(pkgDir);

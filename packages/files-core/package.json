@@ -1,9 +1,11 @@
 {
   "name": "@nexus/files-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Generic file item-ref types, capabilities, and revision protocol (no UI)",
   "license": "UNLICENSED",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "sideEffects": false,
   "type": "module",
   "main": "./dist/index.cjs",
@@ -16,10 +18,13 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "prepare": "npm run build",
+    "prepare": "node ../../scripts/git-prepare.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

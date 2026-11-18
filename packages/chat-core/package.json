@@ -1,6 +1,6 @@
 {
   "name": "@nexus/chat-core",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Headless Nexus chat client (framework-free)",
   "license": "UNLICENSED",
   "publishConfig": {
@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
-    "prepare": "npm run build",
+    "prepare": "node ../../scripts/git-prepare.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
