@@ -1,6 +1,6 @@
 {
   "name": "@nexus/notifications-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Headless notification routing: link targets, action visibility, and Ask AI context",
   "license": "UNLICENSED",
   "publishConfig": {

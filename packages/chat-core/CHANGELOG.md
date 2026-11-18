@@ -34,3 +34,5 @@
 - The resume stream token is minted before the socket opens (fixes a race where a reconnect resumed without a valid token).
 - `openContact` reuses the latest conversation for a contact instead of always creating one, and resumes an existing thread when `conversations.create` is denied.
 - TTS playback routes to the configured output sink; `wake-word` trust metadata was extended (`reportsDetectionsToBackend` / `isActivityTracker` / `transmitsOnlyOnUserSubmit`).
+## 0.1.9
+- `features.dictation` turns the composer's hold-to-talk control off, for a host that does not want audio capture in its surface. Defaults to `true`; the AI disclosure remains non-configurable.
