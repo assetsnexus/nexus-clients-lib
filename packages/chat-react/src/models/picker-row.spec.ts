@@ -12,6 +12,7 @@ import {
   modelTooltipText,
   policyBadges,
   pricingTooltipText,
+  rowPriceBadges,
   stripSynthesizedProviderPrefix,
   authorMarkInput,
 } from './picker-row.js';
@@ -173,6 +174,15 @@ describe('pricing badge: output price', () => {
     expect(compactPriceLabel({ inputPerM: null, outputPerM: null, chatPriceCreditsPerMillion: 5 })).toBe(
       '$',
     );
+  });
+
+  it('rowPriceBadges shows In + Out chips with relative tones', () => {
+    const badges = rowPriceBadges({ inputPerM: 0.8, outputPerM: 1.2 });
+    expect(badges.map((b) => [b.key, b.label, b.text, b.tone])).toEqual([
+      ['in', 'In', '$0.80/M', 'mid'],
+      ['out', 'Out', '$1.20/M', 'mid'],
+    ]);
+    expect(rowPriceBadges({ inputPerM: null, outputPerM: null })).toEqual([]);
   });
 
   it('resolves the provider mark the stripper compares against', () => {

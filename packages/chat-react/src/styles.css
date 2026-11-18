@@ -1082,15 +1082,20 @@
   align-items: center;
   justify-content: flex-end;
 }
-.nexus-chat-model-col-intel {
-  width: 2.6rem;
-}
 .nexus-chat-model-col-hosting {
-  width: 4.4rem;
+  width: 5.5rem;
+  justify-content: flex-end;
+}
+.nexus-chat-model-col-intel {
+  width: 3.25rem;
   justify-content: center;
 }
-.nexus-chat-model-col-price {
-  width: 4.4rem;
+.nexus-chat-model-col-price,
+.nexus-chat-model-price-col {
+  width: 7.6rem;
+  gap: 0.15rem;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
 }
 .nexus-chat-model-col-empty {
   color: var(--nx-chat-muted);
@@ -1203,6 +1208,11 @@
   border-radius: 999px;
   padding: 0.08rem 0.35rem;
   justify-self: end;
+  white-space: nowrap;
+}
+.nexus-chat-model-price-label {
+  opacity: 0.75;
+  font-weight: 600;
 }
 .nexus-chat-model-price.free,
 .nexus-chat-model-price.low {

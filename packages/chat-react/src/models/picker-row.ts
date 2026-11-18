@@ -1,6 +1,6 @@
 import { chatModelPriceLevel, modelPriceSymbols } from '@nexus/chat-core';
 import { HOSTING_BADGE_LABELS, DATA_POLICY_BADGE_LABELS } from '@nexus/chat-core';
-import { formatCreditsPerM, formatIntelScore, formatUsdPerM } from './intel.js';
+import { formatCreditsPerM, formatIntelScore, formatUsdPerM, priceTone } from './intel.js';
 import type { PickerModel } from './picker-types.js';
 import { modelDisplayName, resolveModelProvider, sanitizeProviderIconUrl } from './providerMark.js';
 
@@ -171,6 +171,32 @@ export function compactPriceLabel(model: PriceBadgeModel): string | null {
   const symbols = modelPriceSymbols(chatModelPriceLevel(credits));
   if (symbols && symbols !== '–') return symbols;
   return formatCreditsPerM(credits) || null;
+}
+
+export type RowPriceBadge = {
+  key: 'in' | 'out';
+  label: string;
+  text: string;
+  tone: ReturnType<typeof priceTone>;
+  value: number;
+};
+
+/**
+ * Default In/Out rates that apply when the row is selected. Each side is its
+ * own relative-colored chip; missing sides are omitted (never invented).
+ */
+export function rowPriceBadges(model: PriceBadgeModel): RowPriceBadge[] {
+  const out: RowPriceBadge[] = [];
+  const push = (key: 'in' | 'out', label: string, value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return;
+    const usd = formatUsdPerM(value);
+    if (usd === '—') return;
+    const text = usd === 'free' ? 'free' : `${usd}/M`;
+    out.push({ key, label, text, tone: priceTone(value), value });
+  };
+  push('in', 'In', model.inputPerM);
+  push('out', 'Out', model.outputPerM);
+  return out;
 }
 
 export function compactIntelLabel(intelligenceIndex: number | null | undefined): string | null {

@@ -66,4 +66,29 @@ describe('resolveModelProvider icon gate', () => {
     expect(info.iconUrl).toBeUndefined();
     expect(info.prefix).toBe('acme');
   });
+
+  it('defaults to dark-folder icons and switches to light for white chrome', () => {
+    expect(resolveModelProvider({ modelId: 'openai/gpt-4o' }).iconUrl).toContain('/dark/openai.png');
+    expect(resolveModelProvider({ modelId: 'openai/gpt-4o', theme: 'light' }).iconUrl).toContain(
+      '/light/openai.png',
+    );
+  });
+
+  it('resolves grok / gpt author aliases', () => {
+    expect(resolveModelProvider({ modelId: 'xai/grok-2', providerId: 'grok' }).label).toBe('xAI');
+    expect(resolveModelProvider({ modelId: 'openai/gpt-4o', providerId: 'gpt' }).label).toBe('OpenAI');
+  });
+
+  it('inherits the author icon for ~vendor/:latest private-subscription ids', () => {
+    const haiku = resolveModelProvider({
+      modelId: '~anthropic/claude-haiku-latest',
+      providerId: 'openrouter',
+    });
+    expect(haiku.prefix).toBe('anthropic');
+    expect(haiku.iconUrl).toContain('/dark/anthropic.png');
+
+    const flash = resolveModelProvider({ modelId: '~deepseek/deepseek-v4-flash-latest' });
+    expect(flash.prefix).toBe('deepseek');
+    expect(flash.iconUrl).toContain('/dark/deepseek.png');
+  });
 });

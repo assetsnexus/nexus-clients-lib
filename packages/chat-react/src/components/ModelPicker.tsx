@@ -9,10 +9,9 @@ import {
   displayModelName,
   hostingBadges,
   modelTooltipText,
-  policyBadges,
   pricingTooltipText,
+  rowPriceBadges,
   type HostingBadge,
-  type PolicyBadge,
 } from '../models/picker-row.js';
 import {
   readRecentModelIds,
@@ -117,7 +116,8 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
         ? displayModelName(selected)
         : 'Agent default';
   const triggerProvider = selected ? resolveModelProvider(authorMarkInput(selected)) : null;
-  const triggerPrice = selected ? compactPriceLabel(selected) : null;
+  const triggerPriceBadges = selected ? rowPriceBadges(selected) : [];
+  const triggerPriceFallback = selected && !triggerPriceBadges.length ? compactPriceLabel(selected) : null;
   const triggerIntel = selected ? compactIntelLabel(selected.intelligenceIndex) : null;
   const triggerTip = selected ? modelTooltipText(selected) : null;
   const triggerPriceTip = selected ? pricingTooltipText(selected) : null;
@@ -140,17 +140,25 @@ export function ModelPicker({ models, value, loading, disabled, onChange }: Mode
       >
         {triggerProvider ? <ProviderIcon provider={triggerProvider} /> : null}
         <span className="nexus-chat-model-picker-trigger-label">{triggerName}</span>
-        {triggerPrice || triggerIntel || triggerHosting.length ? (
+        {triggerPriceBadges.length || triggerPriceFallback || triggerIntel || triggerHosting.length ? (
           <span className="nexus-chat-model-picker-trigger-meta">
             {triggerHosting.length ? <HostingBadges badges={triggerHosting} /> : null}
-            {triggerPrice ? (
-              <span
-                className={`nexus-chat-model-price ${priceTone(
-                  (selected ? badgeUsdPerM(selected) : null) ?? selected?.chatPriceCreditsPerMillion,
-                )}`}
-                title={triggerPriceTip || 'Catalog price'}
-              >
-                {triggerPrice}
+            {triggerPriceBadges.length || triggerPriceFallback ? (
+              <span className="nexus-chat-model-price-col" title={triggerPriceTip || 'Catalog price'}>
+                {triggerPriceBadges.map((badge) => (
+                  <span key={badge.key} className={`nexus-chat-model-price ${badge.tone}`}>
+                    <span className="nexus-chat-model-price-label">{badge.label}</span> {badge.text}
+                  </span>
+                ))}
+                {!triggerPriceBadges.length && triggerPriceFallback ? (
+                  <span
+                    className={`nexus-chat-model-price ${priceTone(
+                      (selected ? badgeUsdPerM(selected) : null) ?? selected?.chatPriceCreditsPerMillion,
+                    )}`}
+                  >
+                    {triggerPriceFallback}
+                  </span>
+                ) : null}
               </span>
             ) : null}
             {triggerIntel ? (
@@ -274,34 +282,8 @@ function HostingBadges({ badges }: { badges: HostingBadge[] }) {
 }
 
 /**
- * Provider data-policy chips (`no-log`, `no-train`, …) for a catalog row. The
- * region has always returned these for chat models; rendering them here is what
- * makes an "no training" commitment visible next to the hosting badge rather
- * than only in the Privacy dashboard.
- */
-function PolicyBadges({ badges }: { badges: PolicyBadge[] }) {
-  if (!badges.length) return null;
-  return (
-    <span className="nexus-chat-model-policy" role="group" aria-label="Provider data policy">
-      {badges.map((b) => (
-        <span
-          key={b.key}
-          className={`nexus-chat-model-policy-pill policy-${b.key.replace(/_/g, '-')}`}
-          title={b.label}
-          aria-label={b.label}
-        >
-          {b.short}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/**
- * One dropdown row: name + provider, intelligence index, hosting badges and
- * the pricing badge with its in/out/cached tooltip — the four portal columns.
- * Exported so the column layout can be rendered and asserted without opening
- * the menu.
+ * One dropdown row: name + provider, hosting, intelligence, and price.
+ * Data-policy chips live in the model-details sheet only.
  */
 export function ModelPickerRow({
   model,
@@ -315,13 +297,15 @@ export function ModelPickerRow({
   const provider = resolveModelProvider(authorMarkInput(model));
   const name = displayModelName(model);
   const tooltip = modelTooltipText(model);
-  const price = compactPriceLabel(model);
+  const priceBadges = rowPriceBadges(model);
+  const priceFallback = !priceBadges.length ? compactPriceLabel(model) : null;
   const intel = compactIntelLabel(model.intelligenceIndex);
   const priceTip = pricingTooltipText(model);
   const badges = hostingBadges(model.availableHostingTypes, {
     preferred: model.preferredHostingType,
   });
-  const policy = policyBadges(model.dataPolicyBadges);
+  // Data-policy chips (no-log / no-mod / …) live in the model-details sheet only —
+  // keeping them off the row leaves a clean hosting + IQ column pair.
   return (
     <button
       type="button"
@@ -335,6 +319,9 @@ export function ModelPickerRow({
       <span className="nexus-chat-model-picker-name">
         <ProviderIcon provider={provider} />
         <strong>{name}</strong>
+      </span>
+      <span className="nexus-chat-model-col nexus-chat-model-col-hosting">
+        <HostingBadges badges={badges} />
       </span>
       <span className="nexus-chat-model-col nexus-chat-model-col-intel">
         {intel ? (
@@ -350,19 +337,17 @@ export function ModelPickerRow({
           </span>
         )}
       </span>
-      <span className="nexus-chat-model-col nexus-chat-model-col-hosting">
-        <HostingBadges badges={badges} />
-      </span>
-      <span className="nexus-chat-model-col nexus-chat-model-col-policy">
-        <PolicyBadges badges={policy} />
-      </span>
-      <span className="nexus-chat-model-col nexus-chat-model-col-price">
-        {price ? (
+      <span className="nexus-chat-model-col nexus-chat-model-col-price" title={priceTip || 'Catalog price'}>
+        {priceBadges.map((badge) => (
+          <span key={badge.key} className={`nexus-chat-model-price ${badge.tone}`}>
+            <span className="nexus-chat-model-price-label">{badge.label}</span> {badge.text}
+          </span>
+        ))}
+        {!priceBadges.length && priceFallback ? (
           <span
             className={`nexus-chat-model-price ${priceTone(badgeUsdPerM(model) ?? model.chatPriceCreditsPerMillion)}`}
-            title={priceTip || 'Catalog price'}
           >
-            {price}
+            {priceFallback}
           </span>
         ) : null}
       </span>
