@@ -6,53 +6,133 @@
         <strong>{{ L.billingTitle }}</strong>
         <button type="button" class="nexus-btn-link" @click="$emit('close')">{{ L.billingClose }}</button>
       </div>
-      <div v-if="loading" class="nexus-muted">{{ L.billingLoading }}</div>
-      <div v-else-if="error" class="nexus-billing-popover__error">{{ error }}</div>
-      <template v-else>
-        <div class="nexus-billing-popover__row">
-          <span>{{ L.billingMode }}</span>
-          <span>{{ modeLabel }}</span>
+
+      <div class="nexus-billing-popover__split">
+        <div class="nexus-billing-popover__billing">
+          <div v-if="loading" class="nexus-muted">{{ L.billingLoading }}</div>
+          <div v-else-if="error" class="nexus-billing-popover__error">{{ error }}</div>
+          <template v-else>
+            <div class="nexus-billing-popover__row">
+              <span>{{ L.billingMode }}</span>
+              <span>{{ modeLabel }}</span>
+            </div>
+            <div class="nexus-billing-popover__row">
+              <span>{{ L.billingTokens }}</span>
+              <span>{{ tokensLabel }}</span>
+            </div>
+            <div class="nexus-billing-popover__row">
+              <span>{{ trackedLabel }}</span>
+              <span>{{ trackedFormatted }}</span>
+            </div>
+            <div class="nexus-billing-popover__row">
+              <span>{{ L.billingCreditsCharged }}</span>
+              <span>{{ creditsFormatted }}</span>
+            </div>
+            <div v-if="isByok" class="nexus-muted nexus-billing-popover__hint">
+              {{ L.billingByokHint }}
+            </div>
+            <div v-if="turns.length" class="nexus-billing-popover__turns">
+              <div class="nexus-billing-popover__turns-title">{{ L.billingRecentTurns }}</div>
+              <div v-for="(t, i) in turns" :key="i" class="nexus-billing-popover__turn">
+                <span>{{ formatTurnAt(t.at) }}</span>
+                <span>{{ turnKindLabel(t) }}</span>
+                <span>{{ formatTurnCost(t) }}</span>
+              </div>
+            </div>
+            <div v-else class="nexus-muted nexus-billing-popover__hint">
+              {{ L.billingEmptyTurns }}
+            </div>
+            <button
+              v-if="showCostDashboardLink"
+              type="button"
+              class="nexus-btn nexus-btn--block"
+              @click="$emit('open-cost-dashboard')"
+            >
+              {{ L.billingOpenDashboard }}
+            </button>
+          </template>
         </div>
-        <div class="nexus-billing-popover__row">
-          <span>{{ L.billingTokens }}</span>
-          <span>{{ tokensLabel }}</span>
+
+        <div class="nexus-billing-popover__context">
+          <button
+            type="button"
+            class="nexus-billing-popover__context-btn"
+            :title="L.usageDetails"
+            @click="$emit('open-context')"
+          >
+            <div class="nexus-billing-popover__donut-wrap" aria-hidden="true">
+              <svg viewBox="0 0 42 42" class="nexus-billing-popover__donut">
+                <circle class="nexus-billing-popover__donut-ring" cx="21" cy="21" r="15.915" />
+                <circle
+                  class="nexus-billing-popover__donut-fill"
+                  cx="21"
+                  cy="21"
+                  r="15.915"
+                  :stroke-dasharray="donutDash"
+                  stroke-dashoffset="25"
+                />
+              </svg>
+              <div class="nexus-billing-popover__donut-center">
+                <div class="nexus-billing-popover__donut-pct">
+                  {{ usageBars.contextPct == null ? '—' : usageBars.contextPct + '%' }}
+                </div>
+                <div class="nexus-billing-popover__donut-sub">{{ L.usageContext }}</div>
+              </div>
+            </div>
+
+            <div
+              v-if="usageBars.contextPct != null"
+              class="nexus-billing-popover__bar"
+            >
+              <span class="nexus-billing-popover__bar-label">{{ L.usageContext }}</span>
+              <span
+                class="nexus-billing-popover__bar-track"
+                role="progressbar"
+                :aria-valuenow="usageBars.contextPct"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-label="L.usageContextHint"
+              >
+                <span
+                  class="nexus-billing-popover__bar-fill"
+                  :style="{ width: usageBars.contextPct + '%' }"
+                />
+              </span>
+              <span class="nexus-billing-popover__bar-value">{{ usageBars.contextPct }}%</span>
+            </div>
+            <div
+              v-if="usageBars.cachePct != null"
+              class="nexus-billing-popover__bar"
+            >
+              <span class="nexus-billing-popover__bar-label">{{ L.usageCache }}</span>
+              <span
+                class="nexus-billing-popover__bar-track"
+                role="progressbar"
+                :aria-valuenow="usageBars.cachePct"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-label="L.usageCacheHint"
+              >
+                <span
+                  class="nexus-billing-popover__bar-fill nexus-billing-popover__bar-fill--cache"
+                  :style="{ width: usageBars.cachePct + '%' }"
+                />
+              </span>
+              <span class="nexus-billing-popover__bar-value">{{ usageBars.cacheLabel }}</span>
+            </div>
+            <div v-if="!usageBars.hasAny" class="nexus-muted nexus-billing-popover__hint">
+              {{ L.usageEmpty }}
+            </div>
+            <div class="nexus-billing-popover__context-hint">{{ usageBars.contextLabel }}</div>
+          </button>
         </div>
-        <div class="nexus-billing-popover__row">
-          <span>{{ trackedLabel }}</span>
-          <span>{{ trackedFormatted }}</span>
-        </div>
-        <div class="nexus-billing-popover__row">
-          <span>{{ L.billingCreditsCharged }}</span>
-          <span>{{ creditsFormatted }}</span>
-        </div>
-        <div v-if="isByok" class="nexus-muted nexus-billing-popover__hint">
-          {{ L.billingByokHint }}
-        </div>
-        <div v-if="turns.length" class="nexus-billing-popover__turns">
-          <div class="nexus-billing-popover__turns-title">{{ L.billingRecentTurns }}</div>
-          <div v-for="(t, i) in turns" :key="i" class="nexus-billing-popover__turn">
-            <span>{{ formatTurnAt(t.at) }}</span>
-            <span>{{ turnKindLabel(t) }}</span>
-            <span>{{ formatTurnCost(t) }}</span>
-          </div>
-        </div>
-        <div v-else class="nexus-muted nexus-billing-popover__hint">
-          {{ L.billingEmptyTurns }}
-        </div>
-        <button
-          v-if="showCostDashboardLink"
-          type="button"
-          class="nexus-btn nexus-btn--block"
-          @click="$emit('open-cost-dashboard')"
-        >
-          {{ L.billingOpenDashboard }}
-        </button>
-      </template>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
+import { usageBarModel } from '@nexus/chat-core';
 import { DEFAULT_PANEL_LABELS, formatMicroUsd, formatMoneyMinor, spendLabelForCurrency } from './labels';
 
 function unwrapData(result) {
@@ -89,6 +169,13 @@ export default {
   computed: {
     L() {
       return { ...DEFAULT_PANEL_LABELS, ...(this.labels || {}) };
+    },
+    usageBars() {
+      return usageBarModel(this.usage || null);
+    },
+    donutDash() {
+      const pct = this.usageBars.contextPct == null ? 0 : this.usageBars.contextPct;
+      return `${pct} ${100 - pct}`;
     },
     isByok() {
       const mode = (this.billing && this.billing.billingMode) || (this.usage && this.usage.billingMode);
@@ -260,7 +347,7 @@ export default {
 .nexus-billing-popover__card {
   position: relative;
   pointer-events: auto;
-  width: min(340px, 100%);
+  width: min(720px, 100%);
   background: #fff;
   border: 1px solid #e9ecef;
   border-radius: 10px;
@@ -274,6 +361,12 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+}
+.nexus-billing-popover__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
+  gap: 14px;
+  align-items: start;
 }
 .nexus-billing-popover__row {
   display: flex;
@@ -304,8 +397,111 @@ export default {
   font-size: 11px;
   margin-bottom: 4px;
 }
+.nexus-billing-popover__context {
+  border-left: 1px solid #eef1f4;
+  padding-left: 12px;
+}
+.nexus-billing-popover__context-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.nexus-billing-popover__donut-wrap {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  margin: 0 auto 10px;
+}
+.nexus-billing-popover__donut {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+.nexus-billing-popover__donut-ring {
+  fill: none;
+  stroke: #eef1f4;
+  stroke-width: 3;
+}
+.nexus-billing-popover__donut-fill {
+  fill: none;
+  stroke: #51cbce;
+  stroke-width: 3;
+}
+.nexus-billing-popover__donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.nexus-billing-popover__donut-pct {
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.nexus-billing-popover__donut-sub {
+  font-size: 10px;
+  color: #6c757d;
+}
+.nexus-billing-popover__bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.nexus-billing-popover__bar-label {
+  width: 48px;
+  color: #6c757d;
+  flex-shrink: 0;
+}
+.nexus-billing-popover__bar-track {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 999px;
+  background: #eef1f4;
+  overflow: hidden;
+}
+.nexus-billing-popover__bar-fill {
+  display: block;
+  height: 100%;
+  background: #51cbce;
+}
+.nexus-billing-popover__bar-fill--cache {
+  background: #6bd098;
+}
+.nexus-billing-popover__bar-value {
+  width: 36px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.nexus-billing-popover__context-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6c757d;
+  text-align: center;
+}
 .nexus-btn--block {
   width: 100%;
   margin-top: 8px;
+}
+@media (max-width: 576px) {
+  .nexus-billing-popover__card {
+    width: min(100%, 100%);
+  }
+  .nexus-billing-popover__split {
+    grid-template-columns: 1fr;
+  }
+  .nexus-billing-popover__context {
+    border-left: none;
+    border-top: 1px solid #eef1f4;
+    padding-left: 0;
+    padding-top: 12px;
+  }
 }
 </style>

@@ -272,6 +272,7 @@
                 v-if="usageBars.contextPct != null"
                 class="nexus-chat-panel__usage-bar"
                 :title="resolvedLabels.usageContextHint"
+                @click.stop="openContextFromBars"
               >
                 <span class="nexus-chat-panel__usage-bar-label">{{ resolvedLabels.usageContext }}</span>
                 <span
@@ -295,6 +296,7 @@
                 v-if="usageBars.cachePct != null"
                 class="nexus-chat-panel__usage-bar"
                 :title="resolvedLabels.usageCacheHint"
+                @click.stop="openContextFromBars"
               >
                 <span class="nexus-chat-panel__usage-bar-label">{{ resolvedLabels.usageCache }}</span>
                 <span
@@ -726,6 +728,7 @@
       :labels="resolvedLabels"
       @close="billingOpen = false"
       @open-cost-dashboard="$emit('open-cost-dashboard', { panel: resolvedPanel, panelIndex })"
+      @open-context="openContextFromBilling"
     />
   </div>
 </template>
@@ -1467,6 +1470,15 @@ export default {
     this.revokeAllPreviews();
   },
   methods: {
+    /** Progress-bar click opens the fuller context overlay (not the billing card). */
+    openContextFromBars() {
+      this.$emit('toggle-context');
+    },
+    /** Conversation-usage donut/cache click → same context overlay. */
+    openContextFromBilling() {
+      this.billingOpen = false;
+      this.$emit('toggle-context');
+    },
     contactHighlighted(contact) {
       if (this.listMode !== 'sidebar') return false;
       return conversationHighlightsAgent(
