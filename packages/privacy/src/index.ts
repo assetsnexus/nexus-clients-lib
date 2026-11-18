@@ -1,4 +1,18 @@
 export { createPrivacyKit } from './kit.js';
+export { COMPLIANCE_COMMANDS, createComplianceKit } from './compliance.js';
+export type {
+  ComplianceCommandClient,
+  ComplianceKit,
+  ComplianceKitOptions,
+  PriceChange,
+  PriceChangeList,
+  PriceChangeState,
+  TermsDocumentKind,
+  TermsDocumentStatus,
+  TermsPolicy,
+  TermsState,
+  TermsStatus,
+} from './compliance.js';
 export { assertSectionCoverage, createSectionRegistry } from './sections.js';
 export { createMemoryPrivacyJobStore } from './memory-store.js';
 export type {
