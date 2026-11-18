@@ -70,6 +70,9 @@ export const NOTIFICATION_EVENT_KEYS: readonly string[] = [
   'agent.notification.deadline_expired',
   'agent.notification.escalation_exhausted',
   'agent.notification.acked',
+  'inference.proxy_key.limit_warning',
+  'inference.proxy_key.limit_reached',
+  'inference.proxy_key.subscription_unfunded',
   'compliance.aml.flagged',
 ];
 

@@ -14,6 +14,7 @@ const ROUTE_RESOURCES = new Set<NotificationRouteResource>([
   'transaction',
   'registration',
   'section',
+  'proxy_key',
 ]);
 
 const PARAM_BY_RESOURCE: Record<string, string> = {
@@ -29,6 +30,7 @@ const PARAM_BY_RESOURCE: Record<string, string> = {
   transaction: 'transactionId',
   registration: 'registrationId',
   asset_blueprint: 'blueprintId',
+  proxy_key: 'keyId',
   section: 'id',
 };
 
@@ -56,6 +58,7 @@ const ALIASES: readonly Alias[] = [
     when: (input) => readTypes(input).includes('calendar.invite'),
   },
   { key: 'transactionId', resource: 'transaction', param: 'transactionId' },
+  { key: 'keyId', resource: 'proxy_key', param: 'keyId' },
 ];
 
 export function dataRecord(input: NotificationRouteInput): Record<string, unknown> {
@@ -160,6 +163,7 @@ export function collectParamValues(input: NotificationRouteInput): Record<string
   copy('transactionId');
   copy('blueprintId');
   copy('grantId');
+  copy('keyId');
   const extracted = extractNotificationObject(input);
   if (extracted && isSafeId(extracted.id)) values[extracted.param] = extracted.id;
   return values;

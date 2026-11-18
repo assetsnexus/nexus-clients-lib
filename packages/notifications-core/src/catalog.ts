@@ -141,6 +141,23 @@ export const NOTIFICATION_ROUTE_RULES: readonly NotificationRouteRule[] = [
     app: { portalWeb: true },
   },
   {
+    // Proxy-key spend ceilings. Land on the API-keys screen with the key
+    // selected; the panel reads `?keyId=` and opens usage for that row.
+    id: 'proxy-key-limit',
+    match: {
+      resource: 'proxy_key',
+      eventKeys: ['inference.proxy_key.*'],
+      categoryKeys: ['inference.api_keys'],
+    },
+    params: ['keyId'],
+    portal: {
+      // /user ↔ /b2b twin via alignConsoleRoot (do not preserveConsole).
+      path: '/user/ai/byok?keyId=:keyId',
+      sectionPath: '/user/ai/byok',
+    },
+    app: { portalWeb: true },
+  },
+  {
     id: 'agent-reminder',
     match: {
       resource: 'conversation',

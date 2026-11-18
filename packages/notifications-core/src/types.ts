@@ -20,7 +20,8 @@ export type NotificationRouteResource =
   | 'calendar_event'
   | 'transaction'
   | 'registration'
-  | 'section';
+  | 'section'
+  | 'proxy_key';
 
 export type NotificationIconSymbol =
   | 'bell'

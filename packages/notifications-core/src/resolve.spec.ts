@@ -9,6 +9,46 @@ function row(partial: NotificationRouteInput): NotificationRouteInput {
   return { ...partial, id: partial.id || 'n1' };
 }
 
+describe('proxy-key limit deep link', () => {
+  const portal = { surface: 'portal' as const, currentPath: '/user/home' };
+
+  it('opens the API-keys screen with keyId when data.keyId is present', () => {
+    expect(
+      resolveNotificationTarget(
+        row({
+          id: 'n-pk',
+          eventKey: 'inference.proxy_key.limit_reached',
+          categoryKey: 'inference.api_keys',
+          data: { keyId: 'pk_abc-123', limitLabel: 'daily spend' },
+        }),
+        portal,
+      ),
+    ).toMatchObject({
+      kind: 'path',
+      value: '/user/ai/byok?keyId=pk_abc-123',
+      grade: 'detail',
+      ruleId: 'proxy-key-limit',
+    });
+  });
+
+  it('falls back to the API-keys section when keyId is absent', () => {
+    expect(
+      resolveNotificationTarget(
+        row({
+          id: 'n-pk-section',
+          eventKey: 'inference.proxy_key.limit_warning',
+          categoryKey: 'inference.api_keys',
+        }),
+        portal,
+      ),
+    ).toMatchObject({
+      kind: 'path',
+      value: '/user/ai/byok',
+      grade: 'section',
+    });
+  });
+});
+
 describe('resolveNotificationTarget precedence', () => {
   it('walks presentation, deep link, event id, object id, section, category, tags, type, then none', () => {
     const linked = row({
