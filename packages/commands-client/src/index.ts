@@ -110,6 +110,11 @@ export {
   type TokenResponse,
   type IntrospectionResponse,
 } from './oauth/helpers.js';
+// App kit: the pieces every Nexus app re-implements (inbound MCP server, the
+// custom_http brain contract, a fallback chat, the seed-catalog hash, the
+// browser command allowlist, a client-side config store).
+export * from './app-kit/index.js';
+
 // Server-side session + identity surface. A host app should not re-implement
 // PKCE, refresh/revoke, the command send with a refresh retry, the availability
 // probe, or the identity level.

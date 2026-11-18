@@ -264,6 +264,12 @@ export type NexusChatAppProps = {
    * above the thread; the host clears it after the answer lands.
    */
   openQuestion?: UserChoiceQuestion | null;
+  /**
+   * Limit the model picker to a subset. The default shows every model the
+   * caller is entitled to; a host that wants to steer users to a few models
+   * (or hide a family) filters here instead of forking the picker.
+   */
+  modelPickerFilter?: (model: PickerModel) => boolean;
   /** The conversation's active plan pointer, rendered as a compact plan card. */
   activePlan?: import('@nexus/chat-core').PlanPointer | null;
   /** Called after the question answer is submitted (host clears `openQuestion`). */
@@ -354,6 +360,7 @@ export function NexusChatApp({
   fallbackTransport = null,
   nexusUnavailable = false,
   nexusLogin = null,
+  modelPickerFilter,
   permissionSummary = null,
   workingOnLedger,
   onChatReady,
@@ -394,6 +401,8 @@ export function NexusChatApp({
   clientToolsPropRef.current = clientToolsProp;
   const pageToolsPropRef = useRef(pageToolsProp);
   pageToolsPropRef.current = pageToolsProp;
+  const modelPickerFilterRef = useRef(modelPickerFilter);
+  modelPickerFilterRef.current = modelPickerFilter;
   const lockedAgent = useMemo(() => {
     const requested = lockedAgentProp ?? createOptions?.lockedAgent ?? chatProp?.lockedAgent ?? null;
     if (!requested) return null;
@@ -1450,7 +1459,9 @@ export function NexusChatApp({
     void load
       .then((models) => {
         if (cancelled) return;
-        setCatalog(models);
+        const filter = modelPickerFilterRef.current;
+        const visible = filter ? models.filter(filter) : models;
+        setCatalog(visible);
         setCatalogError(null);
         const listed = models as PickerModel[] & { defaultModelId?: string | null };
         setDefaultModelId(listed.defaultModelId?.trim() || null);
@@ -1861,6 +1872,7 @@ export function NexusChatApp({
           voiceInterruptPolicy={voiceInterruptPolicy}
           textScaleDelta={textScaleDelta}
           onTextScaleDelta={nudgeTextScale}
+          dictationEnabled={features.dictation}
           dictationMethod={dictation.method}
           sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
           sttLive={sttLive}
@@ -2247,7 +2259,8 @@ export function NexusChatApp({
           voiceInterruptPolicy={voiceInterruptPolicy}
           textScaleDelta={textScaleDelta}
           onTextScaleDelta={nudgeTextScale}
-                dictationMethod={dictation.method}
+                dictationEnabled={features.dictation}
+          dictationMethod={dictation.method}
                 sttModelId={dictation.sttModel?.id || dictation.sttModel?.modelRef || null}
                 sttLive={sttLive}
                 grantMissing={Boolean(nexusUnavailable)}

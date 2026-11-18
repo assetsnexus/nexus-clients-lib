@@ -104,6 +104,11 @@ export type ComposerProps = {
   /** Chat text scale stepper (`-a` / `+A`). */
   textScaleDelta?: number;
   onTextScaleDelta?: (next: number) => void;
+  /**
+   * Show the hold-to-talk control. `false` removes it entirely (no audio
+   * capture in this surface).
+   */
+  dictationEnabled?: boolean;
   dictationMethod?: DictationMethod;
   sttModelId?: string | null;
   /** Speech model accepts a live session while the button is held. */
@@ -150,6 +155,7 @@ export function Composer({
   voiceInterruptPolicy = 'skip_current',
   textScaleDelta = 0,
   onTextScaleDelta,
+  dictationEnabled = true,
   dictationMethod = 'phone',
   sttModelId = null,
   sttLive = false,
@@ -813,21 +819,23 @@ export function Composer({
               >
                 <IconPaperclip />
               </button>
-              <button
-                ref={holdRef}
-                type="button"
-                className={`nexus-chat__icon-btn nexus-chat__hold${holdPhase === 'recording' ? ' nexus-chat__hold--recording' : ''}${holdPhase === 'cancel' ? ' nexus-chat__hold--cancel' : ''}`}
-                aria-label="Hold to talk"
-                title={holdPhase === 'recording' ? 'Recording… release to insert' : 'Hold to talk'}
-                disabled={holdPhase === 'working'}
-                onPointerDown={onHoldPointerDown}
-                onPointerMove={onHoldPointerMove}
-                onPointerUp={onHoldPointerUp}
-                onPointerCancel={() => void endHold(false)}
-                onContextMenu={(event) => event.preventDefault()}
-              >
-                <IconMic />
-              </button>
+              {dictationEnabled ? (
+                <button
+                  ref={holdRef}
+                  type="button"
+                  className={`nexus-chat__icon-btn nexus-chat__hold${holdPhase === 'recording' ? ' nexus-chat__hold--recording' : ''}${holdPhase === 'cancel' ? ' nexus-chat__hold--cancel' : ''}`}
+                  aria-label="Hold to talk"
+                  title={holdPhase === 'recording' ? 'Recording… release to insert' : 'Hold to talk'}
+                  disabled={holdPhase === 'working'}
+                  onPointerDown={onHoldPointerDown}
+                  onPointerMove={onHoldPointerMove}
+                  onPointerUp={onHoldPointerUp}
+                  onPointerCancel={() => void endHold(false)}
+                  onContextMenu={(event) => event.preventDefault()}
+                >
+                  <IconMic />
+                </button>
+              ) : null}
               {callsEnabled ? (
                 <button
                   type="button"

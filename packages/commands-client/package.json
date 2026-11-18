@@ -21,6 +21,11 @@
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/testing/index.js",
       "require": "./dist/testing/index.cjs"
+    },
+    "./app-kit": {
+      "types": "./dist/app-kit.d.ts",
+      "import": "./dist/app-kit.js",
+      "require": "./dist/app-kit.cjs"
     }
   },
   "bin": {

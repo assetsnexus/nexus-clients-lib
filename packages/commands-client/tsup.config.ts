@@ -20,6 +20,16 @@ export default defineConfig([
     define,
   },
   {
+    entry: { 'app-kit': 'src/app-kit/index.ts' },
+    format: ['esm', 'cjs'],
+    dts: true,
+    sourcemap: true,
+    clean: false,
+    splitting: false,
+    treeshake: true,
+    define,
+  },
+  {
     entry: { 'testing/index': 'src/testing/index.ts' },
     format: ['esm', 'cjs'],
     dts: true,

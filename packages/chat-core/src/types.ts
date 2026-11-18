@@ -7,6 +7,11 @@ export type ChatFeatures = {
   aiGroups: boolean;
   userDatabases: boolean;
   modelPicker: boolean;
+  /**
+   * The dictation (hold-to-talk) control in the composer. `false` removes it,
+   * for an app that does not want audio capture in its surface.
+   */
+  dictation: boolean;
   modelPricing: boolean;
   publicEdgeBadges: boolean;
   agentContextDetails: boolean;
@@ -27,6 +32,7 @@ export const DEFAULT_FEATURES: ChatFeatures = {
   aiGroups: true,
   userDatabases: true,
   modelPicker: true,
+  dictation: true,
   modelPricing: true,
   publicEdgeBadges: true,
   agentContextDetails: true,
