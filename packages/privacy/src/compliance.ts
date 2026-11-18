@@ -16,7 +16,15 @@ export interface ComplianceCommandClient {
   command<T = unknown>(name: string, payload?: unknown): Promise<T>;
 }
 
-export type TermsDocumentKind = 'terms' | 'privacy' | 'dpa' | 'app_terms';
+/**
+ * A document kind is a **slug**, not a closed list. The platform ships the
+ * defaults below; an app may declare its own (`cookies`, `sla`, a
+ * partner-specific `dpa`).
+ */
+export type TermsDocumentKind = string;
+
+/** Kinds the platform ships by default. Apps may add their own alongside these. */
+export const WELL_KNOWN_TERMS_KINDS = ['terms', 'privacy', 'dpa', 'app_terms'] as const;
 
 export type TermsState = 'accepted' | 'due' | 'expired' | 'not_required' | 'disabled';
 

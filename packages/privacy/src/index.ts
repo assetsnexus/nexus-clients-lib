@@ -1,5 +1,9 @@
 export { createPrivacyKit } from './kit.js';
-export { COMPLIANCE_COMMANDS, createComplianceKit } from './compliance.js';
+export {
+  COMPLIANCE_COMMANDS,
+  WELL_KNOWN_TERMS_KINDS,
+  createComplianceKit,
+} from './compliance.js';
 export type {
   ComplianceCommandClient,
   ComplianceKit,
