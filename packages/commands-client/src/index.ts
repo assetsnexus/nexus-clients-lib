@@ -110,6 +110,50 @@ export {
   type TokenResponse,
   type IntrospectionResponse,
 } from './oauth/helpers.js';
+// Server-side session + identity surface. A host app should not re-implement
+// PKCE, refresh/revoke, the command send with a refresh retry, the availability
+// probe, or the identity level.
+export {
+  createNexusSessionManager,
+  createNexusEventBus,
+  accessExpiresAtFromClaims,
+  buildSessionView,
+  decodeAppTokenClaims,
+  deriveIdentityLevel,
+  safeReturnTo,
+  classifyNexusProbe,
+  classifyTokenError,
+  fallbackSelected,
+  nexusErrorMessage,
+  nexusGrantRequired,
+  nexusOfflineCode,
+  probeNexusAvailability,
+  tokenError,
+} from './session/index.js';
+export type {
+  NexusAppTokenClaims,
+  NexusAppEvent,
+  NexusEvent,
+  NexusEventBus,
+  NexusEventListener,
+  NexusEventFilter,
+  NexusSessionEvent,
+  NexusAccessProbe,
+  NexusCommandOutcome,
+  NexusIdentityLevel,
+  NexusLoginIntent,
+  NexusSessionLogger,
+  NexusSessionManager,
+  NexusSessionManagerOptions,
+  NexusSessionRecord,
+  NexusSessionStore,
+  NexusSessionView,
+  NexusSubjectType,
+  NexusTokenError,
+  NexusTokenErrorCode,
+  NexusTokenResult,
+  NexusProbeClient,
+} from './session/index.js';
 export {
   NexusBrowserSession,
   NEXUS_SESSION_EXPIRY_SKEW_MS,

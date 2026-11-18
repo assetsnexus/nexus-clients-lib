@@ -16,6 +16,17 @@ export {
   readTypes,
 } from './extract.js';
 export { explainNotification, resolveNotificationTarget } from './resolve.js';
+export {
+  createNotificationListener,
+  matchesNotificationFilter,
+} from './listener.js';
+export type {
+  NotificationLike,
+  NotificationListener,
+  NotificationListenerFilter,
+  NotificationListenerHandle,
+  NotificationUrgency,
+} from './listener.js';
 export { alignConsoleRoot, isHttpsUrl, isInternalAppPath, isSafeId } from './safe.js';
 export type {
   CatalogAudit,
