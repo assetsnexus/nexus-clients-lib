@@ -75,16 +75,16 @@ Local portal development keeps `file:../anx-npm-modules/packages/...` — no Git
 
 ## Install from GitHub (external apps)
 
-The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.5.18` cover `@nexus/commands-client`, `@nexus/webhooks`, and `@nexus/privacy` together. `dist/` is not in git. Each of those packages runs `prepare` on install (`scripts/git-prepare.mjs`), which builds one package at a time so privacy can typecheck against the webhooks declarations. Its `tsconfig` does not depend on the monorepo root.
+The public mirror is `github.com/assetsnexus/nexus-clients-lib`. Release tags such as `sdk-v0.5.19` cover `@nexus/commands-client`, `@nexus/webhooks`, and `@nexus/privacy` together. `dist/` is not in git. Each of those packages runs `prepare` on install (`scripts/git-prepare.mjs`), which builds one package at a time so privacy can typecheck against the webhooks declarations. Its `tsconfig` does not depend on the monorepo root.
 
 pnpm 10:
 
 ```json
 {
   "dependencies": {
-    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.18&path:/packages/commands-client",
-    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.18&path:/packages/webhooks",
-    "@nexus/privacy": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.18&path:/packages/privacy"
+    "@nexus/commands-client": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.19&path:/packages/commands-client",
+    "@nexus/webhooks": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.19&path:/packages/webhooks",
+    "@nexus/privacy": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.19&path:/packages/privacy"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/commands-client", "@nexus/webhooks", "@nexus/privacy"]
@@ -99,9 +99,9 @@ Chat UI packages ship from the same tag (they build via their own `prepare` scri
 ```json
 {
   "dependencies": {
-    "@nexus/chat-core": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.18&path:/packages/chat-core",
-    "@nexus/chat-react": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.18&path:/packages/chat-react",
-    "@nexus/page-agent": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.18&path:/packages/page-agent"
+    "@nexus/chat-core": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.19&path:/packages/chat-core",
+    "@nexus/chat-react": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.19&path:/packages/chat-react",
+    "@nexus/page-agent": "github:assetsnexus/nexus-clients-lib#sdk-v0.5.19&path:/packages/page-agent"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["@nexus/chat-core", "@nexus/chat-react", "@nexus/page-agent"]
@@ -119,6 +119,15 @@ The same tag also ships `@nexus/chat-vue2`, `@nexus/chat-vue3`,
 `@nexus/meetings-core` (+ `meetings-react` / `meetings-vue2` / `meetings-vue3`),
 `@nexus/voice-capture`, `@nexus/storage-browser`, and `@nexus/wake-word` — add any you
 depend on to `onlyBuiltDependencies` the same way.
+
+### Cross-app app-kit helpers (`sdk-v0.5.19`)
+
+`@nexus/commands-client/app-kit` now exports the cross-app manifest helpers:
+`createAppManifest` (canonical JSON + `catalogHash`), `diffAppManifest` for the
+boot re-seed no-op, the consent dependency readers (`requirementAction`,
+`blocksApproval`, `pendingRequirements`), and the pure tool-exposure rule
+(`isToolExposed`, `exposedTools`, `disabledNativeCommands`) so an app can predict
+what a linked consumer sees without re-deriving the region's logic.
 
 ## Security
 
