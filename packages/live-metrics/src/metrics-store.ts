@@ -17,6 +17,8 @@ type PendingPoint = { key: string; t: string; v: number }
 export type MetricsStore = {
   /** Buffer a frame's samples/metrics; applied on the next flush. */
   ingestFrame(frame: MetricsFrame): void
+  /** Buffer one point; applied on the next flush. */
+  pushPoint(key: string, t: string, v: number): void
   /** Apply buffered points to the series and notify subscribers. */
   flush(): void
   /** Drop samples older than `fromMs` (visible-window trim). */
@@ -24,6 +26,10 @@ export type MetricsStore = {
   getSeries(key: string): SeriesPoint[]
   getLatest(key: string): number | undefined
   getLatestTs(key: string): string | undefined
+  /** All latest values as a plain object. */
+  latestMap(): Record<string, number>
+  /** Keys that have a latest value. */
+  latestKeys(): string[]
   getKeys(): string[]
   clear(): void
   start(): void
@@ -142,11 +148,14 @@ export function createMetricsStore(options: MetricsStoreOptions = {}): MetricsSt
 
   return {
     ingestFrame,
+    pushPoint: push,
     flush,
     setRange,
     getSeries: (key) => series.get(normalizeSeriesKey(key)) || [],
     getLatest: (key) => latest.get(normalizeSeriesKey(key)),
     getLatestTs: (key) => latestTs.get(normalizeSeriesKey(key)),
+    latestMap: () => Object.fromEntries(latest),
+    latestKeys: () => Array.from(latest.keys()),
     getKeys: () => Array.from(series.keys()),
     clear() {
       series.clear()
