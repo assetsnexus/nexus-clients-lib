@@ -4,6 +4,19 @@ export {
   formatAskFragment,
 } from './ask-ai.js';
 export { actionTarget, visibleActions } from './actions.js';
+export {
+  NOTIFICATION_COMMANDS,
+  createNotificationsClient,
+} from './client.js';
+export type {
+  DispatchNotificationInput,
+  DispatchResult,
+  ListNotificationsInput,
+  NotificationCommandClient,
+  NotificationInboxItem,
+  NotificationPriority,
+  NotificationsClient,
+} from './client.js';
 export { auditCatalog, classifyInbox, explain } from './audit.js';
 export { NOTIFICATION_ROUTE_RULES, keyMatches } from './catalog.js';
 export { KNOWN_ROUTE_GAP_COUNT, KNOWN_ROUTE_GAPS, NOTIFICATION_EVENT_KEYS } from './catalog.snapshot.js';
